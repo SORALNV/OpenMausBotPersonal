@@ -20,6 +20,7 @@ if (!existsSync(config)) writeFileSync(config, JSON.stringify({
 const modelRoot = join(metadata.repository, ".privacy-dev");
 Object.assign(process.env, {
   CODEX_HOME: metadata.codexHome,
+  CUA_DRIVER_HOST_BUNDLE_ID: "dev.sora.openmausbot.personal",
   OMB_DATA_DIR: data, OMB_PERSONAL_BUILD: "1", OMB_PRIVACY_MODE: "off", OMB_PRIVACY_DEVICE: "mps",
   OMB_PRIVACY_PYTHON: join(modelRoot, "venv", "bin", "python"),
   OMB_PRIVACY_WORKER: join(metadata.repository, "scripts", "privacy-worker.py"),

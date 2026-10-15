@@ -41,6 +41,12 @@ node scripts/personal-build-app.mjs
 
 ローカルのソースから UI・サーバー・companion・Electron main/preload をビルドする。Apple silicon 用の配布版 0.1.111 を署名検証し、Electron 本体と CUA・音声・ブラウザ・cloudflared 等のネイティブ資材を再利用する。元の配布物は変更しない。ビルド先は `.privacy-dev/personal-build/<UUID>/OpenMausBot Personal.app`。`--install` は Applications の同名アプリが既に存在すれば上書きせず停止する。ローカル署名で、公開・公証・push は行わない。
 
+署名は初回ビルド時に生成する専用のローカル証明書を使い、以降も同じ証明書を再利用する。`.privacy-dev/personal-signing/` の専用キーチェーンと設定は Mac 内に限定する。秘密鍵の平文・PKCS#12 の一時ファイルはインポート後に削除する。キーチェーンはビルド時だけ解除して最後にロックし、既存のログインキーチェーン・既定の検索リスト・システム全体の証明書信頼は変更しない。証明書が壊れた場合に別の鍵を自動生成する代替動作はしない。この署名は Apple の Developer ID や公証を意味しない。
+
+旧ビルドは ad-hoc 署名だったため、再ビルドで macOS の許可と署名が一致しなくなる問題があった。新しい方式への初回移行時は、画面収録とアクセシビリティの **OpenMausBot Personal だけ** を一覧から削除し、現在の `/Applications/OpenMausBot Personal.app` を追加して再許可する必要がある。キーチェーンの確認が出た場合も Mac 上で操作する。TCC データベースの書換え、全アプリの許可リセット、識別子だけを信用する署名要件は使わない。[Apple の署名に関する説明](https://developer.apple.com/forums/thread/819406)も参照。
+
+CUA ホストの識別子も `dev.sora.openmausbot.personal` に合わせる。配布版の `com.openmausbot.app` の許可を照会しない。`node --test scripts/personal-signing.node-test.mjs` は使い捨てキーチェーンで、実行コードを変えても同じ証明書の署名要件が保たれることと、署名後の実行コード改ざんが拒否されることを検証する。
+
 仮名化の Python 環境・モデルは `/Users/sora/Code/OpenMausBot/.privacy-dev` を参照するため、このリポジトリは残す。検出ワーカーは厳格版と同じ MPS・ローカル専用モデルを使う。アプリ全体の通信を遮断する厳格版とは別の構成である。
 
 ## 検証

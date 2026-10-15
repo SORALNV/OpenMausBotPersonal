@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { withPersonalSigning, personalSigningRequirement } from "./personal-signing.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const revision = (ref) => {
@@ -62,10 +63,13 @@ const raw = asar.getRawHeader(archive);
 const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHash("sha256").update(raw.headerString).digest("hex") } };
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), info]);
 rmSync(join(resources, "app-update.yml"), { force: true });
-run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
-run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+const signing = withPersonalSigning(join(repo, ".privacy-dev", "personal-signing"), ({ identity, keychain }) => {
+  run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
+  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  return { kind: "local-certificate", certificateSha1: identity, designatedRequirement: personalSigningRequirement(app, identity) };
+});
 const evidence = join(repo, ".privacy-dev", "evidence", "personal-app-build.json");
-writeFileSync(evidence, JSON.stringify({ app, base, version: pkg.version, sourceCommit, upstreamCommit, builtAt: new Date().toISOString(), installed: false }, null, 2), { mode: 0o600 });
+writeFileSync(evidence, JSON.stringify({ app, base, version: pkg.version, sourceCommit, upstreamCommit, signing, builtAt: new Date().toISOString(), installed: false }, null, 2), { mode: 0o600 });
 console.log(app);
 if (process.argv.includes("--install")) {
   const dest = "/Applications/OpenMausBot Personal.app";

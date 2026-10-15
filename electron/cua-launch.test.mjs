@@ -9,7 +9,7 @@ const fixture = vi.hoisted(() => ({ home: "", script: "", socketReady: false, ch
 vi.mock("electron", () => ({ app: { isPackaged: false, getPath: () => fixture.home }, ipcMain: { handle: (name, handler) => fixture.handlers.set(name, handler) } }));
 vi.mock("@trycua/cua-driver/embedded", () => ({
   EmbeddedCuaDriverHost: class {
-    constructor() { this.delay = fixture.embeddedDelays.shift(); fixture.hosts.push(this); }
+    constructor(binary, bundleId) { this.binary = binary; this.bundleId = bundleId; this.delay = fixture.embeddedDelays.shift(); fixture.hosts.push(this); }
     async start({ signal }) {
       if (this.delay === "until-abort") {
         await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
@@ -100,6 +100,17 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform !== "darwin")("async standalone CUA launch (isolated commands)", () => {
+  it.each([[undefined, "com.openmausbot.app"], ["1", "dev.sora.openmausbot.personal"]])("uses the matching host identity for Personal mode %s", async (mode, expected) => {
+    vi.stubEnv("OMB_PERSONAL_BUILD", mode);
+    vi.resetModules();
+    cua = await import("./cua.mjs");
+    fixture.embeddedDelays = [1];
+    const connection = await cua.startCua();
+    expect(connection.mode).toBe("embedded");
+    expect(fixture.hosts[0].bundleId).toBe(expected);
+    expect(connection.mcpEnv.CUA_DRIVER_HOST_BUNDLE_ID).toBe(expected);
+  });
+
   it("keeps the event loop responsive and publishes the existing descriptor shape", async () => {
     let ticks = 0;
     const timer = setInterval(() => ticks++, 10);
