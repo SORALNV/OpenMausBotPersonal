@@ -2,6 +2,7 @@ import { app } from "electron";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { preparePersonalCodexHome } from "./personal-codex-home.mjs";
 
 const metadata = JSON.parse(readFileSync(fileURLToPath(new URL("../personal-build.json", import.meta.url)), "utf8"));
 const data = join(app.getPath("home"), ".openmausbot-personal");
@@ -19,7 +20,7 @@ if (!existsSync(config)) writeFileSync(config, JSON.stringify({
 }), { mode: 0o600, flag: "wx" });
 const modelRoot = join(metadata.repository, ".privacy-dev");
 Object.assign(process.env, {
-  CODEX_HOME: metadata.codexHome,
+  ...preparePersonalCodexHome({ directory: join(data, "private", "codex"), loginHome: metadata.codexHome }),
   CUA_DRIVER_HOST_BUNDLE_ID: "dev.sora.openmausbot.personal",
   OMB_DATA_DIR: data, OMB_PERSONAL_BUILD: "1", OMB_PRIVACY_MODE: "off", OMB_PRIVACY_DEVICE: "mps",
   OMB_PRIVACY_PYTHON: join(modelRoot, "venv", "bin", "python"),

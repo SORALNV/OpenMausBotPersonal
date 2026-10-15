@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { handleToolCall, request } from "./mcp-server.ts";
 import { createProxyHandler } from "../companion/src/proxy.ts";
+import { preparePersonalCodexHome } from "../electron/personal-codex-home.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const fixture = await mkdtemp(join(tmpdir(), "omb-personal-acceptance-"));
@@ -26,7 +27,9 @@ const mockPort = await listen(mock);
 const reservation = createServer(); const port = await listen(reservation); await new Promise(resolve => reservation.close(resolve));
 await mkdir(data, { mode: 0o700 }); await mkdir(join(fixture, "home"), { mode: 0o700 });
 const instances = { fixture: { driver: "openai-compat", config: { url: `http://127.0.0.1:${mockPort}/v1`, key: "synthetic-only", model: "fixture", tools: false } } };
-if (live) instances.codex = { driver: "codex", config: { cli: "/opt/homebrew/bin/codex" }, environment: { CODEX_HOME: process.env.CODEX_HOME ?? join(homedir(), ".codex") } };
+if (live) instances.codex = { driver: "codex", config: { cli: "/opt/homebrew/bin/codex" }, environment: preparePersonalCodexHome({
+  directory: join(data, "private", "codex"), loginHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+}) };
 await writeFile(join(data, "config.json"), JSON.stringify({ instances, decider: { enabled: false }, newBotDefaults: { profile: { approvalMode: "ask", computer: "off", browser: false, composio: false, mcpServers: [] } } }), { mode: 0o600 });
 const child = spawn(process.execPath, ["server/index.ts"], { cwd: repo, env: {
   PATH: process.env.PATH, HOME: join(fixture, "home"), USERPROFILE: join(fixture, "home"), OMB_DATA_DIR: data,

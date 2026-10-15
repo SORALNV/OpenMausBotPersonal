@@ -4,7 +4,13 @@
 
 ## 起動と認証
 
-`/Applications/OpenMausBot Personal.app` を開く。既存の `/Users/sora/.codex` の ChatGPT ログインを Codex CLI 経由で利用し、API キーは不要。既存の Codex 会話そのものを移行する機能ではない。認証情報をコピーせず、元の認証保存先を参照する。Codex の通常の認証更新・利用履歴保存は起こり得る。
+`/Applications/OpenMausBot Personal.app` を開く。既存の `/Users/sora/.codex` の ChatGPT ログインを Codex CLI 経由で利用し、API キーは不要。通常の Codex 会話は取り込まない。
+
+Codex の会話・作業状態は `~/.openmausbot-personal/private/codex/` に保存する。`CODEX_HOME` と `CODEX_SQLITE_HOME` を両方この場所に固定し、ChatGPT/Codex の普段の一覧へ UUID の作業フォルダを追加しない。ログインだけは元の `auth.json` へのシンボリックリンクで参照し、認証情報は複製しない。この Mac のファイル保存型ログインに対応し、キーチェーン保存型の Codex 認証を共有する仕組みではない。通常の認証更新は元の保存先に反映される。リンクが別の認証ファイルへ変わっていた場合は上書きせず停止する。
+
+専用の Codex 設定を使い、普段の Codex の MCP・フック・設定ファイルは自動で複製しない。OpenMausBot で登録した接続・ツールと既存の承認制御を使う。専用領域の Codex デーモン自動起動と Codex 自身の記憶機能は無効。OpenMausBot の記憶・定期実行と個人情報のマスク設定は別の機能であり、この分離では変更しない。
+
+`node --test electron/personal-codex-home.node-test.mjs` で保存先と認証参照の保護を検証する。`node scripts/personal-codex-isolation-acceptance.mjs` は使い捨て HOME、架空の認証、実 Codex CLI、ループバックの模擬AIだけを使い、認証ファイルの書き込み、プロセス再起動後の会話再開、履歴移動後の内容維持、共有側の会話一覧が0件のままであることを検証する。実際の ChatGPT モバイル画面の更新そのものはこの検証に含まない。
 
 設定・会話は `~/.openmausbot-personal/`、Electron の設定・端末ペアリング関係は `~/Library/Application Support/OpenMausBot Personal/`。元の `~/.openmausbot` と配布アプリの設定は移行しない。サーバーは `127.0.0.1:8897`（使用中なら 18897、28897）。初期接続は Codex、ボット新規作成の既定は Ask。接続機能とツールは元の権限制御を使う。自分用ビルドの上書きを避けるため配布元の自動更新は停止している。
 
