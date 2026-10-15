@@ -10,6 +10,8 @@
 
 配布版が初回起動時に自動作成する Miso は通常の新規作成とは異なり、フルアクセスで始まる。必要に応じて入力欄の権限メニューから変更する。表示復元はこの権限を変更しない。
 
+再ビルド後に macOS のキーチェーン確認が出た場合は、要求元がこの Personal アプリであることを確認し、Mac 上で許可する。パスワードをチャットへ送る必要はない。確認待ちの間は「Opening your workspace…」で止まることがある。暗号化を外したり認証保存先を削除したりして回避しない。
+
 ## 大学チャットの文章を処理する
 
 1. 会話の入力欄の上にある「仮名化して入力」を押す。
@@ -60,3 +62,7 @@ node scripts/personal-build-app.mjs
 使い捨てデータで Personal と厳格モード両方の受け入れ検証に成功した。Personal の初回GPU仮名化はモデル読込込み10,953ms、既存のChatGPTログインによるCodex実応答も再確認した。厳格モードでは送信境界モックのペイロード、履歴の仮名、異常時の遮断、未対応経路・WebSocketの拒否を確認した。実在の大学チャットは使用していない。
 
 ビルド元のコミットと上流コミットはアプリ内の `personal-build.json` とローカルの `.privacy-dev/evidence/personal-app-build.json` に記録する。モデル・対応表・認証情報・アプリ本体はGitに含めない。
+
+再ビルドしたアプリ内の `Resources/server` を一時 HOME へコピーしたパッケージ検証も成功した（独立起動、MCP、CLI、暗号化バックアップ、子プロセスの終了等）。push 前の lint・型検査・12言語のカタログ検査も成功した。
+
+フォークの移転先は [SORALNV/OpenMausBotPersonal](https://github.com/SORALNV/OpenMausBotPersonal/tree/codex/privacy-filter)。改良版は `codex/privacy-filter` ブランチを使う。ローカルの origin も移転先へ更新し、既存の SSH 認証で保存した。
