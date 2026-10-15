@@ -1,5 +1,6 @@
 import { track } from "@/lib/analytics";
 import { PrivacyWorkbench } from "./PrivacyWorkbench";
+import { ComposerSpeechError } from "./ComposerSpeechError";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Sparkles, Square, Target, Users, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
@@ -32,8 +33,7 @@ import { BotAvatar } from "./Avatar";
 import { ComposerMenuRow } from "./ComposerMenuRow";
 import { MentionTextarea } from "./MentionTextarea";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
-import { splitTranscriptCitations } from "@/lib/citations";
-import { useComposerQuotes } from "./ComposerQuotes";
+import { splitTranscriptCitations, type CitationAttachment } from "@/lib/citations";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { PlaceChip } from "./PlaceChip";
 import { ApprovalModeSelector } from "./ApprovalModeSelector";
@@ -211,7 +211,6 @@ export function Composer({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [dismissedSlashAt, setDismissedSlashAt] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const quoteLine = useComposerQuotes({ attachments, text, removeAttachment, inputRef });
   const draftIdRef = useRef(draftId);
   draftIdRef.current = draftId;
   const caretRef = useRef(0);
@@ -712,11 +711,7 @@ export function Composer({
 
   return (
     <div className="pointer-events-none relative px-5 pb-3">
-      {speechError && (
-        <div className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
-          {speechError}
-        </div>
-      )}
+      <ComposerSpeechError message={speechError} />
       <div className="pointer-events-auto relative w-full">
         {import.meta.env.VITE_OMB_PERSONAL === "1" && <PrivacyWorkbench key={threadId} threadId={threadId} onApply={masked => editText(text ? `${text}\n\n${masked}` : masked)} />}
         {failedSends.map((failed) => (
@@ -854,6 +849,7 @@ export function Composer({
           items={attachments}
           onAdd={addAttachments}
           onRemove={removeAttachment}
+          onChangeCitation={(citation: CitationAttachment) => editAttachments((current) => current.map((attachment) => attachment.id === citation.id ? citation : attachment))}
           onDisplayInChatBox={displayPasteInChatBox}
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
@@ -961,8 +957,6 @@ export function Composer({
           )}
           <MentionTextarea
           wrapperClassName="@max-[30rem]/composer:order-first @max-[30rem]/composer:basis-full"
-          leading={quoteLine.leading}
-          leadingDir={quoteLine.leadingDir}
           inputRef={inputRef}
           peers={group ? members ?? [] : state.bots.filter((member) => member.id !== bot?.id)}
           everyone={Boolean(group && !group.dm)}
@@ -1019,7 +1013,6 @@ export function Composer({
                 return;
               }
             }
-            if (!recording && quoteLine.takesKey(e)) return;
             if (onClearReply && escapeCancelsReply(e.nativeEvent, { replying: Boolean(replyTo), recording })) {
               e.preventDefault();
               onClearReply();
@@ -1049,7 +1042,7 @@ export function Composer({
           disabled={Boolean(approval) || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={
-            quoteLine.hasQuotes && !approval && !locked && !recording ? "" : setupLocked
+            setupLocked
               ? t("composer.placeholder.locked")
               : approval
               ? t("composer.placeholder.approval")

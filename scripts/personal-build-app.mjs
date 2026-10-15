@@ -7,6 +7,13 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
+const revision = (ref) => {
+  const result = spawnSync("git", ["rev-parse", "--verify", ref], { cwd: repo, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Cannot identify source revision: ${ref}`);
+  return result.stdout.trim();
+};
+const sourceCommit = revision("HEAD");
+const upstreamCommit = revision("upstream/main");
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("This local build requires an Apple silicon Mac");
 const base = process.env.OMB_PERSONAL_BASE_APP ?? "/Users/sora/.Trash/OpenMausBot.app";
 const build = join(repo, ".privacy-dev", "personal-build", randomUUID());
@@ -35,7 +42,7 @@ mkdirSync(source);
 cpSync(join(repo, "electron"), join(source, "electron"), { recursive: true, filter: p => !/\.(?:test|node-test)\./.test(p) && !p.includes("/fixtures/") });
 const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
 writeFileSync(join(source, "package.json"), JSON.stringify({ name: "openmausbot-personal", productName: "OpenMausBot Personal", version: pkg.version, main: "electron/personal-main.mjs", type: "module" }));
-writeFileSync(join(source, "personal-build.json"), JSON.stringify({ repository: repo, version: pkg.version, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex") }));
+writeFileSync(join(source, "personal-build.json"), JSON.stringify({ repository: repo, version: pkg.version, sourceCommit, upstreamCommit, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex") }));
 const pnpm = join(repo, "node_modules", ".pnpm");
 const asarPackage = readdirSync(pnpm).find(name => name.startsWith("@electron+asar@"));
 if (!asarPackage) throw new Error("The installed ASAR build dependency is missing");
@@ -58,7 +65,7 @@ rmSync(join(resources, "app-update.yml"), { force: true });
 run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
 run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
 const evidence = join(repo, ".privacy-dev", "evidence", "personal-app-build.json");
-writeFileSync(evidence, JSON.stringify({ app, base, version: pkg.version, builtAt: new Date().toISOString(), installed: false }, null, 2), { mode: 0o600 });
+writeFileSync(evidence, JSON.stringify({ app, base, version: pkg.version, sourceCommit, upstreamCommit, builtAt: new Date().toISOString(), installed: false }, null, 2), { mode: 0o600 });
 console.log(app);
 if (process.argv.includes("--install")) {
   const dest = "/Applications/OpenMausBot Personal.app";

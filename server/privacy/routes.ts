@@ -17,3 +17,4 @@ export const privacyDisplayRoute: RouteHandler = async ({ req, res, path, method
   if (typeof body?.threadId !== "string" || typeof body?.text !== "string" || body.text.length > 100_000) return json(res, 400, { error: "表示対象が不正です。" });
   return json(res, 200, { text: restorePrivacyDisplay(body.threadId, body.text) });
 };
+export { createPersonalPrivacyRoute } from "./personal.ts";

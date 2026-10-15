@@ -38,6 +38,12 @@ export function replyStylePrompt(style: ReplyStyle | undefined): string {
   return isConversational(style) ? CONVERSATIONAL_STYLE_PROMPT : "";
 }
 
+export function botPersona(bot: { name: string; title?: string; description?: string }): string {
+  return [`You are ${bot.name}, a personal bot in OpenMausBot.`, bot.title && `Role: ${bot.title}.`, bot.description && `About: ${bot.description}`]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function buildSystemPrompt(
   persona: string,
   soul: string,
@@ -107,11 +113,24 @@ export function computerPrompt(kind: ComputerPromptKind | null): string {
 
 export const CLOUD_HOME_PLACE = "the user's My Cloud, their always-on OpenMausBot in the cloud, not on their own computer";
 
-export function cloudHomePrompt(sharedComputerTools: boolean): string {
+// The Cloud prompt names the synced folders; index.ts reads the registry through here.
+export { syncedFolders } from "./cloud-sync-store.ts";
+
+export function cloudHomePrompt(sharedComputerTools: boolean, synced: ReadonlyArray<{ computerName: string; pcPath: string; cloudPath: string }> = []): string {
   return ` You run on ${CLOUD_HOME_PLACE}.` + (sharedComputerTools
     ? " If they ask for something on their own Mac or PC, check list_shared_computers: a computer they lend to My Cloud is reachable through shared_computer, within the folders and apps it allows. If none is lent and online, say so in one sentence: they can turn on Let My Cloud use this computer under Settings → MausBot Cloud in the desktop app on that computer."
     : " You cannot see or use their Mac or PC, its screen or its files from here. If they ask for something on it, say so in one sentence.")
-    + " Offer what works here: the built-in browser and their cloud computer, a desktop in the cloud. Call it their cloud computer, as the app does. Never ask them to set up this computer or a Local VM; neither exists here.";
+    + " Offer what works here: the built-in browser and their cloud computer, a desktop in the cloud. Call it their cloud computer, as the app does. Never ask them to set up this computer or a Local VM; neither exists here."
+    + syncedFoldersPrompt(synced);
+}
+
+function syncedFoldersPrompt(synced: ReadonlyArray<{ computerName: string; pcPath: string; cloudPath: string }>): string {
+  if (!synced.length) return "";
+  // eslint-disable-next-line no-control-regex
+  const clean = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, " ").slice(0, max);
+  const shown = synced.slice(0, 20).map((folder) => `${clean(folder.pcPath, 300)} on ${clean(folder.computerName, 80)} → ${clean(folder.cloudPath, 300)}`).join("; ");
+  return ` Folders the person shares from their computer, as read-only copies kept up to date here: ${shown}${synced.length > 20 ? `; and ${synced.length - 20} more` : ""}.`
+    + " A path on that computer inside one of these means its copy here. Read from these copies, never change or delete files in them: save your work in your own working folder; the person gets it on their computer in Documents › MausBot.";
 }
 
 export const COMPOSIO_PROMPT =
@@ -153,7 +172,7 @@ export function longCommandsPrompt(computer: ComputerPromptKind | null): string 
 export const THREADS_PROMPT =
   " A thread is one conversation with its own history and its own run; a bot can have several running at once, and the person sees them as rows under that bot. Use start_thread to open one on yourself for separate work; to hand a teammate a job in a fresh thread of its own, use coordinate_bots with thread \"new\". Use list_threads to see how the ones you opened are going. When you mention a thread to the person, write its title as #Title so it links. Do not use a ticket comment, a note, or a room post as a stand-in for a thread.";
 export const WIDGET_PROMPT =
-  " When you need details from the person, such as a date, a time, a duration or a pick from a few options, show them a widget form with pickers through show_widget instead of asking them to type the answers. A request like \"help me book a call\" or \"set a reminder\" is enough to show that form; do not wait to be asked for it. Put data and comparisons in a markdown table in your message, not in a widget.";
+  " Use show_widget for every reply that asks the person for something they could pick instead of type: a date, a time, days of the week, a duration, whether to go ahead with a change, or one of a few options. This holds for follow-up questions later in a conversation, not only for the first request. When the person wants to change something that already exists, such as a routine, a reminder, a booking or a setting, show it as a form prefilled with its current values (each field's defaultValue), say in the caption that this is how it is set now, and give it a confirm button that saves the change, so they edit what is there instead of describing it again. A request like \"help me book a call\" or \"move my team sync\" is enough to show the form; do not wait to be asked for one, and never end a turn with a question in text that a form could ask. Put data and comparisons in a markdown table in your message, not in a widget.";
 const PROPOSAL_RESULT_PROMPT =
   " Follow the tool result: a change to your own routines, skills, profile or model applies immediately and the person sees it with an Undo; then continue the requested work without asking for another confirmation. A change for another bot may wait for the person. If it reports a pending review, end the turn and wait for the in-app decision. Never claim success before an applied result, and report failures honestly. Full Access does not grant another bot broader permissions.";
 export const ROUTINE_PROMPT =

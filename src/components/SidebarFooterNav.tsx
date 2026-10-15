@@ -1,11 +1,12 @@
-import { CalendarDays, Network, Puzzle, Zap } from "lucide-react";
+import { CalendarDays, FolderOpen, Network, Puzzle, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
+import { useCloudFilesReady } from "@/lib/cloud-files";
 import { t } from "@/lib/i18n";
 import { useAdvancedMode } from "@/lib/interface-mode";
 import { isRoutineProblemRun } from "@/lib/routines";
-import type { SidebarDensity } from "@/lib/sidebar-preferences";
+import { useSidebarToolsLayout, type SidebarDensity } from "@/lib/sidebar-preferences";
 import { useStore } from "@/state/store";
 
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
@@ -91,10 +92,21 @@ export function SidebarFooterNav({
   const { state, dispatch } = useStore();
   const advanced = useAdvancedMode();
   const iconsOnly = density === "icons";
+  const toolsLayout = useSidebarToolsLayout();
+  const toolbar = !iconsOnly && toolsLayout === "toolbar";
   const iconSize = iconsOnly ? 20 : 18;
   const tone = (active: boolean) => (active ? "text-accent" : "text-ink-secondary");
   const routinesNeedYou = state.routineRuns.some((run) => isRoutineProblemRun(run) && !run.seenAt);
-  if (!advanced && !iconsOnly) return null;
+  const filesRow = useCloudFilesReady() && <NavRow
+    id="files"
+    label={t("sidebar.nav.files")}
+    iconsOnly={iconsOnly}
+    active={state.activeView === "files"}
+    icon={(active) => <FolderOpen size={iconSize} className={tone(active)} />}
+    onClick={() => dispatch({ type: "showFiles" })}
+  />;
+  // Simple mode keeps Files, on its own without the Tools header.
+  if (!advanced && !iconsOnly) return filesRow ? <nav aria-label={t("sidebar.nav.files")} className="flex flex-col gap-0.5">{filesRow}</nav> : null;
 
   const rows = (
     <>
@@ -102,7 +114,7 @@ export function SidebarFooterNav({
         id="routines"
         label={t("sidebar.nav.routines")}
         tourId="nav-automations"
-        iconsOnly={iconsOnly}
+        iconsOnly={iconsOnly || toolbar}
         active={state.activeView === "routines"}
         attention={routinesNeedYou}
         icon={(active) => <CalendarDays size={iconSize} className={tone(active)} />}
@@ -111,7 +123,7 @@ export function SidebarFooterNav({
       {advanced && <NavRow
         id="triggers"
         label={t("sidebar.nav.triggers")}
-        iconsOnly={iconsOnly}
+        iconsOnly={iconsOnly || toolbar}
         active={state.triggersOpen}
         icon={(active) => <Zap size={iconSize} className={tone(active)} />}
         onClick={() => dispatch({ type: "toggleTriggers", open: true })}
@@ -130,12 +142,13 @@ export function SidebarFooterNav({
           id="team-map"
           label={t("sidebar.nav.teamMap")}
           tourId="team-tools"
-          iconsOnly={iconsOnly}
+          iconsOnly={iconsOnly || toolbar}
           active={state.activeView === "team-map"}
           icon={(active) => <Network size={iconSize} className={tone(active)} />}
           onClick={() => dispatch({ type: "showTeamMap" })}
         />
       )}
+      {filesRow}
     </>
   );
 
@@ -152,7 +165,7 @@ export function SidebarFooterNav({
         reorderable={false}
         dragging={false}
       />
-      {!collapsed && <nav aria-label={t("sidebar.tools")} className="flex flex-col gap-0.5">{rows}</nav>}
+      {!collapsed && <nav aria-label={t("sidebar.tools")} className={toolbar ? "flex flex-row gap-1" : "flex flex-col gap-0.5"}>{rows}</nav>}
     </div>
   );
 }

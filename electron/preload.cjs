@@ -49,6 +49,7 @@ const remoteKeys = isLocalPage ? REMOTE_SAFE : new Set([...REMOTE_SAFE, ...(upda
 const COMPANY_BACKUP_CLIENT_KEYS = [
   "omb-drafts", "omb-draft-attachments", "omb-draft-send-ids", "omb-draft-channel-modes",
   "omb-skin", "omb-show-threads", "omb-show-run-card", "omb-send-key", "omb-color-user-bubbles", "omb-chat-width", "openmausbot.sidebarDensity",
+  "openmausbot.sidebarToolsLayout",
   "openmausbot.sidebarCollapsedSections.v1", "openmausbot.sidebarSectionOrder.v1",
   "omb-analytics-opt-out", "openmausbot.remote-voice.v1",
 ];
@@ -287,6 +288,23 @@ const bridge = {
       chooseFolder: () => ipcRenderer.invoke("lending:folder"),
       save: input => ipcRenderer.invoke("lending:save", input),
       stop: () => ipcRenderer.invoke("lending:stop"),
+    },
+    files: {
+      state: () => ipcRenderer.invoke("files:state"),
+      pickFolder: () => ipcRenderer.invoke("files:pick"),
+      checkFolders: paths => ipcRenderer.invoke("files:check", paths),
+      share: token => ipcRenderer.invoke("files:share", token),
+      stopSharing: folderId => ipcRenderer.invoke("files:stop", folderId),
+      answerDeletes: (folderId, remove) => ipcRenderer.invoke("files:deletes", folderId, remove),
+      locate: folderId => ipcRenderer.invoke("files:locate", folderId),
+      setOutputs: enabled => ipcRenderer.invoke("files:outputs", enabled),
+      open: target => ipcRenderer.invoke("files:open", target),
+      moreSpace: () => ipcRenderer.invoke("files:more-space"),
+      onState: cb => {
+        const handler = (_event, state) => cb(state);
+        ipcRenderer.on("files:state-changed", handler);
+        return () => ipcRenderer.removeListener("files:state-changed", handler);
+      },
     },
   } : undefined,
   cloudMove: process.argv.includes("--omb-company-desktop=1") ? {
