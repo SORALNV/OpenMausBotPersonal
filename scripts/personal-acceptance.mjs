@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,7 @@ import { createProxyHandler } from "../companion/src/proxy.ts";
 import { preparePersonalCodexHome } from "../electron/personal-codex-home.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const fixture = await mkdtemp(join(tmpdir(), "omb-personal-acceptance-"));
+const fixture = await realpath(await mkdtemp(join(tmpdir(), "omb-personal-acceptance-")));
 const data = join(fixture, "data");
 const live = process.argv.includes("--live-codex");
 const packets = [];
