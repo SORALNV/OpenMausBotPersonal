@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { privacyVite } from "./scripts/privacy-vite.ts";
 import { DurationSequencer } from "./scripts/testing/duration-sequencer.ts";
 import { hostTimeout } from "./server/testing/host-timeout.ts";
 
@@ -13,7 +14,7 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [privacyVite(), react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(version),
   },
@@ -56,7 +57,7 @@ export default defineConfig({
     // packager output lands inside the repo — its HTML files must never
     // trigger dev full-page reloads
     watch: {
-      ignored: ["**/release/**", "**/build/**", "**/dist/**", "**/electron/resources/**"],
+      ignored: ["**/.privacy-dev/**", "**/.local-privacy-filter/**", "**/release/**", "**/build/**", "**/dist/**", "**/electron/resources/**"],
     },
     // the harness server owns every provider process; the app only ever
     // talks to /api — clients hold no transports

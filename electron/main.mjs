@@ -111,7 +111,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // vite binds IPv4; a bare "localhost" can resolve to ::1.
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 const DEFAULT_COMPOSIO_BROKER_URL = "https://openmausbot-composio.milindsoni201.workers.dev";
-let SERVER_PORT = 8799;
+const PERSONAL_PORTS = [8897, 18897, 28897];
+let SERVER_PORT = process.env.OMB_PERSONAL_BUILD === "1" ? PERSONAL_PORTS[0] : 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 let desktopViewerWindow = null;
 let desktopViewerOwner = null;
@@ -1354,7 +1355,7 @@ async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmen
 async function startServerPackaged() {
   let everyPortForeignOwned = true;
   for (let attempt = 0; attempt < 2; attempt++) {
-    for (const port of [8799, 18799, 28799]) {
+    for (const port of process.env.OMB_PERSONAL_BUILD === "1" ? PERSONAL_PORTS : [8799, 18799, 28799]) {
       if (desktopShutdownStarted) return false;
       const started = await startServerOn(port);
       if (started.proc) {

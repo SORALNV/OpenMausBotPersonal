@@ -1,0 +1,298 @@
+{
+  "date": "2026-10-15",
+  "machine": "arm64",
+  "runtime": "official OPF, cpu, 4 CPU threads, 4096-token windows; worker socket connections disabled; no quantization",
+  "opfCommit": "f7f00ca7fb869683eb732c010299d901457f19c3",
+  "ready": {
+    "ready": true,
+    "device": "cpu",
+    "moe": "torch",
+    "loadMs": 3085,
+    "rssBytes": 3490775040,
+    "mpsAllocatedBytes": 0,
+    "mpsDriverBytes": 0
+  },
+  "wallMs": 63264,
+  "peakRssBytes": 4079992832,
+  "maxObservedMpsAllocatedBytes": 0,
+  "maxObservedMpsDriverBytes": 0,
+  "coldCorpusMs": 5056,
+  "cachedCorpusMs": 0,
+  "payloadFields": 39,
+  "payloadCold": {
+    "elapsedMs": 3308,
+    "cacheHits": 23,
+    "inferredTexts": 16,
+    "rssBytes": 3907911680,
+    "mpsAllocatedBytes": 0,
+    "mpsDriverBytes": 0
+  },
+  "payloadCached": {
+    "elapsedMs": 0,
+    "cacheHits": 39,
+    "inferredTexts": 0,
+    "rssBytes": 3907911680,
+    "mpsAllocatedBytes": 0,
+    "mpsDriverBytes": 0
+  },
+  "cacheSpanParity": true,
+  "fullyCovered": 12,
+  "expectedSpans": 14,
+  "spanFingerprint": "e50ab40456110e47b5c088b6cbc93910b3e812ab679ddd795df31cab7d65b868",
+  "cases": [
+    {
+      "input": "私は星野架空です。明日の予定を整理してください。",
+      "expected": [
+        {
+          "text": "星野架空",
+          "fullyCovered": false
+        }
+      ],
+      "detected": [],
+      "elapsedMs": 276,
+      "rssBytes": 3711270912
+    },
+    {
+      "input": "氏名: 星野 架空\n会議は午後です。",
+      "expected": [
+        {
+          "text": "星野 架空",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 4,
+          "end": 9,
+          "label": "private_person",
+          "text": "星野 架空"
+        }
+      ],
+      "elapsedMs": 299,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "住所は東京都架空区試験町1-2-3です。郵送先に使います。",
+      "expected": [
+        {
+          "text": "東京都架空区試験町1-2-3",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 3,
+          "end": 17,
+          "label": "private_address",
+          "text": "東京都架空区試験町1-2-3"
+        }
+      ],
+      "elapsedMs": 1319,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "メールは hoshino@example.invalid です。返信案を作って。",
+      "expected": [
+        {
+          "text": "hoshino@example.invalid",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 5,
+          "end": 28,
+          "label": "private_email",
+          "text": "hoshino@example.invalid"
+        }
+      ],
+      "elapsedMs": 266,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "電話は090-1234-5678、口座番号は1234567です。",
+      "expected": [
+        {
+          "text": "090-1234-5678",
+          "fullyCovered": true
+        },
+        {
+          "text": "1234567",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 3,
+          "end": 16,
+          "label": "private_phone",
+          "text": "090-1234-5678"
+        },
+        {
+          "start": 22,
+          "end": 29,
+          "label": "account_number",
+          "text": "1234567"
+        }
+      ],
+      "elapsedMs": 316,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "APIキー: sk-proj-SYNTHETICKEY01234567890",
+      "expected": [
+        {
+          "text": "sk-proj-SYNTHETICKEY01234567890",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 7,
+          "end": 38,
+          "label": "secret",
+          "text": "sk-proj-SYNTHETICKEY01234567890"
+        }
+      ],
+      "elapsedMs": 222,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "ツール結果: 担当者は架空田テスト、メールは tool@example.invalid。",
+      "expected": [
+        {
+          "text": "架空田テスト",
+          "fullyCovered": true
+        },
+        {
+          "text": "tool@example.invalid",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 11,
+          "end": 17,
+          "label": "private_person",
+          "text": "架空田テスト"
+        },
+        {
+          "start": 23,
+          "end": 43,
+          "label": "private_email",
+          "text": "tool@example.invalid"
+        }
+      ],
+      "elapsedMs": 298,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "履歴: 山星試験さんは大阪府架空市検証町4-5-6に引っ越しました。",
+      "expected": [
+        {
+          "text": "山星試験",
+          "fullyCovered": true
+        },
+        {
+          "text": "大阪府架空市検証町4-5-6",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 4,
+          "end": 10,
+          "label": "private_person",
+          "text": "山星試験さん"
+        },
+        {
+          "start": 11,
+          "end": 25,
+          "label": "private_address",
+          "text": "大阪府架空市検証町4-5-6"
+        }
+      ],
+      "elapsedMs": 540,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "😀担当者は星野架空です。hoshino@example.invalid に連絡します。",
+      "expected": [
+        {
+          "text": "星野架空",
+          "fullyCovered": false
+        },
+        {
+          "text": "hoshino@example.invalid",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 12,
+          "end": 36,
+          "label": "private_email",
+          "text": "。hoshino@example.invalid"
+        }
+      ],
+      "elapsedMs": 311,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "新製品の説明文を読みやすくしてください。",
+      "expected": [],
+      "detected": [],
+      "elapsedMs": 214,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "来週の会議では性能と価格を比較します。",
+      "expected": [],
+      "detected": [],
+      "elapsedMs": 209,
+      "rssBytes": 3907911680
+    },
+    {
+      "input": "連絡先はｈｏｓｈｉｎｏ＠ｅｘａｍｐｌｅ．ｉｎｖａｌｉｄです。",
+      "expected": [
+        {
+          "text": "ｈｏｓｈｉｎｏ＠ｅｘａｍｐｌｅ．ｉｎｖａｌｉｄ",
+          "fullyCovered": true
+        }
+      ],
+      "detected": [
+        {
+          "start": 4,
+          "end": 27,
+          "label": "private_person",
+          "text": "ｈｏｓｈｉｎｏ＠ｅｘａｍｐｌｅ．ｉｎｖａｌｉｄ"
+        }
+      ],
+      "elapsedMs": 786,
+      "rssBytes": 3907911680
+    }
+  ],
+  "caution": "Small synthetic smoke corpus; this is not Japanese recall on real data. Includes misses and wrong categories. Rules and registered terms are evaluated separately.",
+  "longInput": {
+    "characters": 5044,
+    "tokens": 4015,
+    "cold": {
+      "elapsedMs": 50775,
+      "cacheHits": 0,
+      "inferredTexts": 1,
+      "rssBytes": 4079976448,
+      "mpsAllocatedBytes": 0,
+      "mpsDriverBytes": 0
+    },
+    "cached": {
+      "elapsedMs": 0,
+      "cacheHits": 1,
+      "inferredTexts": 0,
+      "rssBytes": 4079992832,
+      "mpsAllocatedBytes": 0,
+      "mpsDriverBytes": 0
+    },
+    "cacheSpanParity": true
+  },
+  "referenceSpanParity": true
+}

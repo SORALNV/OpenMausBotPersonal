@@ -1,0 +1,7 @@
+-e .local-privacy-filter
+torch==2.14.1
+tiktoken==0.14.0
+safetensors==0.8.0
+numpy==2.5.4
+packaging==26.3
+huggingface_hub==2.2.0

@@ -1,3 +1,4 @@
+import { PrivacyText } from "./PrivacyText";
 // Security: model output never reaches the DOM as raw HTML (no rehype-raw); Shiki's output is generator-escaped.
 import { createContext, memo, use, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { HighlighterCore } from "shiki/core";
@@ -9,7 +10,6 @@ import { Check, Copy, Download, LoaderCircle, RotateCcw, WrapText, X } from "luc
 import { useCopyFeedback } from "@/lib/copy-text";
 import { t } from "@/lib/i18n";
 import { remarkMentions, sameMentionPerson, type MentionPeer, type MentionPerson } from "@/lib/mentions";
-
 import {
   countLines,
   downloadSnippetFile,
@@ -28,7 +28,6 @@ import { MarkdownImagePreview, MessageFolderFiles, OutsideWorkspaceFile, saveFai
 import { ThreadLink, ThreadRefsContext, threadLinkFromProps, type ThreadRefsValue } from "./ThreadRefs";
 import { MarkdownTable } from "./MarkdownTable";
 import { TableFileButton } from "./TableFilePreview";
-
 const highlightCache = new Map<string, string>();
 export const HIGHLIGHT_CACHE_MAX = 200;
 export const HIGHLIGHT_CACHE_MAX_CHARS = 4 * 1024 * 1024;
@@ -1012,6 +1011,7 @@ function ChatMarkdownComponent({ text, message, mentionPeers = NO_MENTION_PEERS,
     };
   }, [needsMath]);
   const mathPlugin = needsMath && katexReady ? katexPlugin : null;
+  if (import.meta.env.VITE_OMB_PRIVACY_STRICT === "1" || (import.meta.env.VITE_OMB_PERSONAL === "1" && /⟦(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d{3,}⟧/u.test(text))) return <PrivacyText text={text} threadId={message?.threadId} />;
   return (
     <MessageScopeContext.Provider value={{ message, imageOffsets, threads, currentBotId, delivered }}>
       <div className="chat-md min-w-0 [&>*+*]:mt-2">

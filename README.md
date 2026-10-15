@@ -1,3 +1,5 @@
+> **個人用フォーク**: Codex の既存 ChatGPT ログインとスマホ接続を維持する Electron アプリは [OpenMausBot Personal](docs/personal-app.md) を参照してください。送信前に任意の文章を Mac 内で仮名化し、返答を表示専用で復元できます。別途 `pnpm privacy:dev` の厳格モードも残しています。CLI の独自通信・直接読むファイルは Personal 版の保護対象外です。
+
 <div align="center">
 
 # OpenMausBot

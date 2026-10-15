@@ -40,3 +40,8 @@ deploy/podman/.env
 deploy/podman/.env.*
 !deploy/podman/.env.example
 /.env
+
+# Local detector weights, isolated data, correspondence and development credentials.
+.privacy-dev/
+.local-privacy-filter/
+__pycache__/

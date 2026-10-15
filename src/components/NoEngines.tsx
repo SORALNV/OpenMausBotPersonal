@@ -8,6 +8,7 @@ import { WindowDragStrip } from "@/components/DesktopCapabilities";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { t } from "@/lib/i18n";
 import { brand } from "../lib/brand";
+import { PrivacySetup } from "./PrivacySetup";
 
 export function NoEngines() {
   const { state, dispatch, refreshInstances } = useStore();
@@ -22,6 +23,7 @@ export function NoEngines() {
     }
   };
 
+  if (import.meta.env.VITE_OMB_PRIVACY_STRICT === "1") return <PrivacySetup busy={rechecking} recheck={recheck} />;
   if (remoteClient) {
     return (
       <main className="relative flex h-full min-w-0 flex-1 items-center justify-center bg-app px-6">

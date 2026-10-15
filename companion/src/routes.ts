@@ -150,6 +150,7 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "DELETE", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
 
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
+  { method: "POST", path: /^\/api\/threads\/[\w-]+\/privacy\/(?:mask|display)$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
   MESSAGE_FILE_ROUTE,
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },

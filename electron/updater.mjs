@@ -80,7 +80,7 @@ export function attachUpdaterWindow(mainWindow) {
 }
 
 export function startUpdater() {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || process.env.OMB_PERSONAL_BUILD === "1") {
     updaterCoordinator = null;
     setState({ status: "idle" });
     return;

@@ -1,5 +1,9 @@
 // Import first: it reads a Cloud home's secrets off the launcher's pipe before any module can start a process.
 import { BOOT_CLOUD_SECRETS } from "./cloud-secrets-boot.ts";
+import { assertPrivacyStartup } from "./privacy/boundary.ts";
+import { privacyRequestBlocked, privacyStrict, protectPrivacySockets, PrivacyBlocked } from "./privacy/policy.ts";
+import { privacyDisplayRoute } from "./privacy/routes.ts";
+import { createPersonalPrivacyRoute } from "./privacy/personal.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -9,7 +13,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
 import { extname, join } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
-
 import { z } from "zod";
 import { selectReplay, replayToolCalls, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./context-rebuild.ts";
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
@@ -50,7 +53,6 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 import { isPendingSignInRequest, normalizeSignInSite, signInFallbackText, signInOutcome, signInResumePrompt } from "../shared/sign-in-request.ts";
-
 import { createRoomTurnLevels } from "./room-turn-level.ts";
 import { RoomMemberLock } from "./room-member-lock.ts";
 import { HELD_NOTE, approvalHeldNote, approvalHeldReason, approvalModeForOrigin, autoVerdict, deliverFullAccessApproval, delegatedApprovalMode, undeliveredApprovalTool } from "./auto-approve.ts";
@@ -236,7 +238,6 @@ import {
   type GoalRunMember,
 } from "./group-goal-run.ts";
 import type { GroupGoalRunCardData, GroupGoalRunStatus } from "../shared/group-goal-run.ts";
-
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { openCodeProviderKeysAllowed, setOpenCodeProviderKeyPolicy } from "./drivers/acp/opencode-go.ts";
 import { readMessageText, recallMessages, recentMessages, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, logNotification } from "./message-db.ts";
@@ -246,7 +247,6 @@ import { chiefEscalationsEnabled, NEEDS_INPUT_GATE, peerApprovalGate, RAISED_GAT
 import { createChiefNotices } from "./host/chief-notices.ts";
 import { needsInputQuestion } from "./runtime-coordinator.ts";
 import { RETRY_BLOCKED } from "./incidents.ts";
-
 const SESSION_READ_MAX_CHARS = 8_000;
 import { promptWithReply, transcriptText } from "./replies.ts";
 import type { DataContext } from "./data-context.ts";
@@ -625,7 +625,6 @@ import { createUsageRoutes } from "./routes/usage.ts";
 import { createBotMessageRoutes } from "./routes/bot-messages.ts";
 import { createThreadRoutes } from "./routes/threads.ts";
 import { withScopeHint } from "./connector-scope-hint.ts";
-
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
 const WEBHOOK_PUBLIC_URL = process.env.OMB_WEBHOOK_PUBLIC_URL || undefined;
@@ -642,7 +641,7 @@ const MIME: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
   ".woff2": "font/woff2",
 };
-
+assertPrivacyStartup(DATA_DIR);
 ensureDirs();
 // Acquire before any durable identity, sessions, config or Store state is loaded.
 const dataDirLease = acquireDataDirLeaseForProcess(DATA_DIR);
@@ -10604,6 +10603,7 @@ const webhooks = new WebhookManager({
 let webhookIngress: WebhookIngress | null = null;
 let webhookIngressError: string | null = null;
 try {
+  if (privacyStrict()) throw new PrivacyBlocked("厳格モードでは Webhook を起動しません。");
   webhookIngress = await listenWebhookIngress(webhooks, {
     port: WEBHOOK_PORT, publicBaseUrl: WEBHOOK_PUBLIC_URL,
     claimRequest: () => workspaceMaintenance.request(),
@@ -13733,7 +13733,7 @@ const workspaceBackupAccess = {
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
     pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    resume: () => { if (!privacyStrict()) { routines?.start(); calendarCalls?.start(); memoryUpkeep.resume(); } watchdog.start(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // Writers gated and work idle: release the WAL connection for a consistent snapshot; Store reopens it lazily.
@@ -14192,6 +14192,7 @@ ROUTES.push(createLiveRoutes({
 }));
 
 const toolResults = new ToolResults();
+const personalPrivacyRoute = createPersonalPrivacyRoute(id => Boolean(store.botByThread(id) || store.groupByThread(id)));
 const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   let url: URL;
   try {
@@ -14199,6 +14200,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   } catch {
     return json(res, 400, { error: "invalid request URL" });
   }
+  if (privacyRequestBlocked(req, url)) return json(res, 403, { error: "厳格モード: この経路は未対応のため無効です。" });
   const path = url.pathname;
   const method = req.method ?? "GET";
   let m: RegExpMatchArray | null = null;
@@ -14402,7 +14404,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
 
     // Route modules are tried here, behind the gate; do not add route `if`s below.
-    if (await dispatchRoutes(ROUTES, { req, res, url, path, method, auth, json, readBody })) return;
+    if (await dispatchRoutes([privacyDisplayRoute, personalPrivacyRoute, ...ROUTES], { req, res, url, path, method, auth, json, readBody })) return;
 
     if (method === "GET" && path === "/api/auth/session") {
       return json(
@@ -17552,9 +17554,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
 };
 
 const server = createServer(handleRequest);
-desktopViewer.attach(server, handleRequest);
+if (!protectPrivacySockets(server)) desktopViewer.attach(server, handleRequest);
 
-calendarCalls.start();
+if (!privacyStrict()) calendarCalls.start();
 
 // Resolve the edition before accepting requests so /api/edition is never a guess.
 console.log(describeEdition(await loadEnterpriseLayer()));
@@ -17656,7 +17658,7 @@ restoreChannelMessages();
 server.listen(PORT, "127.0.0.1", async () => {
   companyRuntimeReady();
   console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
-  browserSweep.start();
+  if (!privacyStrict()) browserSweep.start();
   followupsReady = true;
   drainQueuedSends();
   drainQueuedChannelSends();
@@ -17665,8 +17667,8 @@ server.listen(PORT, "127.0.0.1", async () => {
     if (companyShutdown) return;
   }
   // Only once every registry is initialized and the endpoint listens: earlier dispatch can hit uninitialized bindings.
-  routines!.start();
-  memoryUpkeep.start();
+  if (!privacyStrict()) routines!.start();
+  if (!privacyStrict()) memoryUpkeep.start();
 });
 
 // Tunnel requests have no peer address, which request-auth treats as proxied: a session is required, never loopback trust.

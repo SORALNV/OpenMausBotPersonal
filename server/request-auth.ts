@@ -301,6 +301,7 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
 
 export function requiredScope(method: string, path: string, features: { sharedComputers?: boolean } = {}): Scope {
   const upper = method.toUpperCase();
+  if (upper === "POST" && /^\/api\/threads\/[\w-]+\/privacy\/(?:mask|display)$/.test(path)) return "client";
   for (const rule of CLIENT_ALLOW) {
     if (rule.feature && features[rule.feature] !== true) continue;
     if (rule.path.test(path) && rule.methods.includes(upper)) return "client";
