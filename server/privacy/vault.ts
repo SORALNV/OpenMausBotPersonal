@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { LABELS, type PrivacyLabel, type ProtectedTerm } from "./rules.ts";
 import { PrivacyBlocked } from "./policy.ts";
 
-interface Entry extends ProtectedTerm { token: string; scope: string; scopes?: string[] }
+interface Entry extends ProtectedTerm { token: string; scope: string; scopes?: string[]; displayAliases?: string[] }
 export const TOKEN = /⟦(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d{3,}⟧/gu;
 
 export class PrivacyVault {
@@ -23,6 +23,7 @@ export class PrivacyVault {
       const data: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, "utf8")) : [];
       if (!Array.isArray(data) || data.some(e => !e || typeof e.text !== "string" || !e.text || typeof e.scope !== "string" || !Object.hasOwn(LABELS, e.label) || typeof e.token !== "string" || !/^⟦[^⟧]+_\d{3,}⟧$/u.test(e.token))) throw new Error();
       if (data.some(e => e.scopes !== undefined && (!Array.isArray(e.scopes) || e.scopes.some((s: unknown) => typeof s !== "string")))) throw new Error();
+      if (data.some(e => e.displayAliases !== undefined && (!Array.isArray(e.displayAliases) || e.displayAliases.some((s: unknown) => typeof s !== "string" || !s || s.length > 80 || /[⟦⟧\p{Cc}]/u.test(s))))) throw new Error();
       if (data.length > 20_000 || new Set(data.map(e => e.text)).size !== data.length || new Set(data.map(e => e.token)).size !== data.length) throw new Error();
       if (data.some(e => !e.token.startsWith(`⟦${LABELS[e.label as PrivacyLabel]}_`) || Number(e.token.match(/_(\d+)⟧$/u)?.[1]) > 20_000 || Number(e.token.match(/_(\d+)⟧$/u)?.[1]) < 1)) throw new Error();
       this.entries = data;
@@ -65,11 +66,20 @@ export class PrivacyVault {
     } catch { throw new PrivacyBlocked("ローカル対応表を保存できません。送信は停止しています。"); }
   }
 
+  registerAlias(scope: string, canonical: string, replacement: string): string {
+    if (this.entries.some(e => e.text !== canonical && e.displayAliases?.includes(replacement))) throw new PrivacyBlocked("この置換名は以前の別の語句に使用されています。別の置換名にしてください。");
+    const token = this.replace(scope, canonical, "private_person");
+    const entry = this.entries.find(e => e.token === token)!;
+    if (!entry.displayAliases?.includes(replacement)) (entry.displayAliases ??= []).push(replacement);
+    return token;
+  }
+
   /** Display only. Callers must never feed this result into model requests, tools, or logs. */
   hasToken(token: string): boolean { return this.entries.some(e => e.token === token); }
 
   restoreForDisplay(scope: string, text: string): string {
     const entries = new Map(this.entries.filter(e => e.scope === scope || e.scopes?.includes(scope)).map(e => [e.token, e.text]));
-    return text.replace(TOKEN, token => entries.get(token) ?? token);
+    const aliases = new Map<string, string>(this.entries.filter(e => e.scope === scope || e.scopes?.includes(scope)).flatMap(e => (e.displayAliases ?? []).map(alias => [`⟦${alias}⟧`, e.text] as const)));
+    return text.replace(/⟦[^⟦⟧\r\n]{1,100}⟧/gu, token => aliases.get(token) ?? entries.get(token) ?? token);
   }
 }

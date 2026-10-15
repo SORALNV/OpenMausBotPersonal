@@ -3,11 +3,14 @@ import { PASS, type RouteHandler } from "../routes/table.ts";
 import { LocalDetector } from "./detector.ts";
 import { PrivacyGuard } from "./guard.ts";
 import { PrivacyVault } from "./vault.ts";
+import type { PersonalPrivacyService } from "./service.ts";
 
 /** Explicit text preparation only; this route never invokes an agent, sends a message, or restores tool arguments. */
-export function createPersonalPrivacyRoute(hasThread: (id: string) => boolean, options: { enabled?: boolean; guard?: PrivacyGuard } = {}): RouteHandler {
+export function createPersonalPrivacyRoute(hasThread: (id: string) => boolean, options: { enabled?: boolean; guard?: PrivacyGuard; service?: PersonalPrivacyService } = {}): RouteHandler {
   let guard = options.guard;
-  return async ({ req, res, path, method, readBody, json }) => {
+  return async (ctx) => {
+    if (options.service && await options.service.settingsRoute(ctx) !== PASS) return;
+    const { req, res, path, method, readBody, json } = ctx;
     const match = path.match(/^\/api\/threads\/([\w-]+)\/privacy\/(mask|display)$/);
     if (!match || method !== "POST") return PASS;
     res.setHeader("cache-control", "no-store");
@@ -19,6 +22,10 @@ export function createPersonalPrivacyRoute(hasThread: (id: string) => boolean, o
     const names: unknown = body.names ?? [];
     if (!Array.isArray(names) || names.length > 50 || names.some(name => typeof name !== "string" || !name.trim() || name.length > 100)) return json(res, 400, { error: "保護する氏名は1件100文字以内・50件以内で指定してください。" });
     try {
+      if (options.service) {
+        const text = match[2] === "mask" ? await options.service.mask(match[1], body.text, names as string[]) : options.service.display(match[1], body.text);
+        return json(res, 200, { text });
+      }
       if (!guard) {
         guard = new PrivacyGuard(new PrivacyVault(join(process.env.OMB_DATA_DIR!, "private")), new LocalDetector());
         process.once("exit", () => guard?.close());

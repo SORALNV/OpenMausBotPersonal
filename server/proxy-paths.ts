@@ -11,6 +11,7 @@ export function resolveProxy(relative: string): string {
 }
 
 export const SPAWNED_PROXIES = {
+  privacy: resolveProxy("privacy-mcp-proxy"),
   harnessMcp: resolveProxy("harness-mcp-proxy"),
   localComputer: resolveProxy("local-computer-proxy"),
   permission: resolveProxy("permission-proxy"),

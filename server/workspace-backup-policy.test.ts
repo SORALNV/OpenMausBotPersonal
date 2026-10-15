@@ -66,6 +66,11 @@ describe("workspace backup data boundary", () => {
     for (const path of ["mcp-oauth.json.md", "workspaces/bot/mcp-oauth.json"]) expect(excludedWorkspaceAuthPath(path)).toBe(false);
   });
 
+  it("keeps privacy aliases, rules and mappings on the destination Mac", () => {
+    for (const path of ["private", "private/settings.json", "private/vault.json", "private/terms.json", "private/vault.json.uuid.tmp"]) expect(excludedWorkspaceAuthPath(path)).toBe(true);
+    for (const path of ["private.md", "attachments/private.txt", "workspaces/bot/private/notes.md"]) expect(excludedWorkspaceAuthPath(path)).toBe(false);
+  });
+
   it("never exports the per-turn hook token directory, and only that directory", () => {
     for (const path of ["hook-tokens", "hook-tokens/0123456789abcdef01234567.token", "sessions.json.open"]) expect(ephemeralWorkspaceTokenPath(path)).toBe(true);
     for (const path of ["hook-tokens.md", "workspaces/bot/hook-tokens/notes.md", "attachments/api.token", "sessions.json.opened", "workspaces/bot/sessions.json.open"]) expect(ephemeralWorkspaceTokenPath(path)).toBe(false);

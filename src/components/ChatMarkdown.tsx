@@ -996,7 +996,7 @@ function ChatMarkdownComponent({ text, message, mentionPeers = NO_MENTION_PEERS,
     };
   }, [needsMath]);
   const mathPlugin = needsMath && katexReady ? katexPlugin : null;
-  if (import.meta.env.VITE_OMB_PRIVACY_STRICT === "1" || (import.meta.env.VITE_OMB_PERSONAL === "1" && /⟦(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d{3,}⟧/u.test(text))) return <PrivacyText text={text} threadId={message?.threadId} />;
+  if (import.meta.env.VITE_OMB_PRIVACY_STRICT === "1" || (import.meta.env.VITE_OMB_PERSONAL === "1" && /⟦[^⟦⟧\r\n]{1,100}⟧/u.test(text))) return <PrivacyText text={text} threadId={message?.threadId} />;
   return (
     <MessageScopeContext.Provider value={{ message, imageOffsets, threads, currentBotId, delivered }}>
       <div className="chat-md min-w-0 [&>*+*]:mt-2">

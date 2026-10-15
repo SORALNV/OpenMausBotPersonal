@@ -1,6 +1,9 @@
 import { PASS, type RouteHandler } from "../routes/table.ts";
 import { restorePrivacyDisplay } from "./boundary.ts";
 import { privacyStrict } from "./policy.ts";
+import { join } from "node:path";
+import { PersonalPrivacyService } from "./service.ts";
+import { createPersonalPrivacyRoute } from "./personal.ts";
 
 export const privacyDisplayRoute: RouteHandler = async ({ req, res, path, method, auth, readBody, json }) => {
   if (path === "/api/privacy/status" && method === "GET") {
@@ -18,3 +21,12 @@ export const privacyDisplayRoute: RouteHandler = async ({ req, res, path, method
   return json(res, 200, { text: restorePrivacyDisplay(body.threadId, body.text) });
 };
 export { createPersonalPrivacyRoute } from "./personal.ts";
+export { PersonalPrivacyService } from "./service.ts";
+export { assertPrivacyStartup } from "./boundary.ts";
+export { privacyRequestBlocked, privacyStrict, protectPrivacySockets, PrivacyBlocked } from "./policy.ts";
+export function createPersonalPrivacyRoutes(dataDir: string, hasThread: (id: string) => boolean, run: ConstructorParameters<typeof PersonalPrivacyService>[1]) {
+  const personalPrivacy = new PersonalPrivacyService(join(dataDir, "private"), run);
+  personalPrivacy.start();
+  process.once("exit", () => personalPrivacy.close());
+  return { personalPrivacy, personalPrivacyRoute: createPersonalPrivacyRoute(hasThread, { service: personalPrivacy }) };
+}

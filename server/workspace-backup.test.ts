@@ -325,6 +325,7 @@ describe("encrypted full workspace backups", () => {
     const source = directory();
     const target = directory();
     const authPaths = [
+      "private/settings.json", "private/vault.json", "private/terms.json",
       "workspace-credentials.json", "browser-engine-key", "config.json.123.tmp",
       "external-runtimes.json", "external-runtimes.json.123.tmp",
       "providers/account/auth.json", "providers/antigravity/account/acp_token.json",

@@ -1,8 +1,6 @@
 // Import first: it reads a Cloud home's secrets off the launcher's pipe before any module can start a process.
 import { BOOT_CLOUD_SECRETS } from "./cloud-secrets-boot.ts";
-import { assertPrivacyStartup } from "./privacy/boundary.ts";
-import { privacyRequestBlocked, privacyStrict, protectPrivacySockets, PrivacyBlocked } from "./privacy/policy.ts";
-import { privacyDisplayRoute, createPersonalPrivacyRoute } from "./privacy/routes.ts";
+import { assertPrivacyStartup, privacyRequestBlocked, privacyStrict, protectPrivacySockets, PrivacyBlocked, privacyDisplayRoute, createPersonalPrivacyRoutes } from "./privacy/routes.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -9253,7 +9251,7 @@ async function startTurn(
         systemStable: prompt.stable,
         systemVolatile: prompt.volatile,
         mentionTurn: tagged.length > 0,
-        integrations,
+        integrations: personalPrivacy.wrap(threadId, integrations),
         ...(integrations.browser && browserIsThePlace(plan) ? { preloadBrowserTools: true } : {}),
         ...settingsTurnFields(cfg, DATA_DIR, managedPolicy.restrictsMcp()),
         cwd,
@@ -9678,7 +9676,7 @@ routines = new RoutineManager({
     }
   },
   startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {
-    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+    await startTurn(botId, await personalPrivacy.prompt(threadId, prompt), { threadId, runOn, automationSource: triggerSource, onDispatchError });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
@@ -11375,7 +11373,7 @@ async function runClaimedGroupMemberTurn(
         systemStable: roomSystem.stable,
         systemVolatile: roomSystem.volatile,
         cwd,
-        integrations,
+        integrations: personalPrivacy.wrap(threadId, integrations),
         ...(integrations.browser && browserIsThePlace(roomPlan) ? { preloadBrowserTools: true } : {}),
         ...settingsTurnFields(cfg, DATA_DIR, managedPolicy.restrictsMcp()),
         ...(instance.instanceId === readyBot.modelSelection.instanceId
@@ -14093,7 +14091,7 @@ ROUTES.push(createLiveRoutes({
 }));
 
 const toolResults = new ToolResults();
-const personalPrivacyRoute = createPersonalPrivacyRoute(id => Boolean(store.botByThread(id) || store.groupByThread(id)));
+const { personalPrivacy, personalPrivacyRoute } = createPersonalPrivacyRoutes(DATA_DIR, id => Boolean(store.botByThread(id) || store.groupByThread(id)), id => routines?.runForThread(id) ?? null);
 const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   let url: URL;
   try {
@@ -14586,6 +14584,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           throw Object.assign(new Error("the internal turn capability has expired"), { status: 401 });
         }
       };
+      if (await dispatchRoutes([personalPrivacy.internalRoute(internalCapability.threadId, requireActiveInternalCapability)], { req, res, url, path, method, auth, json, readBody: readInternalBody })) return;
       const delegatedThisTurn = (taskId: string) => {
         (internalCapability.delegatedThisTurn ??= new Set()).add(taskId);
       };

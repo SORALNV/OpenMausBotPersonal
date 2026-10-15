@@ -21,6 +21,7 @@ import { rebuiltSessionNotice } from "../resume-recovery.ts";
 import { startFakeHttpMcp, type FakeHttpMcp } from "../testing/fake-http-mcp-server.ts";
 import * as procs from "../procs.ts";
 import { autoVerdict } from "../auto-approve.ts";
+import { wrapPrivacyIntegrations } from "../privacy/integrations.ts";
 import { formatQuestionAnswers } from "../../shared/ask-question.ts";
 
 vi.mock("./codex-release.ts", async (importOriginal) => ({
@@ -1089,6 +1090,24 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
     expect(seen.env.NOTES_TOKEN).toBe("tok-notes");
     expect(argv).toContain('mcp_servers.openmausbot_connectors.default_tools_approval_mode');
     expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
+  });
+
+  it("mounts routine privacy wrappers without putting their bearer in argv or the Codex shell, preserving custom-tool approval", async () => {
+    await create();
+    const dump = join(scratch, "privacy-mount.json"); process.env.FAKE_CODEX_DUMP = dump;
+    const integrations = wrapPrivacyIntegrations({
+      agents: { command: process.execPath, args: ["/fixture/agents.js"], env: { OMB_HARNESS_URL: "http://127.0.0.1:1234", OMB_COMMS_TOKEN: "synthetic-privacy-bearer" } },
+      custom: { notes: { command: process.execPath, args: ["/fixture/notes.js"], env: {} } },
+    }, ["custom"]);
+    const key = Object.keys((integrations!.custom!.notes as { env: Record<string, string> }).env).find(name => name.startsWith("MAUS_PRIVACY_PROXY_"))!;
+    await instance.adapter.sendTurn({ threadId: "t-private-routine-mcp", text: "Synthetic only", integrations });
+    await recorder.until(event => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8")); const argv = seen.argv.join(" ");
+    expect(argv).toContain("privacy-mcp-proxy"); expect(argv).not.toContain("synthetic-privacy-bearer");
+    expect(seen.argv).toContain("features.shell_snapshot=false");
+    const thread = seen.calls.find((call: { method: string }) => call.method === "thread/start");
+    expect(thread.params.config["shell_environment_policy.exclude"]).toContain(key);
+    expect(argv).not.toContain("mcp_servers.notes.default_tools_approval_mode");
   });
 
   it("mounts a custom server under its own name when the user's config.toml already has one by that name", async () => {

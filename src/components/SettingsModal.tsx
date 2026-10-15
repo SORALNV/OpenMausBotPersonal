@@ -42,7 +42,8 @@ import { ChatWidthRow, FontRow, SidebarToolsLayoutRow } from "./AppearanceSelect
 import { setColorUserBubbles, useColorUserBubbles } from "@/lib/user-bubble-preference";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { McpCallTimeoutSettings } from "./McpCallTimeoutSettings";
-import { AboutMeSettings } from "./AboutMeSettings";
+import { ProfileFields } from "./ProfileSettingsFields";
+import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
 import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
 import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
@@ -78,7 +79,7 @@ export const SECTIONS: Array<{
   icon: typeof User;
   keywords: string[];
 }> = [
-  { id: "general", group: "you", labelKey: "settings.section.general", icon: User, keywords: ["profile", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule"] },
+  { id: "general", group: "you", labelKey: "settings.section.general", icon: User, keywords: ["profile", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule", "privacy", "mask", "個人情報", "マスク", "仮名化"] },
   { id: "appearance", group: "you", labelKey: "settings.section.appearance", icon: Palette, keywords: ["skin", "theme", "appearance", "chat width", "width", "wide", "full width", "bubble", "bubbles", "tools", "tool calls", "threads", "show threads", "hide threads", "sidebar", "density", "compact", "comfortable", "avatars", "display", "run", "this run", "run card", "commands", "notifications", "sound", "sounds", "mute", "silent", "chime", "pinned", "circles", "universal", "groups", "top", "send", "enter", "return", "shift+enter", "ctrl+enter", "cmd+enter", "⌘+enter", "new line", "keyboard", "ime", "japanese", "message color", "my messages", "toolbar", "tools layout", "footer", "routines", "triggers", "team map"] },
   { id: "companion", group: "you", labelKey: "settings.section.companion", icon: TabletSmartphone, keywords: ["companion", "device", "phone", "desktop", "client", "host", "pair", "pairing", "mobile", "https", "secure", "tailscale", "wifi", "remote", "advanced", "domain", "dns", "self-hosted", "server", "caddy"] },
   { id: "engines", group: "ai", labelKey: "settings.section.engines", icon: Terminal, keywords: ["models", "model providers", "engines", "claude", "codex", "grok", "providers", "cli", "sign in", "subscription"] },
@@ -154,46 +155,6 @@ export function sectionMatches(section: (typeof SECTIONS)[number], query: string
   return [t(section.labelKey), ...section.keywords].some((part) => part.toLowerCase().includes(query));
 }
 
-function ProfileFields() {
-  const { state, dispatch } = useStore();
-  const [name, setName] = useState(state.config?.profile?.name ?? "");
-  const [email, setEmail] = useState(state.config?.profile?.email ?? "");
-  useEffect(() => {
-    setName(state.config?.profile?.name ?? "");
-    setEmail(state.config?.profile?.email ?? "");
-  }, [state.config?.profile?.name, state.config?.profile?.email]);
-
-  const save = () => {
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    })
-      .then((r) => { if (!r.ok) throw new Error("Profile save failed"); return r.json(); })
-      .then((config: ConfigStatus) => {
-        if (config.profile) dispatch({ type: "profileSaved", profile: { name: config.profile.name, email: config.profile.email } });
-      })
-      .catch(() => {});
-  };
-
-  const inputClass =
-    "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none";
-  return (
-    <div className="flex flex-col gap-3">
-      <input aria-label={t("settings.profile.name")} value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder={t("settings.profile.name")} className={inputClass} />
-      <input
-        type="email"
-        aria-label={t("phone.signIn.email")}
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onBlur={save}
-        placeholder="you@example.com"
-        className={inputClass}
-      />
-      <AboutMeSettings />
-    </div>
-  );
-}
 
 export function UpdatesRow() {
   const s = useUpdaterState();
@@ -850,6 +811,7 @@ export function SettingsModal() {
         return (
           <>
             <AdvancedModeRow />
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
 
             <ProSettingsCard />
             <Card title={t("settings.profile.title")} subtitle={t("settings.profile.sharedSubtitle")}>
