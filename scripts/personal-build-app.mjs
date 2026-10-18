@@ -30,6 +30,7 @@ run(process.execPath, ["scripts/bundle-server.mjs"]);
 run(join(repo, "node_modules/.bin/tsc"), ["-p", "tsconfig.companion.build.json"]);
 run(process.execPath, ["scripts/mark-module-scope.mjs", "dist-companion"]);
 run(process.execPath, ["node_modules/vite/bin/vite.js", "build"], { ...process.env, VITE_OMB_PRIVACY_STRICT: "0", VITE_OMB_PERSONAL: "1" });
+run(process.execPath, ["electron/build-speech-helper.mjs"]);
 mkdirSync(build, { recursive: true, mode: 0o700 });
 run("/usr/bin/ditto", [base, app]);
 const resources = join(app, "Contents", "Resources");
@@ -38,6 +39,9 @@ for (const [source, target] of [["dist", "ui"], ["dist-server", "server"], ["dis
   rmSync(dest, { recursive: true, force: true });
   cpSync(join(repo, source), dest, { recursive: true });
 }
+const speechBundle = "OpenMausBot Speech.app";
+rmSync(join(resources, speechBundle), { recursive: true, force: true });
+cpSync(join(repo, "electron/resources", speechBundle), join(resources, speechBundle), { recursive: true });
 const source = join(build, "source");
 mkdirSync(source);
 cpSync(join(repo, "electron"), join(source, "electron"), { recursive: true, filter: p => !/\.(?:test|node-test)\./.test(p) && !p.includes("/fixtures/") });
@@ -64,9 +68,11 @@ const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHas
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), info]);
 rmSync(join(resources, "app-update.yml"), { force: true });
 const signing = withPersonalSigning(join(repo, ".privacy-dev", "personal-signing"), ({ identity, keychain }) => {
+  run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), join(resources, speechBundle)]);
+  const speechHelperRequirement = personalSigningRequirement(join(resources, speechBundle), identity);
   run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
-  return { kind: "local-certificate", certificateSha1: identity, designatedRequirement: personalSigningRequirement(app, identity) };
+  return { kind: "local-certificate", certificateSha1: identity, designatedRequirement: personalSigningRequirement(app, identity), speechHelperRequirement };
 });
 const evidence = join(repo, ".privacy-dev", "evidence", "personal-app-build.json");
 writeFileSync(evidence, JSON.stringify({ app, base, version: pkg.version, sourceCommit, upstreamCommit, signing, builtAt: new Date().toISOString(), installed: false }, null, 2), { mode: 0o600 });

@@ -151,11 +151,14 @@ export function Composer({
     draftId,
     !group && bot ? `bot:${bot.id}` : undefined,
   );
+  const textRef = useRef(text);
+  textRef.current = text;
   const attachmentPending = useDraftAttachmentPending(draftId);
   const failedSends = useFailedComposerSends(draftId);
   const [channelMode, setChannelMode] = useComposerChannelMode(draftId);
   const editText = useCallback(
     (next: string) => {
+      textRef.current = next;
       markDraftEdited(draftId);
       setText(next);
     },
@@ -205,6 +208,12 @@ export function Composer({
     [text, editText, editAttachments],
   );
   const [recording, setRecording] = useState(false);
+  const stopDictationRef = useRef<(() => void) | null>(null);
+  const recordingDraftId = useRef<string | null>(null);
+  const stopDictation = () => {
+    stopDictationRef.current?.();
+    setRecording(false);
+  };
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
@@ -556,6 +565,7 @@ export function Composer({
     }
     const composed = composeMessage(serializeThreadRefs(effectiveText, threads, currentBotId), attachments);
     if (!composed) return;
+    stopDictation();
     const body = restoredRequestText(draftId) ?? composed;
     const dataContext = dataContextFor(body, state.computerOpen ? state.dataView : null, !group && bot ? { botId: bot.id, threadId } : undefined);
     const sentDraft: ComposerDraftSnapshot = {
@@ -666,19 +676,40 @@ export function Composer({
 
   useEffect(() => {
     if (!recording) return;
+    if (recordingDraftId.current !== draftId) {
+      setRecording(false);
+      return;
+    }
     const bridge = window.ogb;
     if (!bridge) {
       setRecording(false);
       return;
     }
     setSpeechError(null);
+    let active = true;
+    let lastDraftText = baseText.current;
+    const stop = () => {
+      if (!active) return;
+      active = false;
+      void bridge.speechStop();
+      setRecording(false);
+    };
+    stopDictationRef.current = stop;
     const offTranscript = bridge.onSpeechTranscript((line) => {
-      if (typeof line.text === "string") {
+      if (!active || draftIdRef.current !== draftId) return;
+      if (textRef.current !== lastDraftText) {
+        stop();
+        return;
+      }
+      if (typeof line.text === "string" && line.text.trim()) {
         const base = baseText.current;
-        editText(base ? `${base} ${line.text}` : line.text);
+        lastDraftText = base ? `${base}${/\s$/.test(base) ? "" : " "}${line.text}` : line.text;
+        editText(lastDraftText);
       }
     });
     const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
+      if (!active || draftIdRef.current !== draftId) return;
+      active = false;
       setRecording(false);
       if (code === 2) {
         setSpeechError(t("composer.dictation.macOnly"));
@@ -692,21 +723,32 @@ export function Composer({
         ));
       }
     });
-    void bridge.speechStart();
+    void bridge.speechStart().catch(() => {
+      if (!active) return;
+      stop();
+      setSpeechError(t("composer.dictation.failed"));
+    });
     return () => {
+      if (stopDictationRef.current === stop) stopDictationRef.current = null;
+      active = false;
       offTranscript();
       offEnd();
       void bridge.speechStop();
     };
-  }, [recording, editText]);
+  }, [recording, editText, draftId]);
 
   const toggleMic = () => {
     if (!capabilities.dictation.available || !window.ogb) {
       setSpeechError(t("composer.dictation.unavailable"));
       return;
     }
-    baseText.current = text.trim();
-    setRecording((r) => !r);
+    if (recording) {
+      stopDictation();
+      return;
+    }
+    baseText.current = text;
+    recordingDraftId.current = draftId;
+    setRecording(true);
   };
 
   return (
@@ -964,6 +1006,7 @@ export function Composer({
           rows={1}
           value={text}
           onChange={(e) => {
+            if (recording) stopDictation();
             editText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setDismissedAt(null);
@@ -1035,7 +1078,7 @@ export function Composer({
               }
               send();
             }
-            if (e.key === "Escape" && recording) setRecording(false);
+            if (e.key === "Escape" && recording) stopDictation();
           }}
           // Not disabled during an upload: a disabled element drops keyboard focus for good. send() refuses while one
           // is pending.
@@ -1083,7 +1126,7 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!locked && !busy && !hasContent && capabilities.dictation.available && (
+        {!locked && !busy && capabilities.dictation.available && (
           <button
             onClick={toggleMic}
             aria-label={recording ? t("composer.dictation.stop") : t("composer.dictation.start")}
