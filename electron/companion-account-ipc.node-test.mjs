@@ -1,3 +1,4 @@
+import { runtimeAppVersion } from "./runtime-resources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -20,6 +21,7 @@ test("the desktop holds its address on demand, read from the running companion",
   let answer = async () => ({ enabled: true, devices: [], pairing: null });
   const stateReads = [];
   const context = vm.createContext({
+    runtimeAppVersion,
     companionAccountService: null,
     resolveCompanionControlPlaneURL: () => "",
     createControlPlaneClient: () => null,
@@ -74,6 +76,7 @@ test("prepare is local-only, takes nothing from the page, and an organisation ca
   let refusal = null;
   localOrigin.setLocalOrigin(origin);
   const context = vm.createContext({
+    runtimeAppVersion,
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
     localOnly: localOrigin.localOnly,
     managedRemoteAccessRefusal: () => refusal,

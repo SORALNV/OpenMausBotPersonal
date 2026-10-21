@@ -51,7 +51,7 @@ test("main forks what the helper picks and hands only the server the cache direc
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = main.indexOf("async function startServerOn(port,");
   const body = main.slice(start, main.indexOf("utilityProcess.fork(entry", start));
-  assert.match(body, /const \{ entry, compileCacheDir \} = serverChildLaunch\(\{\n\s+resourcesPath: process\.resourcesPath,\n\s+userData: app\.getPath\("userData"\),/);
+  assert.match(body, /const \{ entry, compileCacheDir \} = serverChildLaunch\(\{\n\s+resourcesPath: runtimeResourcesPath,\n\s+userData: app\.getPath\("userData"\),/);
   assert.match(body, /delete childEnv\.OMB_SERVER_COMPILE_CACHE;\n\s+if \(compileCacheDir\) childEnv\.OMB_SERVER_COMPILE_CACHE = compileCacheDir;/);
   assert.doesNotMatch(body, /path\.join\(process\.resourcesPath, "server", "index\.js"\)/);
 });

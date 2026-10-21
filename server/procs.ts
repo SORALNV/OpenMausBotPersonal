@@ -12,7 +12,9 @@ import {
 import { existsSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
+import { engineMemory } from "./engine-memory.ts";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
+import { OOM_SCORE, spawnWithOomScore } from "./oom-score.ts";
 
 export function resolveCli(cli: string, args: string[] = [], env?: NodeJS.ProcessEnv): ResolvedSpawn {
   return resolveCliSpawn(cli, args, env);
@@ -45,24 +47,56 @@ export function assertSafeCliArgv(
 const cliGroups = new WeakSet<ChildProcess>();
 const stopping = new WeakMap<ChildProcess, Promise<boolean>>();
 
+const MAX_ENDED_SESSIONS = 4_096;
+const engineSessions = { live: new Set<number>(), ended: new Set<number>() };
+
+/** POSIX session ids of the engines that run bots' turns (each leads its own session). A server opened by any
+ * process in one counts as the bot's, even after the shell that started it exits. */
+export function botEngineSessions(): { live: ReadonlySet<number>; ended: ReadonlySet<number> } {
+  return engineSessions;
+}
+
+function rememberEngineSession(child: ChildProcess): void {
+  const pid = child.pid;
+  if (!pid) return;
+  engineSessions.live.add(pid);
+  child.once("exit", () => {
+    engineSessions.live.delete(pid);
+    engineSessions.ended.add(pid);
+    if (engineSessions.ended.size > MAX_ENDED_SESSIONS) engineSessions.ended.delete(engineSessions.ended.values().next().value!);
+  });
+}
+
+/** `bot`: an engine running bots' turns, whose own servers that bot's browser may open on a server host.
+ * `openmausbot`: everything else (logins, probes, the browser engine itself). */
+export type CliOwner = "bot" | "openmausbot";
+
 export function spawnCli(
   cli: string,
   args: string[],
   opts: SpawnOptions,
+  owner: CliOwner = "openmausbot",
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
-  const child = spawn(resolved.command, resolved.args, {
+  const start = () => spawn(resolved.command, resolved.args, {
     ...opts,
     // POSIX: own group so kill(-pid) reaps child MCP servers; Windows: taskkill /T does it.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  const child = owner === "bot" ? spawnWithOomScore(OOM_SCORE.engine, start) : start();
   if (process.platform !== "win32") cliGroups.add(child);
+  if (process.platform !== "win32" && owner === "bot") {
+    rememberEngineSession(child);
+    engineMemory.track(child);
+  }
 
   // On Windows a stdin write between taskkill and pipe close errors asynchronously; unlistened, that crashes the harness.
   child.stdin?.on("error", () => {});
   return child;
 }
+
+const EXEC_KILL_GRACE_MS = 2_000;
 
 export function execCli(
   cli: string,
@@ -77,9 +111,17 @@ export function execCli(
     queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", ""));
     return;
   }
-  execFile(resolved.command, resolved.args, { ...opts, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) =>
-    cb(err, stdout, stderr),
-  );
+  let escalate: NodeJS.Timeout | undefined;
+  const child = execFile(resolved.command, resolved.args, { ...opts, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) => {
+    clearTimeout(escalate);
+    cb(err, stdout, stderr);
+  });
+  // Node (24) calls back only once the child exits, and a CLI wrapper that traps SIGTERM outlives the timeout's signal.
+  // Only the child is stopped: execFile starts no process group, so a grandchild that ignores SIGTERM can outlive it.
+  if (opts.timeout) {
+    escalate = setTimeout(() => void killCliTree(child, 0), opts.timeout + EXEC_KILL_GRACE_MS);
+    escalate.unref?.();
+  }
 }
 
 /** Node reports a missing cwd as the CLI's own ENOENT, so pass `cwd` to tell a moved folder from a missing CLI. */

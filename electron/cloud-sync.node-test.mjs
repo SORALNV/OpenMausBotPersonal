@@ -22,7 +22,7 @@ function setup(t, { origin = "https://omb-u-aaaaaaaaaaaa.fly.dev" } = {}) {
   const service = createCloudFilesService({
     settingsFile: join(dir, "user", "settings.json"), stateFile: join(dir, "user", "state.db"),
     documentsDir: join(home, "Documents"), localDataDir: join(home, ".openmausbot"), homeDir: home,
-    platform: "linux", hostname: "Ash-PC", cloudOrigin: () => current.origin, fetch: async () => { throw new Error("no network in tests"); },
+    platform: process.platform, hostname: "Ash-PC", cloudOrigin: () => current.origin, fetch: async () => { throw new Error("no network in tests"); },
     trashItem: async (file) => rmSync(file), markDownloaded: async () => {},
     createClient: () => holder.cloud.client, watch: () => () => {}, freeBytes: () => 100 * 1024 ** 3, now: () => clock.now,
   });
@@ -37,6 +37,11 @@ test("checks a folder before sharing: too broad, private, MausBot's own, or alre
   mkdirSync(join(s.home, "Documents", "MausBot"), { recursive: true });
   assert.equal((await s.service.check(s.home)).refusal, "too-broad");
   assert.equal((await s.service.check(join(s.home, ".ssh"))).refusal, "private");
+  for (const cli of [".claude", ".codex", ".gemini", ".grok"]) {
+    mkdirSync(join(s.home, cli, "skills"), { recursive: true });
+    assert.equal((await s.service.check(join(s.home, cli))).refusal, "private");
+    assert.equal((await s.service.check(join(s.home, cli, "skills"))).refusal, "private");
+  }
   assert.equal((await s.service.check(join(s.home, ".openmausbot", "files"))).refusal, "app-data");
   assert.equal((await s.service.check(join(s.home, "Documents"))).refusal, "app-data");
   assert.equal((await s.service.check(join(s.home, "nope"))).refusal, "not-a-folder");

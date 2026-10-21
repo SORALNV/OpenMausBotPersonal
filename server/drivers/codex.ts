@@ -1,3 +1,4 @@
+import { mountMcpServer, type McpApprovalMode } from "./codex-mcp-mount.ts";
 import { codexToolSurfaceArgs } from "./codex-tool-surface.ts";
 import { codexShellDisabled, GUEST_CONFINED_CODEX_ARGS } from "./codex-guest.ts";
 import { TEAM_TOOLS_FAILED, teamToolsFailed } from "./team-tools.ts";
@@ -7,7 +8,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { codexConfigMcpServerNames, mountedMcpServerName } from "./codex-mcp-names.ts";
+import { codexConfigMcp, codexConfigRunsServer, mountedMcpServerName } from "./codex-mcp-names.ts";
 
 import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
 import { laterStartup, openStartupModelCatalog, writeStartupModelCache } from "../startup-model-catalog.ts";
@@ -16,7 +17,7 @@ import { cloudHomeConfigured } from "../cloud-home.ts";
 import { serverVersion } from "../environment.ts";
 import { ChatGptPlanAuthController } from "./chatgpt-plan-auth.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli, waitForExit } from "../procs.ts";
-import { codexLaunchesStarting, codexLaunchSlot, codexRpcTimeoutMs, keepStopping, RELAUNCH_EXIT_WAIT_MS, spawnHoldingSlot, tryCodexLaunchSlot } from "./codex-process.ts";
+import { codexLaunch, codexLaunchesStarting, codexLaunchSlot, codexRpcTimeoutMs, keepStopping, RELAUNCH_EXIT_WAIT_MS, spawnHoldingSlot, tryCodexLaunchSlot } from "./codex-process.ts";
 import { isReservedMcpEnvEntry } from "../mcp-registry.ts";
 
 import type {
@@ -46,7 +47,7 @@ import { volatileContextNote, withContextNote } from "./prompt-split.ts";
 import type { ApprovalMode } from "../../shared/approval-mode.ts";
 import { CodexDeviceAuthController } from "./codex-device-auth.ts";
 import { codexAccountEmail, codexHome } from "./codex-identity.ts";
-import { CODEX_MISSING_CREDENTIALS, CODEX_SIGN_IN_EXPIRED, codexNotSignedIn, codexSignInExpired, codexSignInRefused, codexUserError, type CodexRoute } from "./codex-errors.ts";
+import { CODEX_MISSING_CREDENTIALS, CODEX_SIGN_IN_EXPIRED, codexLimitFacts, codexNotSignedIn, codexSignInExpired, codexSignInRefused, codexUserError, type CodexRoute } from "./codex-errors.ts";
 import { codexLoginCheck, codexLoginStatus, storedCodexLogin } from "./codex-login.ts";
 import { keyRejected, noteKeyAccepted, noteKeyRejected } from "../key-rejections.ts";
 import { classifyResumeFailure, mayReplay, rebuiltSessionNotice, recoveryPromptFor } from "../resume-recovery.ts";
@@ -183,11 +184,6 @@ function noteRenamedMcpServer(name: string, mountName: string): void {
   if (renamedMcpServers.has(name)) return;
   renamedMcpServers.add(name);
   console.error(`codex: MCP server ${JSON.stringify(name)} is also declared in Codex's own config.toml — mounted as ${JSON.stringify(mountName)} for this bot so the two do not merge`);
-}
-
-/** JSON string quoting is valid TOML basic-string quoting. */
-function tomlInlineTable(entries: Record<string, string>): string {
-  return `{ ${Object.entries(entries).map(([key, value]) => `${JSON.stringify(key)} = ${JSON.stringify(value)}`).join(", ")} }`;
 }
 
 interface CodexApprovalParams {
@@ -487,34 +483,6 @@ export function codexNativeIncomingLogMessage(
   return message;
 }
 
-/** Codex's default for one MCP server's tools (openai/codex#17843): "auto"
- * runs without asking only tools the server marks read-only, "approve" runs
- * every tool without asking, "prompt" asks for each call. */
-type McpApprovalMode = "approve" | "auto" | "prompt";
-
-function mountMcpServer(
-  appServerArgs: string[],
-  env: Record<string, string | undefined>,
-  name: string,
-  server: StdioMcpSpec,
-  approval: McpApprovalMode = "auto",
-  /** Written into the mount's own `env` table: its process gets them, Codex's command shell does not. */
-  literalEnv: Record<string, string> = {},
-  written: Set<string> = new Set(),
-): void {
-  const prefix = `mcp_servers.${name}`;
-  Object.assign(env, server.env);
-  for (const name of Object.keys(server.env)) written.add(name);
-  appServerArgs.push(
-    "-c", `${prefix}.command=${JSON.stringify(server.command)}`,
-    "-c", `${prefix}.args=${JSON.stringify(server.args)}`,
-    // argv carries names only, so credentials never appear in process listings.
-    "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(server.env))}`,
-  );
-  if (Object.keys(literalEnv).length) appServerArgs.push("-c", `${prefix}.env=${tomlInlineTable(literalEnv)}`);
-  if (approval !== "prompt") appServerArgs.push("-c", `${prefix}.default_tools_approval_mode="${approval}"`);
-}
-
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
@@ -786,16 +754,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.browser) {
           mountSelected("browser", "browser", turn.integrations.browser);
         }
-        if (turn.integrations?.data) {
-          mountSelected("data", "data", turn.integrations.data);
-        }
+        for (const name of ["data", "highlevel"] as const) if (turn.integrations?.[name]) mountSelected(name, name, turn.integrations[name]);
         // A `-c` override merges with a same-named server in config.toml, and stdio over url is
         // "invalid configuration" that kills the turn, so such a server mounts under its own name.
-        const declaredInCodexConfig = codexConfigMcpServerNames(env);
+        const codexConfig = codexConfigMcp(env), declaredInCodexConfig = codexConfig.names;
         if (turn.toolScope !== undefined) {
           for (const name of declaredInCodexConfig) appServerArgs.push("-c", `mcp_servers.${name}.enabled=false`);
         }
-        for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+        for (const [name, server] of Object.entries(turn.integrations?.custom ?? {}).filter(([name, server]) => turn.toolScope !== undefined || !codexConfigRunsServer(codexConfig, name, server))) {
           const mountName = mountedMcpServerName(name, declaredInCodexConfig);
           if (mountName !== name) noteRenamedMcpServer(name, mountName);
           mountSelected(name, mountName, server, "prompt");
@@ -840,11 +806,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const commandCwd = permissionLaunchCwd(turn.cwd ?? homedir());
         const releaseSlot = tryCodexLaunchSlot() ?? await waitForLaunchSlot(attempt);
         if (!releaseSlot) return;
-        const child = spawnHoldingSlot(releaseSlot, () => spawnCli(config.cli, appServerArgs, {
+        const child = spawnHoldingSlot(releaseSlot, () => spawnCli(...codexLaunch(config.cli, appServerArgs), {
           cwd: turn.cwd ?? homedir(),
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        }));
+        }, "bot"));
 
       let abandoned = false;
       let codexThreadId: string | null = null;
@@ -1191,7 +1157,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (message === state.lastError && (state.lastErrorSetup || !setup)) return;
         state.lastError = message;
         state.lastErrorSetup ||= setup;
-        emit({ ...base(threadId, turnId), type: "runtime.error", message, ...(setup ? { setup: true } : {}) });
+        emit({ ...base(threadId, turnId), type: "runtime.error", message, ...(setup ? { setup: true } : {}), ...codexLimitFacts(raw, route) });
       };
       const handleNotification = (msg: any) => {
         const p = msg.params ?? {};
@@ -1694,7 +1660,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...base(threadId, turnId),
             type: "runtime.error",
             message,
-            ...(needsAuth ? { setup: true } : {}),
+            ...(needsAuth ? { setup: true } : codexLimitFacts(raw, route)),
           });
           await settle(false, needsAuth ? "auth_required" : verdict.reason === "provider_safety" ? "provider_safety" : "rpc_error");
         }
@@ -1833,7 +1799,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       customMcp: true,
         phoneMcp: true,
         browserMcp: true,
-        dataMcp: true,
+        dataMcp: true, highlevelMcp: true,
         images: true,
         nativeImageInput: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],

@@ -7,6 +7,7 @@ import { isAbsolute, join, parse, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { CLOUD_HOME_NAME } from "./cloud-home.mjs";
+import { growToFit, moveFit } from "./cloud-space.mjs";
 
 const MAGIC = Buffer.from("OMB-WORKSPACE-1\n");
 const MIN_BYTES = MAGIC.length + 16 + 12 + 16;
@@ -16,9 +17,6 @@ const MAX_PART_BYTES = 64 * 1024 ** 2;
 // A proxy (nginx allows 1 MB by default) answers 413 to a part: parts halve down to this.
 const MIN_PART_BYTES = 512 * 1024;
 const SPACE_MARGIN = 256 * 1024 ** 2;
-const GB = 1024 ** 3;
-/** Must match openmaus-cloud's VOLUME_EXTEND step. */
-const DISK_STEP_GB = 10;
 const REUSE_MS = 30 * 60_000;
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/;
 const LOCAL_ROUTES = /^\/api\/(?:workspace-backup\/(?:status|export|download\/[a-f\d-]{36})|cloud-move\/estimate)$/;
@@ -117,22 +115,15 @@ const identity = value => ({
 });
 
 /** Mirrors the Cloud's own room rule (three times the upload, plus a margin); the Cloud checks again before uploading. */
-export function moveFit({ localBytes, freeBytes, uploadReceived = 0, volumeBytes = null, disk = null }) {
-  const neededBytes = 3 * localBytes + SPACE_MARGIN, available = freeBytes + uploadReceived;
-  const maxBytes = count(disk?.maxBytes) && disk.maxBytes > 0 ? disk.maxBytes : null;
-  const volume = [volumeBytes, disk?.volumeBytes, disk?.startBytes].find(value => count(value) && value > 0) ?? null;
-  if (available >= neededBytes) return { fit: "now", neededBytes, freeBytes: available };
-  const room = maxBytes && volume && maxBytes > volume ? maxBytes - volume : 0;
-  if (room > 0 && available + room >= neededBytes) {
-    const sizeGb = Math.min(Math.floor(maxBytes / GB), Math.ceil((volume + neededBytes - available) / GB / DISK_STEP_GB) * DISK_STEP_GB);
-    return { fit: "grow", neededBytes, freeBytes: available, maxBytes, sizeGb };
-  }
-  return { fit: "never", neededBytes, freeBytes: available, ...(maxBytes ? { maxBytes, ...(disk?.largest === true ? { largest: true } : {}) } : volume ? { volumeBytes: volume } : {}) };
-}
+export { moveFit };
 function leftBehindOf(value) {
   if (!record(value) || !count(value.bots) || !Array.isArray(value.paths)) return null;
   const paths = value.paths.filter(path => typeof path === "string" && path.length <= 4096).slice(0, 20).map(sentence).filter(Boolean);
   return value.bots || paths.length ? { bots: value.bots, paths } : null;
+}
+const BROUGHT = ["conversations", "messages", "intoExisting", "skippedBots", "skippedRooms", "deleted"];
+export function parseBrought(value) {
+  return record(value) && BROUGHT.every(key => count(value[key])) ? Object.fromEntries(BROUGHT.map(key => [key, value[key]])) : null;
 }
 export function parseCloudMoveStatus(value) {
   if (!record(value) || !record(value.contents) || !["bots", "rooms", "chats"].every(key => count(value.contents[key])) ||
@@ -177,7 +168,7 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
   if (typeof localRequest !== "function" || typeof tempRoot !== "string" || !isAbsolute(tempRoot) ||
     resolve(tempRoot) === parse(resolve(tempRoot)).root || typeof availableBytes !== "function") throw new Error("A copy needs its requests and a private temporary folder.");
   let value = { phase: "idle" }, running = false, controller = null, committing = false, prepared = null;
-  let target = null;
+  let target = null, action = "move";
   const state = () => structuredClone(value);
   const publish = next => { value = target ? { ...next, destination: target } : next; try { onState(state()); } catch {} return state(); };
   const there = () => target?.kind === "cloud" ? "My Cloud" : target?.name || "the server";
@@ -186,7 +177,7 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
   const progress = (phase, bytesTransferred, totalBytes) => {
     if (value.phase === phase && bytesTransferred < totalBytes && now() - progressAt < 250) return;
     progressAt = now();
-    publish({ phase, action: "move", progress: { bytesTransferred, totalBytes } });
+    publish({ phase, action, progress: { bytesTransferred, totalBytes } });
   };
 
   async function localJson(route, init, signal) {
@@ -267,7 +258,7 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
   async function archive(local, signal) {
     if (prepared && now() - prepared.createdAt < REUSE_MS && await lstat(prepared.file).then(stat => stat.isFile() && stat.size === prepared.bytes, () => false)) return prepared;
     await disposeArchive();
-    publish({ phase: "exporting", action: "move" });
+    publish({ phase: "exporting", action });
     const status = await localJson("/api/workspace-backup/status", { method: "GET" }, signal);
     if (status.busy || status.pendingRestore) fail("busy", "Wait for this computer's backup or restore to finish, then copy again.");
     await mkdir(tempRoot, { recursive: true, mode: 0o700 });
@@ -402,21 +393,55 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
   }
 
   async function makeRoom(dest, session, fit, signal) {
-    publish({ phase: "growing", action: "move" });
+    publish({ phase: "growing", action });
     const details = { freeBytes: fit.freeBytes, neededBytes: fit.neededBytes, maxBytes: fit.maxBytes };
-    let answer = null;
-    try { answer = await dest.grow(fit.sizeGb); } catch { signal.throwIfAborted(); fail("cloud_grow_unavailable", "My Cloud could not make room for this move just now.", details); }
+    const free = async () => {
+      try { const status = await cloudStatus(session, signal); return status ? status.freeBytes + status.uploadReceived : null; }
+      catch (error) { if (signal.aborted || error?.code === "access_changed") throw error; return null; }
+    };
+    const grown = await growToFit(fit, { grow: (sizeGb) => dest.grow(sizeGb), free, sleep: (ms) => sleep(ms, signal), pollMs, timeoutMs: growTimeoutMs, now });
     signal.throwIfAborted();
-    if (!answer?.supported) fail("cloud_grow_unsupported", "My Cloud can't make room for a move this size yet.", details);
-    if (answer.refused) fail("cloud_full", "My Cloud does not have enough space for this move.", details);
-    const deadline = now() + growTimeoutMs;
+    if (grown === "unsupported") fail("cloud_grow_unsupported", "My Cloud can't make room for a move this size yet.", details);
+    if (grown === "full") fail("cloud_full", "My Cloud does not have enough space for this move.", details);
+    if (grown !== "grown") fail("cloud_grow_unavailable", "My Cloud could not make room for this move just now.", details);
+  }
+
+  async function waitForMerge(session, signal) {
+    const deadline = now() + jobTimeoutMs;
     for (;;) {
       await sleep(pollMs, signal);
       let status = null;
       try { status = await cloudStatus(session, signal); } catch (error) { if (signal.aborted || error?.code === "access_changed") throw error; }
-      if (status && status.freeBytes + status.uploadReceived >= fit.neededBytes) return;
-      if (now() > deadline) fail("cloud_grow_unavailable", "My Cloud could not make room for this move in time.", details);
+      const job = status?.job;
+      if (job?.kind === "merge" && job.state === "failed") fail("merge_failed", typeof job.error === "string" ? job.error.slice(0, 300) : `${There()} could not add the chats.`);
+      if (job?.kind === "merge" && job.state === "done") return parseBrought(job.result) ?? fail("invalid_response", `${There()} gave an answer this app does not understand.`);
+      if (status && job?.kind !== "merge") fail("network", `${There()} restarted while adding the chats. Bring them again: nothing is added twice.`);
+      if (now() > deadline) fail("cloud_busy", `${There()} is taking too long to add the chats.`);
     }
+  }
+
+  /** Everything a copy and a bring share up to the uploaded archive. */
+  async function uploadArchive(dest, session, signal, requireEmpty) {
+    const [cloud, local] = await Promise.all([cloudStatus(session, signal), estimate(signal)]);
+    const why = moveBlocked({ kind: dest.kind, local, cloud });
+    if (why) {
+      fail(why, why === "outdated" ? `${There()} runs ${cloud.appVersion}; this computer runs ${local.appVersion}. Update it, then copy again.` : `${There()} can't receive this copy.`,
+        { destVersion: cloud.appVersion, localVersion: local.appVersion });
+    }
+    if (requireEmpty && !cloud.empty) fail("not_empty", `${There()} already has bots or chats, so nothing was copied over them.`);
+    if (cloud.pendingRestore || cloud.busy || cloud.job?.state === "running") fail("cloud_busy", `${There()} is busy. Try again in a minute.`);
+    if (local.bytes > CLOUD_MOVE_MAX_BYTES) fail("too_large", "This workspace is larger than a copy can carry.");
+    let disk = null;
+    if (dest.kind === "cloud" && typeof dest.disk === "function") { try { disk = dest.disk(); } catch {} }
+    const fit = moveFit({ localBytes: local.bytes, freeBytes: cloud.freeBytes, uploadReceived: cloud.uploadReceived, volumeBytes: cloud.volumeBytes, disk });
+    if (fit.fit === "never") {
+      const details = { ...fit }; delete details.fit;
+      fail("cloud_full", `${There()} does not have enough free space for this copy.`, details);
+    }
+    if (fit.fit === "grow" && typeof dest.grow === "function") await makeRoom(dest, session, fit, signal);
+    const archived = await archive(local, signal);
+    await upload(session, archived, signal);
+    return { cloud, local, archived };
   }
 
   function classify(error, signal) {
@@ -431,15 +456,15 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
     }
     return { id: typeof dest.id === "string" ? dest.id : null, name: typeof dest.name === "string" ? dest.name : "", origin: dest.origin, kind: dest.kind };
   }
-  async function run(action, dest, work) {
+  async function run(kind, dest, work) {
     if (running) return state();
     const named = destinationOf(dest);
     if (prepared && target && target.origin !== named.origin) await disposeArchive();
-    running = true; committing = false; controller = new AbortController(); target = named;
+    running = true; committing = false; controller = new AbortController(); target = named; action = kind;
     const signal = controller.signal;
     let session = null;
     try {
-      publish({ phase: "preparing", action });
+      publish({ phase: "preparing", action: kind });
       session = await openSession(dest, signal);
       return await work(session, signal);
     } catch (error) {
@@ -448,7 +473,7 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
         try { await discard(await cloudFetch(session, "/api/cloud-move/discard", { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(10_000) })); } catch {}
       }
       if (!RESUMABLE.has(failure.code) || committing) await disposeArchive();
-      return publish({ phase: "failed", action, error: { code: failure.code, message: failure.message, ...failure.details },
+      return publish({ phase: "failed", action: kind, error: { code: failure.code, message: failure.message, ...failure.details },
         ...(prepared ? { resumable: true } : {}) });
     } finally {
       running = false; controller = null;
@@ -460,25 +485,7 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
     state,
     estimate,
     move: (dest, { requireEmpty = false } = {}) => run("move", dest, async (session, signal) => {
-      const [cloud, local] = await Promise.all([cloudStatus(session, signal), estimate(signal)]);
-      const why = moveBlocked({ kind: dest.kind, local, cloud });
-      if (why) {
-        fail(why, why === "outdated" ? `${There()} runs ${cloud.appVersion}; this computer runs ${local.appVersion}. Update it, then copy again.` : `${There()} can't receive this copy.`,
-          { destVersion: cloud.appVersion, localVersion: local.appVersion });
-      }
-      if (requireEmpty && !cloud.empty) fail("not_empty", `${There()} already has bots or chats of its own, so nothing was copied.`);
-      if (cloud.pendingRestore || cloud.busy || cloud.job?.state === "running") fail("cloud_busy", `${There()} is busy. Try again in a minute.`);
-      if (local.bytes > CLOUD_MOVE_MAX_BYTES) fail("too_large", "This workspace is larger than a copy can carry.");
-      let disk = null;
-      if (dest.kind === "cloud" && typeof dest.disk === "function") { try { disk = dest.disk(); } catch {} }
-      const fit = moveFit({ localBytes: local.bytes, freeBytes: cloud.freeBytes, uploadReceived: cloud.uploadReceived, volumeBytes: cloud.volumeBytes, disk });
-      if (fit.fit === "never") {
-        const details = { ...fit }; delete details.fit;
-        fail("cloud_full", `${There()} does not have enough free space for this copy.`, details);
-      }
-      if (fit.fit === "grow" && typeof dest.grow === "function") await makeRoom(dest, session, fit, signal);
-      const archived = await archive(local, signal);
-      await upload(session, archived, signal);
+      const { cloud, local, archived } = await uploadArchive(dest, session, signal, requireEmpty);
       publish({ phase: "checking", action: "move" });
       await cloudJson(session, "POST", "/api/cloud-move/preview", { sha256: archived.sha256, password: archived.password }, signal);
       const preview = await waitForPreview(session, signal);
@@ -498,6 +505,15 @@ export function createCloudMove({ localRequest, fetchImpl = fetch, tempRoot, ava
       const after = await waitForRestart(session, "restore", { id: preview.id }, signal);
       return publish({ phase: "done", action: "move", moved: after.contents, previous: Boolean(after.previous), ...(local.routines > 0 ? { routines: local.routines } : {}),
         ...(after.leftBehind ? { leftBehind: after.leftBehind } : {}) });
+    }),
+    /** Adds to the destination only the conversations and messages it lacks; it never restarts or replaces anything there. */
+    bring: dest => run("bring", dest, async (session, signal) => {
+      const { archived } = await uploadArchive(dest, session, signal, false);
+      publish({ phase: "merging", action: "bring" });
+      committing = true;
+      await cloudJson(session, "POST", "/api/cloud-move/merge", { sha256: archived.sha256, password: archived.password }, signal);
+      await disposeArchive();
+      return publish({ phase: "done", action: "bring", brought: await waitForMerge(session, signal) });
     }),
     restorePrevious: dest => run("restore", dest, async (session, signal) => {
       const before = await cloudStatus(session, signal);

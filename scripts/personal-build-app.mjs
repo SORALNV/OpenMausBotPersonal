@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "yaml";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -34,10 +35,16 @@ run(process.execPath, ["electron/build-speech-helper.mjs"]);
 mkdirSync(build, { recursive: true, mode: 0o700 });
 run("/usr/bin/ditto", [base, app]);
 const resources = join(app, "Contents", "Resources");
-for (const [source, target] of [["dist", "ui"], ["dist-server", "server"], ["dist-companion", "companion"]]) {
+for (const [source, target] of [["dist", "ui"], ["dist-server", "server"], ["dist-companion", "companion"], ["skills", "skills"]]) {
   const dest = join(resources, target);
   rmSync(dest, { recursive: true, force: true });
   cpSync(join(repo, source), dest, { recursive: true });
+}
+const resourcesManifest = parseYaml(readFileSync(join(repo, "electron-builder.yml"), "utf8"));
+for (const entry of resourcesManifest.extraResources.filter(entry => entry.to.startsWith("licenses/"))) {
+  const target = join(resources, entry.to);
+  mkdirSync(join(resources, "licenses"), { recursive: true });
+  cpSync(join(repo, entry.from), target);
 }
 const speechBundle = "OpenMausBot Speech.app";
 rmSync(join(resources, speechBundle), { recursive: true, force: true });
@@ -58,6 +65,8 @@ await asar.createPackage(source, archive);
 const info = join(app, "Contents", "Info.plist");
 const edit = (key, value) => run("/usr/libexec/PlistBuddy", ["-c", `Set :${key} ${value}`, info]);
 edit("CFBundleIdentifier", "dev.sora.openmausbot.personal");
+edit("CFBundleShortVersionString", pkg.version);
+edit("CFBundleVersion", pkg.version);
 // Electron locates its native helper by CFBundleName. Keep the name used by
 // the reused, signed runtime; CFBundleDisplayName supplies our visible name.
 edit("CFBundleName", "OpenMausBot");

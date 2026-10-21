@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { foldKey, safeFolderName, skipped } from "./cloud-sync-rules.mjs";
 import { SyncAuthError, createSyncClient } from "./cloud-sync-client.mjs";
+import { CloudAsleepError, createCloudPowerGate } from "./cloud-power.mjs";
 import { fetchOutputs, newReport, passStopper, shareFolder } from "./cloud-sync-engine.mjs";
 import { openSyncState } from "./cloud-sync-state.mjs";
 import { watchFolder } from "./cloud-sync-scan.mjs";
@@ -16,7 +17,8 @@ const LONG_POLL_MS = 60_000;
 const BACKOFF_MS = [1_000, 3_000, 8_000, 15_000, 30_000];
 const CHECK_FILES_MAX = 100_000, CHECK_MS = 3_000;
 // Keys and settings: never shared, wherever they sit.
-const PRIVATE = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".local", ".npm", "Library", "AppData", ".openmausbot"];
+// Folders that hold keys or sign-ins, including the AI CLIs' own homes (their login files live there).
+const PRIVATE = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".local", ".npm", "Library", "AppData", ".openmausbot", ".claude", ".codex", ".gemini", ".grok"];
 
 const pathKey = (value, platform) => {
   const slashed = value.replaceAll("\\", "/").replace(/\/+$/, "");
@@ -48,7 +50,7 @@ const sleep = (ms, signal) => new Promise((resolve) => {
 export function createCloudFilesService({
   settingsFile, stateFile, documentsDir, localDataDir, homeDir = os.homedir(), platform = process.platform, hostname = os.hostname(),
   cloudOrigin, fetch: fetchImpl, trashItem, markDownloaded, openDashboard = async () => {},
-  createClient = createSyncClient, watch = watchFolder, freeBytes, now = Date.now, onChange = () => {},
+  createClient = createSyncClient, watch = watchFolder, freeBytes, now = Date.now, onChange = () => {}, power = createCloudPowerGate(),
 }) {
   let settings = readSettings(settingsFile);
   const state = openSyncState(stateFile);
@@ -69,7 +71,7 @@ export function createCloudFilesService({
   const publish = (next) => { status = { ...status, ...next }; onChange(view()); };
   const client = () => {
     const origin = cloudOrigin();
-    return origin ? createClient({ origin, fetch: fetchImpl }) : null;
+    return origin ? createClient({ origin, fetch: fetchImpl, power }) : null;
   };
   const sharedBy = (idOrKey) => settings.shared.find((folder) => folder.key === idOrKey || folder.id === idOrKey);
   const update = (key, patch) => save({ ...settings, shared: settings.shared.map((folder) => (folder.key === key ? { ...folder, ...patch } : folder)) });
@@ -170,13 +172,14 @@ export function createCloudFilesService({
     if (closed) return;
     const origin = cloudOrigin();
     if (!origin) { publish({ phase: "unavailable", disk: null }); return; }
+    if (power.asleep()) { publish({ phase: "asleep" }); return; }
     // Another My Cloud (another account): nothing recorded applies; the shared folders are registered there afresh.
     if (settings.origin !== origin) {
       state.reset();
       results.clear();
       save({ ...settings, origin, unregister: [], shared: settings.shared.map((folder) => ({ ...folder, id: null, deletes: null })) });
     }
-    const cloud = createClient({ origin, fetch: fetchImpl });
+    const cloud = createClient({ origin, fetch: fetchImpl, power });
     const report = newReport();
     try {
       publish({ phase: "syncing" });
@@ -236,18 +239,24 @@ export function createCloudFilesService({
         outputs: { ...status.outputs, folders: outputFolders, problem: outputsProblem },
       });
     } catch (error) {
-      publish({ phase: error instanceof SyncAuthError ? "signed-out" : "offline" });
-      if (!passStopper(error) && !(error instanceof SyncAuthError)) console.error(`[files] pass stopped: ${error?.message ?? error}`);
+      publish({ phase: error instanceof SyncAuthError ? "signed-out" : error instanceof CloudAsleepError ? "asleep" : "offline" });
+      if (!passStopper(error)) console.error(`[files] pass stopped: ${error?.message ?? error}`);
     }
   }
 
   async function pollLoop(signal) {
     let attempt = 0;
     while (!signal.aborted) {
+      if (power.asleep()) {
+        if (cloudOrigin()) publish({ phase: "asleep" });
+        await power.wait(signal);
+        if (!signal.aborted) void pass();
+        continue;
+      }
       try {
         const cloud = client();
         if (!cloud) { await sleep(30_000, signal); continue; }
-        const result = await cloud.changes(cursor, LONG_POLL_MS, signal);
+        const result = await cloud.changes(cursor, LONG_POLL_MS, AbortSignal.any([signal, power.signal()]));
         const recovered = attempt > 0, known = cursor !== 0;
         attempt = 0;
         cursor = result.cursor;
@@ -256,6 +265,7 @@ export function createCloudFilesService({
         else if (known && result.folderIds.length) void pass(new Set(result.folderIds));
       } catch {
         if (signal.aborted) return;
+        if (power.asleep()) continue;
         await sleep(BACKOFF_MS[Math.min(attempt++, BACKOFF_MS.length - 1)], signal);
       }
     }
@@ -273,6 +283,8 @@ export function createCloudFilesService({
   const api = {
     start,
     pass,
+    /** Started, so it calls My Cloud whenever there is one. */
+    running: () => Boolean(interval) && !closed,
     state: () => view(),
     check: (pcPath) => check(pcPath),
     async share(pcPath) {

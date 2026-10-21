@@ -1,3 +1,4 @@
+import { runtimeAppVersion } from "./runtime-resources.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -49,6 +50,7 @@ function fixture() {
     disconnect: async () => { f.generation++; f.connection = null; f.state = { status: "signed-out" }; f.onState(f.state); return f.state; } };
   localOrigin.setLocalOrigin(ORIGIN);
   const context = vm.createContext({
+    runtimeAppVersion,
     AbortController, AbortSignal, Date, Headers, setTimeout, clearTimeout, path, randomUUID, Buffer,
     app: { isPackaged: true, getPath: () => "/unused-synthetic-backup-fixture", getVersion: () => "fixture" },
     os: { hostname: () => "Fixture computer" }, process: { platform: "fixture" },

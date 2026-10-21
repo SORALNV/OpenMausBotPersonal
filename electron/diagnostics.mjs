@@ -26,12 +26,15 @@ export const CREDENTIAL_ENV_NAMES = [
   "OMB_OPENAI_IMAGE_KEY",
   "OMB_CUSTOM_IMAGE_KEY",
   "OMB_OPENAI_LIVE_KEY",
+  "OMB_TREG_KEY",
   "COMPOSIO_API_KEY",
   "OMB_COMPOSIO_BROKER_TOKEN",
   "OMB_CLOUD_BOAT_TOKEN",
   "OMB_CLOUD_VOICE_TOKEN",
   "OMB_CLOUD_DECIDER_TOKEN",
   "OMB_CLOUD_AI_TOKEN",
+  "OMB_CLOUD_X_TOKEN",
+  "OMB_CLOUD_CONNECTED_APPS_GRANT",
   // Private even though they are not traditional API credentials.
   "OMB_BROWSER_CONNECTION",
   "OMB_USER_DATA",
@@ -326,7 +329,9 @@ export function appendDesktopCrashRecord(file, maxBytes, record) {
   let handle = null;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const flags = fs.constants.O_WRONLY | fs.constants.O_APPEND | (process.platform === "win32" ? 0 : fs.constants.O_NOFOLLOW);
+    const win = process.platform === "win32";
+    // On Windows an O_APPEND handle has no plain write access, so it cannot be truncated: write at an explicit offset there.
+    const flags = fs.constants.O_WRONLY | (win ? 0 : fs.constants.O_APPEND | fs.constants.O_NOFOLLOW);
     let before = null;
     try {
       before = fs.lstatSync(file);
@@ -340,9 +345,11 @@ export function appendDesktopCrashRecord(file, maxBytes, record) {
     const stats = fs.fstatSync(handle);
     if (!stats.isFile() || stats.nlink !== 1) return;
     if (before && (before.dev !== stats.dev || before.ino !== stats.ino)) return;
-    if (stats.size >= maxBytes) fs.ftruncateSync(handle, 0);
-    if (process.platform !== "win32") fs.fchmodSync(handle, 0o600);
-    fs.writeFileSync(handle, `[${new Date().toISOString()}] ${record}\n`, "utf8");
+    let offset = stats.size;
+    if (stats.size >= maxBytes) { fs.ftruncateSync(handle, 0); offset = 0; }
+    if (!win) fs.fchmodSync(handle, 0o600);
+    const line = Buffer.from(`[${new Date().toISOString()}] ${record}\n`, "utf8");
+    fs.writeSync(handle, line, 0, line.length, win ? offset : null);
   } catch {
   } finally {
     if (handle !== null) { try { fs.closeSync(handle); } catch {} }

@@ -21,9 +21,13 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/lib/use-slash-skills", () => ({ useSlashSkills: () => [] }));
 vi.mock("@/lib/use-owner-or-admin", () => ({ useOwnerOrAdmin: () => false }));
 vi.mock("./CallView", () => ({ CallButton: () => null }));
-vi.mock("./DesktopCapabilities", () => ({
-  useDesktopCapabilities: () => ({ capabilities: { dictation: { available: true } }, ready: true }),
-}));
+// A whole capabilities object: Advanced mode (on whenever a saved draft exists) renders the place chip, which reads
+// host.platform.
+vi.mock("./DesktopCapabilities", async () => {
+  const { initialDesktopCapabilities } = await import("@/lib/desktop");
+  const capabilities = { ...initialDesktopCapabilities(), dictation: { available: true, engine: "apple-speech", onDevice: true } };
+  return { useDesktopCapabilities: () => ({ capabilities, ready: true }) };
+});
 
 import { Composer } from "./Composer";
 
@@ -141,13 +145,12 @@ describe("native dictation in the real composer", () => {
     hear("元スレッドの文章。");
     const previous = transcript;
     flushSync(() => root.render(createElement(Composer, { bot: { ...bot, threadId: "other-thread" } })));
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await expect.poll(() => input().value).toBe("");
     flushSync(() => previous({ text: "元スレッドの遅い結果。", partial: true }));
     expect(input().value).toBe("");
     expect(speechStart).toHaveBeenCalledOnce();
     flushSync(() => root.render(createElement(Composer, { bot })));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(input().value).toBe("元スレッドの文章。");
+    await expect.poll(() => input().value).toBe("元スレッドの文章。");
   });
 
   it("retains text when recognition ends in an error", () => {

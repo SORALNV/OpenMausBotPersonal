@@ -58,7 +58,7 @@ export function isolatedRemoteCommand(command: string): string {
 }
 
 const READY = new Set(["idle", "ready", "running"]);
-const SLEEPING = new Set(["archived", "archiving"]);
+export const SLEEPING_BOAT_STATES = new Set(["archived", "archiving"]);
 /** Never usable again: `cancelled` is a create that got no machine; its GET answers 404 next. */
 const TERMINAL = new Set(["error", "cancelled"]);
 const DEFAULT_BOAT_TTL_SECONDS = 8 * 60 * 60;
@@ -367,17 +367,17 @@ export async function runCommand(cfg: AppConfig, boxId: string, command: string,
 
 // Boat desktop access: VNC (POST /desktop?vnc=1) first, a plain WebSocket that survives P2P-blocking networks and answers
 // {provisioning:true} until ready; WebRTC (POST /desktop) is a STUN-only fallback that can hang. The sandbox's desktopUrl is not usable alone.
-async function mintDesktopUrl(cfg: AppConfig, boxId: string, { vncBudgetMs = 60_000 } = {}) {
+async function mintDesktopUrl(cfg: AppConfig, boxId: string, { vncBudgetMs = 60_000, requestMs = 30_000 } = {}) {
   assertBoatNotDeleting(boxId);
   const t0 = Date.now();
   while (Date.now() - t0 < vncBudgetMs) {
     assertBoatNotDeleting(boxId);
-    const { body } = await boatJson(cfg, `/sandboxes/${boxId}/desktop?vnc=1`, { method: "POST" });
+    const { body } = await boatJson(cfg, `/sandboxes/${boxId}/desktop?vnc=1`, { method: "POST", signal: AbortSignal.timeout(requestMs) });
     if (body?.desktopUrl) return body.desktopUrl;
     if (!body?.provisioning) break;
     await new Promise((r) => setTimeout(r, 3000));
   }
-  const { body } = await boatJson(cfg, `/sandboxes/${boxId}/desktop`, { method: "POST" });
+  const { body } = await boatJson(cfg, `/sandboxes/${boxId}/desktop`, { method: "POST", signal: AbortSignal.timeout(requestMs) });
   return body?.desktopUrl ?? null;
 }
 
@@ -777,12 +777,12 @@ export async function sleepManagedBoat(
   if (instance.inUse) {
     throw Object.assign(new Error("this cloud computer is in use — stop its bot's work first"), { status: 409 });
   }
-  if (!SLEEPING.has(instance.state) && !READY.has(instance.state)) {
+  if (!SLEEPING_BOAT_STATES.has(instance.state) && !READY.has(instance.state)) {
     throw Object.assign(new Error(`this cloud computer cannot sleep while it is ${instance.state}`), { status: 409 });
   }
   const release = claim?.(instance);
   try {
-    if (!SLEEPING.has(instance.state)) await stopBoat(cfg, instance.boxId);
+    if (!SLEEPING_BOAT_STATES.has(instance.state)) await stopBoat(cfg, instance.boxId);
     forgetBoatId(instance.boxId);
     return { ok: true };
   } finally {
@@ -901,7 +901,7 @@ export function describeBoatAccount(cfg: AppConfig): { configured: boolean; incl
   return { configured: Boolean(account), ...(account?.included ? { included: true as const } : {}) };
 }
 
-export async function verifyToken(token: string): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function verifyToken(token: string): Promise<{ ok: true } | { ok: false; message: string; rejected?: true }> {
   try {
     const res = await fetch(`${boatProviderApi()}/sandboxes?limit=1`, {
       headers: { authorization: `Bearer ${token}` },
@@ -911,7 +911,7 @@ export async function verifyToken(token: string): Promise<{ ok: true } | { ok: f
     if (res.status === 401 || res.status === 403) {
       // Boat API keys are prefixed boat_ (box_ before v1).
       return {
-        ok: false,
+        ok: false, rejected: true,
         message: /^(boat|box)_/.test(token)
           ? "boat.dev rejected that key — it may have been revoked or expired. Copy a fresh one from your boat.dev account."
           : "That doesn't look like a Boat API key: they start with boat_ (older ones with box_). Copy the API key from your boat.dev account (an account or session token won't work here).",
@@ -1211,7 +1211,7 @@ const SHOT_CMD = panelShotCommand();
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const FRAME_TOO_LARGE = "the cloud computer's frame exceeds the 8 MB limit";
 
-async function readFileBase64(cfg: AppConfig, boxId: string, path: string, signal?: AbortSignal): Promise<string | null> {
+export async function readFileBase64(cfg: AppConfig, boxId: string, path: string, signal?: AbortSignal): Promise<string | null> {
   let bytes: Buffer | null = null;
   let tooLarge = false;
   try {

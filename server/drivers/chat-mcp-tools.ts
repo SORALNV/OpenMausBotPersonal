@@ -78,7 +78,7 @@ class ChatMcpClient {
       // The desktop shell inherits Finder's bare PATH, where `npx`-style servers cannot find `node`.
       this.child = spawnCli(server.command, server.args, {
         stdio: ["pipe", "pipe", "pipe"], env: chatMcpEnvironment(server.env),
-      });
+      }, "bot");
     } catch { throw new Error("MCP server could not start; check its command and installation"); }
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.onData(chunk));
@@ -100,12 +100,20 @@ class ChatMcpClient {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
+    // Read before the pending rejections below: only a call still in flight at entry is genuinely uncertain.
+    const inFlight = this.pending.size > 0;
     for (const entry of this.pending.values()) entry.reject(new Error("MCP session closed"));
     this.pending.clear();
     this.buffer = "";
-    // Windows reaps the tree via taskkill /T, which can exceed shorter budgets on a loaded machine.
-    this.closing = killCliTree(this.child, 5_000).then((stopped) => {
-      if (!stopped) throw new Error("MCP server shutdown could not be confirmed; execution outcome may be uncertain");
+    // Windows reaps the tree via taskkill /T, which can exceed shorter budgets on a loaded machine;
+    // elsewhere the budget is the TERM grace before KILL, not a verdict race, so it stays short.
+    this.closing = killCliTree(this.child, process.platform === "win32" ? 15_000 : 5_000).then((stopped) => {
+      if (stopped) return;
+      if (!inFlight) {
+        console.warn("chat-mcp: shutdown could not be confirmed within its budget; no call was in flight, so the turn outcome is unaffected");
+        return;
+      }
+      throw new Error("MCP server shutdown could not be confirmed; execution outcome may be uncertain");
     });
     return this.closing;
   }
@@ -243,6 +251,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   if (agentsServer && eligible("agents")) servers.push(["agents", agentsServer]);
   if (integrations?.composio && eligible("composio")) servers.push(["composio", integrations.composio]);
   if (integrations?.data && eligible("data")) servers.push(["data", integrations.data]);
+  if (integrations?.highlevel && eligible("highlevel")) servers.push(["highlevel", integrations.highlevel]);
   for (const [name, server] of Object.entries(integrations?.custom ?? {})) {
     if (!eligible(name)) continue;
     const remote = remoteMcpSpec(server) !== undefined;
@@ -282,6 +291,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
       const include = (tool: unknown) => scope === undefined || (object(tool) && typeof tool.name === "string"
         && ((searchable.has(name) && isDirectoryTool(tool.name)) || allowsTool(scope, { kind: "mcp", server: name, name: tool.name })));
       const tools = await client.tools(signal, include, searchable.has(name) ? REMOTE_MCP_STARTUP_MS : STARTUP_MS);
+      if (!tools.length && scope === undefined && descriptor === integrations?.localComputer) throw new Error("The Local VM listed no tools");
       // Harness mounts are known by descriptor, never by a name a configured server could claim. A grant
       // hashes the descriptor (no credential kept); machine bridges mint a bearer per turn, so theirs last a turn.
       const launch = createHash("sha256").update(JSON.stringify(descriptor)).digest("hex");

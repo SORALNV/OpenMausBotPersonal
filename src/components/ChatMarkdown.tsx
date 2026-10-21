@@ -1,3 +1,5 @@
+import { blockDirection } from "@/lib/markdown-direction";
+export { textDirection, blockDirection } from "@/lib/markdown-direction";
 import { PrivacyText } from "./PrivacyText";
 // Security: model output never reaches the DOM as raw HTML (no rehype-raw); Shiki's output is generator-escaped.
 import { createContext, memo, use, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
@@ -29,7 +31,8 @@ import { looksLikeThreadRefUrl, parseThreadRefUrl, resolveThreadRefAddress, rema
 import { MarkdownImagePreview, MessageFolderFiles, OutsideWorkspaceFile, saveFailureText, useLocalFileSave, type MessageAttachmentContext } from "./AttachmentPreview";
 import { ThreadLink, ThreadRefsContext, threadLinkFromProps, type ThreadRefsValue } from "./ThreadRefs";
 import { MarkdownTable } from "./MarkdownTable";
-import { TableFileButton } from "./TableFilePreview";
+import { FilePreviewButton } from "./FilePreviewButton";
+
 const highlightCache = new Map<string, string>();
 export const HIGHLIGHT_CACHE_MAX = 200;
 export const HIGHLIGHT_CACHE_MAX_CHARS = 4 * 1024 * 1024;
@@ -256,34 +259,6 @@ function unwrapLinkedImages() {
     };
     visit(tree);
   };
-}
-
-// Not dir="auto": that algorithm skips descendants carrying their own dir, so a blockquote or table of per-block
-// directions falls back to LTR. JS regexes cannot match Bidi_Class, so these are the blocks Unicode reserves for
-// right-to-left letters.
-const RTL_LETTER = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
-
-export function textDirection(value: string): "rtl" | "ltr" {
-  const strong = /\p{Letter}/u.exec(value);
-  return strong && RTL_LETTER.test(strong[0]) ? "rtl" : "ltr";
-}
-
-interface HastNode {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  children?: HastNode[];
-}
-
-function blockText(node: HastNode | undefined): string {
-  if (!node) return "";
-  if (node.type === "text") return node.value ?? "";
-  if (node.tagName === "code" || node.tagName === "pre") return "";
-  return (node.children ?? []).map(blockText).join("");
-}
-
-export function blockDirection(node: unknown): "rtl" | "ltr" {
-  return textDirection(blockText(node as HastNode));
 }
 
 interface BlockProps {
@@ -584,7 +559,7 @@ function LocalFileLink({ filePath, name, children, message }: { filePath: string
 
   return (
     <span dir="ltr" className="inline-flex flex-wrap items-center gap-x-1.5 [unicode-bidi:isolate]">
-      <TableFileButton path={filePath} name={name ?? fileName(filePath)} message={message} />
+      <FilePreviewButton path={filePath} name={name ?? fileName(filePath)} message={message} />
       <button
         type="button"
         onClick={() => void save.save()}

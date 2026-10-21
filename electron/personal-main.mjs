@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { preparePersonalCodexHome } from "./personal-codex-home.mjs";
 
 const metadata = JSON.parse(readFileSync(fileURLToPath(new URL("../personal-build.json", import.meta.url)), "utf8"));
+globalThis[Symbol.for("omb.personalRuntimeVersion")] = metadata.version;
+app.setAboutPanelOptions({ applicationVersion: metadata.version });
 const data = join(app.getPath("home"), ".openmausbot-personal");
 mkdirSync(data, { recursive: true, mode: 0o700 });
 if (realpathSync(data) !== resolve(data)) throw new Error("Personal data directory must not be a symbolic link");

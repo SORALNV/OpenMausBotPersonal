@@ -1,7 +1,8 @@
 import { killCliTree, spawnCli } from "./procs.ts";
 import { scrubHeldSecrets } from "../shared/redact.ts";
-import { DEFAULT_BROWSER_RESULT_BUDGET, describePageChange, OBSERVE_PAGE_SCRIPT, parsePageState, scrubBrowserResult, shapeBrowserToolResult, slimBrowserToolList, stripHarnessOwnedArguments, type PageState } from "./browser-tool-shape.ts";
+import { DEFAULT_BROWSER_RESULT_BUDGET, describePageChange, OBSERVE_PAGE_SCRIPT, parsePageState, READ_OPEN_PAGE_ONLY, readsAroundBrowser, scrubBrowserResult, shapeBrowserToolResult, slimBrowserToolList, stripHarnessOwnedArguments, type PageState } from "./browser-tool-shape.ts";
 import { BrowserLanes } from "./browser-lane.ts";
+import { SECRET_ON_PAGE, SecretHolds, type SecretHold } from "./browser-secret-hold.ts";
 import type { BrowserSteps, StepCall, StepContext } from "./browser-steps.ts";
 import { HARNESS_CALL_BUDGET_MS } from "./harness-budget.ts";
 
@@ -15,7 +16,7 @@ export const BROWSER_CONTROL_REFUSAL = "Browser tools are paused while a person 
 export const BROWSER_RESTART_TOOL = "restart_browser";
 const BROWSER_RESTART_TOOL_SPEC = {
   name: BROWSER_RESTART_TOOL,
-  description: "Close and restart your browser. Use this only when a browser tool says the browser must be restarted, or it stays busy after a call that did not answer. Every open tab is closed and page state such as form input and sign-ins is lost; afterwards open the page you need again and check whether the interrupted action already happened before repeating it.",
+  description: "Close and restart your browser. Use this only when a browser tool says the browser must be restarted, or it stays busy after a call that did not answer. Every open tab is closed and unsaved page state such as form input is lost; sign-ins stay unless it is a temporary browser. Afterwards open the page you need again and check whether the interrupted action already happened before repeating it.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 export const BROWSER_UPLOAD_TOOL = "agent_browser_upload";
@@ -50,7 +51,7 @@ const PERSON_RESTARTED = "The person restarted your browser from the Browser pan
 const LANE_BUSY = "Your previous browser call is still running; wait for it to finish, then call again.";
 /** One bot call, lane wait included, answers within `callBudgetMs`; the engine's action keeps `followUpReserveMs` of it for the reads after. */
 export const BROWSER_CALL_DEFAULTS = { requestTimeoutMs: 120_000, laneWaitMs: 30_000, callBudgetMs: HARNESS_CALL_BUDGET_MS, followUpReserveMs: 15_000 } as const;
-const RESTART_COST = "a restart closes every tab and loses page state such as form input and sign-ins";
+const RESTART_COST = "a restart closes every tab and loses page state such as form input";
 const LATE = Symbol("late");
 const PAGE_ACTIONS: ReadonlySet<string> = new Set([
   "agent_browser_click", "agent_browser_fill", "agent_browser_type", "agent_browser_press",
@@ -288,6 +289,16 @@ class BrowserClient {
 
 export type ApplyViewport = (spec: BrowserSpawnSpec) => Promise<unknown>;
 
+type LaunchSpec = { command: string; env?: Record<string, string | undefined> };
+/** The browser the engine starts, prepared by OMB. */
+export interface BrowserLaunch {
+  /** Before the engine may start the browser; rejects with a message for the bot while it cannot start yet. */
+  ready(spec: LaunchSpec): Promise<void>;
+  /** Once the engine runs the browser, again after every start. */
+  started(session: string, spec: LaunchSpec): Promise<void>;
+  stopped(session: string): void;
+}
+
 interface Gate {
   owner: string | null;
   ready: boolean;
@@ -325,20 +336,24 @@ export class BrowserRuntime {
   private clients = new Map<string, ClientEntry>();
   private recoveries = new Map<string, Promise<string | null>>();
   private toolLists = new Map<string, unknown>();
+  private idleCloseListeners = new Set<(session: string) => void>();
   private options: { requestTimeoutMs: number; takeoverTimeoutMs: number; idleMs: number; maxPending: number; resultBudget: number; recoveryCheckMs: number; laneWaitMs: number; callBudgetMs: number; followUpReserveMs: number };
   private closeBrowser: CloseBrowser;
   private applyViewport?: ApplyViewport;
+  private launch?: BrowserLaunch;
   private relayCommand?: RelayCommand;
   private steps?: Pick<BrowserSteps, "before" | "after" | "signIn" | "note" | "forget" | "recentFrame" | "personTook">;
   private lanes = new BrowserLanes();
+  private holds = new SecretHolds((session, clear) => this.lanes.run(session, () => this.agentAction(session, clear, false), this.options.laneWaitMs).then((ran) => ran !== null));
   /** Strips held secrets (a filled password, a one-time code) from every tool result before the bot reads it. */
   private scrub: (text: string) => string;
   private onTiming?: (timing: BrowserTiming) => void;
 
-  constructor({ closeBrowser, applyViewport, relayCommand, steps, scrub, onTiming, ...options }: Partial<BrowserRuntime["options"]> & { closeBrowser?: CloseBrowser; applyViewport?: ApplyViewport; relayCommand?: RelayCommand; steps?: BrowserRuntime["steps"]; scrub?: (text: string) => string; onTiming?: (timing: BrowserTiming) => void } = {}) {
+  constructor({ closeBrowser, applyViewport, launch, relayCommand, steps, scrub, onTiming, ...options }: Partial<BrowserRuntime["options"]> & { closeBrowser?: CloseBrowser; applyViewport?: ApplyViewport; launch?: BrowserLaunch; relayCommand?: RelayCommand; steps?: BrowserRuntime["steps"]; scrub?: (text: string) => string; onTiming?: (timing: BrowserTiming) => void } = {}) {
     this.options = { ...BROWSER_CALL_DEFAULTS, takeoverTimeoutMs: 15_000, idleMs: 60_000, maxPending: 16, resultBudget: DEFAULT_BROWSER_RESULT_BUDGET, recoveryCheckMs: 30_000, ...options };
     this.closeBrowser = closeBrowser ?? (async () => false);
     this.applyViewport = applyViewport;
+    this.launch = launch;
     this.relayCommand = relayCommand;
     this.steps = steps;
     this.scrub = scrub ?? scrubHeldSecrets;
@@ -401,9 +416,13 @@ export class BrowserRuntime {
   }
 
   /** Runs in the browser's lane, so no capture or read happens while a secret is typed. */
-  async withSecretInput<T extends { ok: boolean; text: string; host?: string; filled?: string[] }>(session: string, spec: Pick<BrowserSpawnSpec, "command" | "env">, fn: () => Promise<T>, ctx?: StepContext): Promise<T> {
+  async withSecretInput<T extends { ok: boolean; text: string; host?: string; filled?: string[]; held?: SecretHold }>(session: string, spec: Pick<BrowserSpawnSpec, "command" | "env">, fn: () => Promise<T>, ctx?: StepContext): Promise<T> {
     const outcome = await this.lanes.run(session, async () => {
-      const value = await this.withAgentAction(session, fn);
+      const value = await this.withAgentAction(session, async () => {
+        const filled = await fn();
+        if (filled.held) this.holds.hold(session, filled.held);
+        return filled;
+      });
       const step = await this.steps?.signIn({ session, spec, ctx }, value).catch(() => null);
       return step ? { ...value, text: `${value.text} Recorded as step ${step}.` } : value;
     }, this.options.laneWaitMs);
@@ -426,6 +445,7 @@ export class BrowserRuntime {
 
   /** Every tool result, recovery notes included, is scrubbed of held secrets. */
   async agentRpc(session: string, spec: BrowserSpawnSpec, method: "tools/list" | "tools/call", params: unknown, beforeDispatch?: () => void, ctx?: StepContext): Promise<unknown> {
+    if (method === "tools/call" && readsAroundBrowser(params)) return { isError: true, content: [{ type: "text", text: READ_OPEN_PAGE_ONLY }] };
     // Counted in the same event-loop turn, so no idle close can start under a call.
     for (let closing = this.gates.get(session)?.idleClose; closing; closing = this.gates.get(session)?.idleClose) await closing;
     const gate = this.gate(session);
@@ -489,6 +509,7 @@ export class BrowserRuntime {
     const invoke = async () => {
       const launchStarted = performance.now();
       let dispatched = false;
+      if (method === "tools/call") await this.launchReady(spec);
       const entry = this.connect(session, spec);
       await entry.client.ready;
       beforeDispatch?.();
@@ -499,8 +520,16 @@ export class BrowserRuntime {
         beforeDispatch?.();
         if (this.gate(session).owner !== null) throw new Error(BROWSER_CONTROL_REFUSAL);
       }
+      if (method === "tools/call" && this.launch && toolName !== "agent_browser_close") {
+        await this.launched(session, spec);
+        beforeDispatch?.();
+        if (this.gate(session).owner !== null) throw new Error(BROWSER_CONTROL_REFUSAL);
+      }
       phases.launchMs = performance.now() - launchStarted;
       try {
+        const pageUrl = () => entry.client.rpc("tools/call", { name: "agent_browser_get_url", arguments: {} }, Math.max(1, Math.min(followUpMs(), 5_000)))
+          .then((result) => firstText(result).trim(), (error: unknown) => { if (error instanceof TransportError) throw error; return ""; });
+        if (toolName === "agent_browser_eval" && await this.holds.refuses(session, pageUrl)) return { isError: true, content: [{ type: "text", text: SECRET_ON_PAGE }] };
         // Launch and session parameters OMB owns never reach the engine from a call.
         const request = method === "tools/call" ? stripHarnessOwnedArguments(params) : params;
         const args = (request as { arguments?: unknown } | null)?.arguments;
@@ -750,6 +779,15 @@ export class BrowserRuntime {
     this.changed(gate);
   }
 
+  /** The same person's hold, moved to their view that replaced one whose stream dropped; agents stay paused throughout. */
+  transfer(session: string, from: string, to: string): boolean {
+    const gate = this.gates.get(session);
+    if (!from || !to || !gate || gate.owner !== from || gate.releasing || gate.closing) return false;
+    gate.owner = to;
+    this.changed(gate);
+    return true;
+  }
+
   release(session: string, owner: string): void {
     const gate = this.gates.get(session);
     if (!owner || !gate || gate.owner !== owner) return;
@@ -776,21 +814,29 @@ export class BrowserRuntime {
     finally { gate.humans--; gate.lastUsed = Date.now(); this.changed(gate); }
   }
 
-  /** Keeps the browser open while watched; call the returned function when the view closes. */
+  /** A person opened a view, which counts as use; call the returned function when it closes. */
   watch(session: string, spec: { command: string; args?: readonly string[]; env?: Record<string, string | undefined> }): () => void {
     const gate = this.gate(session);
     gate.watchers++;
+    gate.lastUsed = Date.now();
     gate.spec = { command: spec.command, args: [...spec.args ?? []], env: { ...spec.env } };
     let watching = true;
     return () => {
       if (!watching) return;
       watching = false;
       gate.watchers--;
-      gate.lastUsed = Date.now();
     };
   }
 
   async settled(session: string): Promise<void> { await this.gates.get(session)?.idleClose; }
+
+  /** Told just before an idle close stops a session's browser. */
+  onIdleClose(listener: (session: string) => void): void { this.idleCloseListeners.add(listener); }
+
+  launchReady(spec: LaunchSpec): Promise<void> { return this.launch?.ready(spec) ?? Promise.resolve(); }
+
+  /** A browser without its identity still browses, so a failure here never fails the call. */
+  launched(session: string, spec: LaunchSpec): Promise<void> { return this.launch?.started(session, spec).catch(() => undefined) ?? Promise.resolve(); }
 
   /** The same barrier as a restart. Saved sign-ins stay, and a browser attached to the person's own Chrome is never closed. */
   async closeIfIdle(session: string, idleMs: number, spec?: { command: string; args?: readonly string[]; env: Record<string, string | undefined> }): Promise<boolean> {
@@ -798,15 +844,17 @@ export class BrowserRuntime {
     if (gate && !gate.spec && spec) gate.spec = { command: spec.command, args: [...spec.args ?? []], env: { ...spec.env } };
     const launch = gate?.spec;
     if (!gate || !launch || attachesToChrome(launch.env) || !(idleMs > 0) || Date.now() - gate.lastUsed < idleMs) return false;
-    if (gate.calls || gate.agents || gate.humans || gate.owner !== null || gate.closing || gate.releasing || gate.watchers || this.lanes.held(session)) return false;
+    if (gate.calls || gate.agents || gate.humans || gate.owner !== null || gate.closing || gate.releasing || this.lanes.held(session)) return false;
     gate.closing = true;
     gate.ready = false;
     let finished!: () => void;
     gate.idleClose = new Promise((resolve) => { finished = resolve; });
     this.changed(gate);
     try {
+      for (const listener of this.idleCloseListeners) listener(session);
       if (!await this.closeBrowser(session, launch)) return false;
       this.steps?.forget(session);
+      this.launch?.stopped(session);
       await this.clients.get(session)?.client.stop();
       await this.clients.get(session)?.client.stop();
       gate.uncertain = false;
@@ -837,6 +885,7 @@ export class BrowserRuntime {
     try {
       await closeBrowser();
       this.steps?.forget(session);
+      this.launch?.stopped(session);
       await this.clients.get(session)?.client.stop();
       // A tools/list admitted before closing can register a client during this stop; registration is synchronous, so one re-check suffices.
       await this.clients.get(session)?.client.stop();
@@ -867,6 +916,7 @@ export class BrowserRuntime {
     try {
       if (!await closeBrowser()) throw new Error("The browser could not be closed. Ask the person to press Restart in the Browser panel of OpenMausBot on their computer, or to restart OpenMausBot.");
       this.steps?.forget(session);
+      this.launch?.stopped(session);
       await this.clients.get(session)?.client.stop();
       await this.clients.get(session)?.client.stop();
       gate.uncertain = false;
@@ -883,10 +933,12 @@ export class BrowserRuntime {
 
   /** Call after the browser is closed; closes the MCP transport, not saved logins or profile files. */
   async close(session: string): Promise<void> {
+    this.holds.drop(session);
     const gate = this.gate(session);
     gate.closing = true;
     gate.ready = false;
     this.steps?.forget(session);
+    this.launch?.stopped(session);
     // Clear before the awaited stop: any uncertain latch after this point must win.
     gate.uncertain = false;
     gate.lostCall = null;
@@ -898,7 +950,7 @@ export class BrowserRuntime {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...new Set([...this.clients.keys(), ...this.gates.keys()])].map((session) => this.close(session)));
+    await Promise.all([...new Set([...this.clients.keys(), ...this.gates.keys(), ...this.holds.sessions()])].map((session) => this.close(session)));
   }
 }
 

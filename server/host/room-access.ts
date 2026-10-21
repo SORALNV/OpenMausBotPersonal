@@ -8,6 +8,16 @@ export interface RoomAccessDeps {
   store: Store;
 }
 
+/** The one copy of "may this bot speak into this room". Every caller — the bot's post_to_room tool, a
+ *  webhook's room delivery — maps these problems to its own audience's wording; none adds a rule. */
+export type RoomTalksVerdict =
+  | { ok: true }
+  | { ok: false; problem: "dm" }
+  | { ok: false; problem: "not-member" }
+  | { ok: false; problem: "outsider"; name: string }
+  | { ok: false; problem: "setup" }
+  | { ok: false; problem: "permissions" | "audience" };
+
 export function createRoomAccess({ store }: RoomAccessDeps) {
   function roomRootProblem(node: Pick<HandoffView, "groupId" | "threadId" | "botId">): string | undefined {
     const group = node.groupId ? store.group(node.groupId) : undefined;
@@ -62,6 +72,19 @@ export function createRoomAccess({ store }: RoomAccessDeps) {
     return opener?.kind === "work" && opener.roomLane && opener.threadId && store.groupByThread(opener.threadId) ? opener.threadId : undefined;
   }
 
+  function roomTalks(bot: BotRecord, group: GroupRecord): RoomTalksVerdict {
+    if (group.dm) return { ok: false, problem: "dm" };
+    if (!group.memberIds.includes(bot.id)) return { ok: false, problem: "not-member" };
+    if (!groupCanSpeak(group, bot.id) || !groupMemberPermissions(group, bot.id).post) return { ok: false, problem: "permissions" };
+    if (group.memberIds.some(id => { const member = store.bot(id); return member && !sameAudience(bot.visibility, member.visibility); })) return { ok: false, problem: "audience" };
+    const outsider = groupCrossSection(group) ? undefined : group.memberIds
+      .map((id) => store.bot(id))
+      .find((member) => member && !canAccessTeam(bot, member.section) && !coordinatorSupervises(member, bot));
+    if (outsider) return { ok: false, problem: "outsider", name: outsider.name };
+    if (roomSetupPending(group)) return { ok: false, problem: "setup" };
+    return { ok: true };
+  }
+
   function roomSetupPending(group: GroupRecord): boolean {
     const hasMarker =
       Object.prototype.hasOwnProperty.call(group, "setupCompletedAt") ||
@@ -75,5 +98,35 @@ export function createRoomAccess({ store }: RoomAccessDeps) {
     );
   }
 
-  return { roomRootProblem, roomHandoffProblem, roomSetupPending, laneRoomThread };
+  /** Read fresh every time; a line stamped via the HTTP API does not count, so a bot cannot re-arm the ceiling it just spent. */
+  function lastHumanRoomMessageAt(group: GroupRecord): number | undefined {
+    const messages = store.messagesFor(group.threadId);
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === "user" && message.kind === "text" && !message.via) return message.at;
+    }
+    return undefined;
+  }
+  
+  /** Room membership and owner-defined grants are rechecked before every post. */
+  function roomPostEligibility(
+    bot: BotRecord,
+    group: GroupRecord,
+  ): { ok: true } | { ok: false; status: number; error: string } {
+    const verdict = roomTalks(bot, group);
+    if (verdict.ok) return verdict;
+    if (verdict.problem === "dm") {
+      return { ok: false, status: 400, error: "that is a one-to-one bot channel, not a room — use coordinate_bots to reach a single bot" };
+    }
+    if (verdict.problem === "permissions") return { ok: false, status: 403, error: "posting is disabled for you in this group" };
+    if (verdict.problem === "audience") return { ok: false, status: 403, error: "room members no longer share the same audience" };
+    if (verdict.problem === "not-member") return { ok: false, status: 403, error: "you are not a member of that room" };
+    if (verdict.problem === "outsider") {
+      return { ok: false, status: 403, error: `that room includes @${verdict.name}, who is outside your section — tell the user what you wanted to post there instead` };
+    }
+    // A bot must never settle whether a room's unfinished setup still counts as pending.
+    return { ok: false, status: 409, error: "that room is still being set up — it cannot receive messages yet" };
+  }
+
+  return { roomRootProblem, roomHandoffProblem, roomSetupPending, roomTalks, laneRoomThread, roomPostEligibility, lastHumanRoomMessageAt };
 }

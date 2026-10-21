@@ -1,3 +1,5 @@
+import { Settings } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import { api, useStore, type Group } from "@/state/store";
 import { groupMemberPermissions, type GroupMemberPermissions, type GroupPermissions } from "../../shared/group-permissions";
@@ -63,4 +65,12 @@ export function GroupPermissionsPanel({ group, onClose }: { group: Group; onClos
       <div className="mt-4 flex justify-end gap-2"><button disabled={saving} className="rounded-lg bg-raised px-4 py-2" onClick={onClose}>キャンセル</button><button disabled={saving || group.working} className="rounded-lg bg-accent px-4 py-2 text-white disabled:opacity-40" onClick={() => void save()}>{saving ? "保存中…" : "設定を保存"}</button></div>
     </div>
   </div>;
+}
+
+export function GroupPermissionsControl({ group }: { group: Group }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" aria-label="グループ設定" title="グループ設定" className="rounded-full p-1.5 text-ink-secondary hover:bg-raised" onClick={() => setOpen(true)}><Settings size={18} /></button>
+    {open && createPortal(<GroupPermissionsPanel group={group} onClose={() => setOpen(false)} />, document.body)}
+  </>;
 }
