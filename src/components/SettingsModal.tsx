@@ -44,6 +44,9 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { McpCallTimeoutSettings } from "./McpCallTimeoutSettings";
 import { ProfileFields } from "./ProfileSettingsFields";
 import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
+import { PersonalComposerSettings } from "./PersonalComposerSettings";
+import { GoogleChatSettings } from "./GoogleChatSettings";
+import { DirectCodexSettings } from "./DirectCodexSettings";
 import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
 import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
@@ -811,7 +814,9 @@ export function SettingsModal() {
         return (
           <>
             <AdvancedModeRow />
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <DirectCodexSettings />}
 
             <ProSettingsCard />
             <Card title={t("settings.profile.title")} subtitle={t("settings.profile.sharedSubtitle")}>
@@ -852,7 +857,7 @@ export function SettingsModal() {
             <FontRow />
             <ChatWidthRow />
             <ColorUserBubblesRow />
-            <SendKeyRow />
+            {import.meta.env.VITE_OMB_PERSONAL === "1" ? <PersonalComposerSettings /> : <SendKeyRow />}
             <SidebarDensityRow />
             {advanced && <SidebarToolsLayoutRow />}
             {advanced && <ShowThreadsRow />}

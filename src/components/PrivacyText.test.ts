@@ -20,6 +20,9 @@ it("restores only on an explicit local click, renders inert text and drops stale
     expect(request.mock.calls[0]?.[0]).toBe("/api/privacy/display");
     expect(host.textContent).toContain("星野 架空");
     expect(host.querySelector("img, a, iframe, script")).toBeNull();
+    await act(async () => [...host.querySelectorAll("button")].find(button => button.textContent === "復元した下書きを作る")!.click());
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="復元した下書きの本文"]')?.value).toContain("星野 架空");
+    expect(request).toHaveBeenCalledTimes(1);
     await act(async () => root.render(createElement(PrivacyText, { text: "⟦人物_001⟧", threadId: "b" })));
     expect(host.textContent).not.toContain("星野 架空");
     expect(request).toHaveBeenCalledTimes(1);

@@ -172,7 +172,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "scope-mcp.json"); process.env.FAKE_CODEX_DUMP = dump;
     mkdirSync(join(scratch, ".codex")); writeFileSync(join(scratch, ".codex/config.toml"), '[mcp_servers.notes]\nurl="https://example.test/ambient"\n');
     await create({ environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex"), FAKE_CODEX_MCP_OVERRIDES: "1" } });
-    await instance.adapter.sendTurn({ threadId: "scope-mcp", text: "Fixture", toolScope: { allow: ["native:*", "mcp:notes:read"] }, integrations: { custom: { notes: { type: "sse", url: "https://example.test/notes", headers: {} } } } });
+    await instance.adapter.sendTurn({ threadId: "scope-mcp", text: "Fixture", mcpCallTimeoutMs: 180000, toolScope: { allow: ["native:*", "mcp:notes:read"] }, integrations: { custom: { notes: { type: "sse", url: "https://example.test/notes", headers: {} } } } });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv).toContain("mcp_servers.notes.enabled=false");
@@ -182,12 +182,15 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(before).toBe(1);
     expect(Object.keys(seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config.mcp_servers)).toEqual(["notes_openmausbot"]);
     expect(seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config.mcp_servers.notes_openmausbot.default_tools_approval_mode).toBe("prompt");
+    expect(seen.argv).toContain("mcp_servers.notes_openmausbot.tool_timeout_sec=180");
+    expect(seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config.mcp_servers.notes_openmausbot.tool_timeout_sec).toBe(180);
     recorder.events.length = 0;
-    await instance.adapter.sendTurn({ threadId: "scope-mcp", text: "Continue", resumeCursor: "old-session", toolScope: { allow: ["native:*", "mcp:notes:read"] }, integrations: { custom: { notes: { type: "sse", url: "https://example.test/notes", headers: {} } } } });
+    await instance.adapter.sendTurn({ threadId: "scope-mcp", text: "Continue", resumeCursor: "old-session", mcpCallTimeoutMs: 180000, toolScope: { allow: ["native:*", "mcp:notes:read"] }, integrations: { custom: { notes: { type: "sse", url: "https://example.test/notes", headers: {} } } } });
     await recorder.until((event) => event.type === "turn.completed");
     const restored = JSON.parse(readFileSync(dump, "utf8"));
     expect(Object.keys(restored.calls.find((call: { method: string }) => call.method === "thread/resume").params.config.mcp_servers)).toEqual(["notes_openmausbot"]);
     expect(restored.calls.find((call: { method: string }) => call.method === "thread/resume").params.config.mcp_servers.notes_openmausbot.default_tools_approval_mode).toBe("prompt");
+    expect(restored.calls.find((call: { method: string }) => call.method === "thread/resume").params.config.mcp_servers.notes_openmausbot.tool_timeout_sec).toBe(180);
   });
 
   it("refuses a scoped prompt when effective Codex configuration still has an ambient MCP server", async () => {

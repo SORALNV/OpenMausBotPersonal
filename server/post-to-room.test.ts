@@ -221,17 +221,18 @@ beforeAll(async () => {
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 60_000;
   for (;;) {
+    if (child.exitCode !== null) throw new Error(`server exited during startup (${child.exitCode}). stderr:\n${stderr}`);
     try {
-      if ((await fetch(`${BASE}/api/health`)).ok) break;
+      if ((await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(1_000) })).ok) break;
     } catch {
     }
     if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
     await new Promise((wake) => setTimeout(wake, 150));
   }
 
-}, 60_000);
+}, 90_000);
 
 afterAll(async () => {
   await waitForExit(child, { signal: "SIGTERM" });
@@ -844,4 +845,33 @@ describe("limits counted per turn on a bearer that outlives the turn", () => {
     expect(field(later.body, "assignment", "id")).toBe(requestId);
     expect(field(later.body, "assignment", "botId")).toBe(to.id);
   }, 40_000);
+});
+
+describe("owner-defined group permissions", () => {
+  const defaults = { response: "inherit", post: true, mention: true, coordinate: true };
+  it("lets an unsectioned member post to a mixed room and wakes the mentioned member", async () => {
+    const mail = await makeBot("Permitted Mail", "");
+    const pi = await makeBot("Permitted Pi", "端末管理部");
+    const room = await makeRoom("Mixed permitted", [mail.id, pi.id], "");
+    expect((await api("PATCH", `/api/groups/${room.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } })).status).toBe(200);
+    const posted = await internal("POST", "/api/internal/post-to-room", { fromBotId: mail.id, fromThreadId: mail.threadId, groupId: room.id, message: "@Permitted Pi check this synthetic update" });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(201);
+    await expect.poll(async () => (await messagesOf(room.threadId)).some(m => m.from?.botId === pi.id && m.kind === "text"), { timeout: 20000 }).toBe(true);
+    const messages = await messagesOf(room.threadId);
+    expect(messages.filter(m => m.text === "@Permitted Pi check this synthetic update")).toHaveLength(1);
+    expect(messages.find(m => m.text === "@Permitted Pi check this synthetic update")?.role).toBe("bot");
+  }, 35000);
+
+  it("enforces posting restrictions and rejects stale or outsider grants", async () => {
+    const member = await makeBot("Restricted Member", "");
+    const peer = await makeBot("Restricted Peer", "端末管理部");
+    const room = await makeRoom("Restricted mixed", [member.id, peer.id], "");
+    const permissions = { crossSection: true, members: { [member.id]: { ...defaults, post: false } } };
+    expect((await api("PATCH", `/api/groups/${room.id}`, { permissions, permissionsVersion: 0 })).status).toBe(200);
+    const refused = await internal("POST", "/api/internal/post-to-room", { fromBotId: member.id, fromThreadId: member.threadId, groupId: room.id, message: "must not be posted" });
+    expect(refused.status).toBe(403);
+    expect((await messagesOf(room.threadId)).length).toBe(0);
+    expect((await api("PATCH", `/api/groups/${room.id}`, { permissions, permissionsVersion: 0 })).status).toBe(409);
+    expect((await api("PATCH", `/api/groups/${room.id}`, { permissions: { crossSection: true, members: { outsider: defaults } }, permissionsVersion: 1 })).status).toBe(400);
+  }, 35000);
 });

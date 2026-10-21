@@ -1,4 +1,5 @@
 import type { SendKey } from "./send-key";
+import type { ComposerKeymap } from "./composer-keymap";
 
 export interface ShortcutItem {
   id: string;
@@ -137,6 +138,14 @@ export function shortcutGroupsFor(sendKey: SendKey): readonly ShortcutGroup[] {
         : item.id === "new-line" ? { ...item, ...newLine }
           : item),
   }));
+}
+
+export function personalShortcutGroups(map: ComposerKeymap): readonly ShortcutGroup[] {
+  const keys = (key: SendKey): Keys => key === "enter" ? ENTER : key === "shift-enter" ? SHIFT_ENTER : SEND_ROWS["mod-enter"][0];
+  return SHORTCUT_GROUPS.map(group => ({ ...group, items: [
+    ...group.items.map(item => item.id === "send-message" ? { ...item, description: "Send message or add to queue", ...keys(map.queue) } : item.id === "new-line" ? { ...item, ...keys(map.newline) } : item),
+    ...(group.category === "Chat & Composer" ? [{ id: "steer-message", description: "Steer the running turn", ...keys(map.steer) }] : []),
+  ] }));
 }
 
 export function shouldOpenKeyboardShortcuts(event: KeyboardEvent): boolean {

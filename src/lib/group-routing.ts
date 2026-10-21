@@ -1,3 +1,4 @@
+import { permittedGroupResponders } from "../../shared/group-permissions";
 import type { Bot, ConfigStatus, Group, GroupDefaultResponder } from "@/state/store";
 import { isMentionBoundary, isMentionNameContinuation } from "../../shared/mention-boundary";
 import { t } from "./i18n";
@@ -28,6 +29,7 @@ export function defaultResponderName(group: Group, members: Bot[]): string | nul
 
 export function groupResponseHint(group: Group, members: Bot[], { jevOn = true }: { jevOn?: boolean } = {}): string {
   if (group.dm) return t("room.hint.dm");
+  if (group.permissions && Object.values(group.permissions.members).some(p => p.response !== "inherit")) return "メンバー別の応答設定に従います。グループ設定で変更できます。";
   const value = effectiveDefaultResponder(group, members);
   if (value.kind === "everyone") return t("room.hint.everyone");
   if (value.kind === "mentions") return t("room.hint.mentions");
@@ -38,6 +40,7 @@ export function groupResponseHint(group: Group, members: Bot[], { jevOn = true }
 
 export function groupComposerHint(group: Group, members: Bot[], { jevOn = true }: { jevOn?: boolean } = {}): string {
   if (group.dm) return t("composer.hint.dm");
+  if (group.permissions && Object.values(group.permissions.members).some(p => p.response !== "inherit")) return "メンバー別の応答設定が適用されます";
   const value = effectiveDefaultResponder(group, members);
   if (value.kind === "everyone") return t("composer.hint.everyone");
   if (value.kind === "mentions") return t("composer.hint.mentions");
@@ -55,9 +58,10 @@ export function openTaskWorking(group: Pick<Group, "threadId" | "working" | "tas
 export function roomRespondersForComposer<T extends { id: string; name: string; hidden?: boolean }>(
   text: string,
   members: T[],
-  group: Pick<Group, "defaultResponder">,
+  group: Pick<Group, "defaultResponder" | "permissions">,
 ): T[] {
   const available = members.filter((member) => !member.hidden);
+  const select = (defaults: T[]) => permittedGroupResponders({ ...group, memberIds: available.map(m => m.id) }, available, defaults, mentionedMembers(text, available));
   const everyone = "everyone";
   let everyoneAt = -1;
   while ((everyoneAt = text.indexOf("@", everyoneAt + 1)) !== -1) {
@@ -66,19 +70,19 @@ export function roomRespondersForComposer<T extends { id: string; name: string; 
       && text.slice(everyoneAt + 1, everyoneAt + 1 + everyone.length).toLowerCase() === everyone
       && !isMentionNameContinuation(text.slice(everyoneAt + 1 + everyone.length))
     ) {
-      return available;
+      return select(available);
     }
   }
   const mentioned = mentionedMembers(text, available);
-  if (mentioned.length) return mentioned;
+  if (mentioned.length) return select(mentioned);
   const fallback = effectiveDefaultResponder(group, available);
-  if (fallback.kind === "everyone") return available;
-  if (fallback.kind === "auto") return available;
+  if (fallback.kind === "everyone") return select(available);
+  if (fallback.kind === "auto") return select(available);
   if (fallback.kind === "member") {
     const lead = available.find((member) => member.id === fallback.botId);
-    return lead ? [lead] : [];
+    return select(lead ? [lead] : []);
   }
-  return [];
+  return select([]);
 }
 
 export function goalCoordinatorForComposer<

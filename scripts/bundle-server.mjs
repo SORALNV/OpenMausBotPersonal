@@ -58,6 +58,8 @@ await build({
   platform: "node",
   target: "node20",
   format: "esm",
+  // ws 8.22.0 retains Node built-in requires when bundled into ESM.
+  banner: { js: 'import { createRequire as createBundledRequire } from "node:module"; const require = createBundledRequire(import.meta.url);' },
   outbase: server,
   outdir: join(root, "dist-server"),
   // Written after tsc, replacing its output for these entry points.

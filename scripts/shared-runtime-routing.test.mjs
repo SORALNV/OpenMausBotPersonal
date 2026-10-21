@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {desktopRuntimeRoute} from './shared-runtime-routing.mjs';
+const desktop={desktopChild:true,appPipe:true,args:['app-server','--analytics-default-enabled'],socketActive:true};
+test('another desktop connection joins the existing runtime',()=>assert.equal(desktopRuntimeRoute(desktop),'attach'));
+test('first desktop connection creates the runtime',()=>assert.equal(desktopRuntimeRoute({...desktop,socketActive:false}),'create'));
+test('a helper process retains its separate stdio runtime',()=>assert.equal(desktopRuntimeRoute({...desktop,desktopChild:false}),'stdio'));
+test('startup policy checks retain stdio',()=>assert.equal(desktopRuntimeRoute({...desktop,appPipe:false}),'stdio'));
+test('explicit transport is never replaced',()=>{for(const args of [['app-server','--stdio'],['app-server','--listen','stdio://'],['app-server','--listen=stdio://']])assert.equal(desktopRuntimeRoute({...desktop,args}),'stdio')});
+test('CLI commands and daemon management pass through',()=>{for(const args of [['--version'],['app-server','daemon','version'],['app-server','generate-json-schema']])assert.equal(desktopRuntimeRoute({...desktop,args}),'stdio')});

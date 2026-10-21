@@ -19,7 +19,7 @@ export function prepareAliases(scope: string, aliases: PrivacyAlias[], vault: Pr
       if (!pattern) return text;
       return text.split(/(⟦[^⟦⟧\r\n]{1,100}⟧)/u).map(part => vault.hasToken(part) ? part : part.replace(pattern, match => {
         const group = groups.get(match)!;
-        const token = vault.registerAlias(scope, group.variants[0], group.replacement);
+        const token = vault.registerAlias(scope, group.variants[0], group.replacement, group.restoreAs);
         output.set(token, `⟦${group.replacement}⟧`); return token;
       })).join("");
     },

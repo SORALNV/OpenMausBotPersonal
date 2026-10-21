@@ -159,6 +159,7 @@ export function drainSteeredMessages(
     head: SteerQueueHead,
   ) => void | Promise<void>,
   isBlocked?: (botId: string, threadId: string, head: SteerQueueHead) => boolean,
+  coalesce?: (botId: string, threadId: string) => boolean,
 ): void {
   // deleting only the entry being visited is safe under Map iteration
   for (const [threadId, entry] of queues) {
@@ -174,7 +175,7 @@ export function drainSteeredMessages(
     if (bot.busy || isBlocked?.(entry.botId, threadId, entry.items[0])) continue;
     // isBlocked can re-enter this drain; if a nested drain took this entry, it is stale.
     if (queues.get(threadId) !== entry) continue;
-    const group = drainCoalesceHead(entry.items, coalesceIdentity, (item) => item.queuedAt);
+    const group = coalesce?.(entry.botId, threadId) === false ? entry.items.slice(0, 1) : drainCoalesceHead(entry.items, coalesceIdentity, (item) => item.queuedAt);
     const ids = group.map((item) => item.messageId);
     settleChatFollowups(ids, "dispatching");
     const rest = entry.items.slice(group.length);

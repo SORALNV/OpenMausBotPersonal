@@ -20,6 +20,8 @@ Codex の会話・作業状態は `~/.openmausbot-personal/private/codex/` に�
 
 ## 大学チャットの文章を処理する
 
+Google Chatの自動受信・依頼時の返信は[Google Chat連携](google-chat.md)を参照。対象ボットの個人会話へ限定し、取得結果のローカルマスクを必須にする。以下の手動入力機能とは別の接続である。
+
 1. 会話の入力欄の上にある「仮名化して入力」を押す。
 2. 専用画面に原文を貼り付ける。確実に隠したい氏名は「必ず隠す氏名」に1行1名で入力する。
 3. 「仮名化する」で Mac 内の公式 OPF モデルを GPU 実行する。原文は通常の下書き・会話履歴へ保存しない。
@@ -94,3 +96,22 @@ CUA ホストの識別子も `dev.sora.openmausbot.personal` に合わせる。�
 再ビルドしたアプリ内の `Resources/server` を一時 HOME へコピーしたパッケージ検証も成功した（独立起動、MCP、CLI、暗号化バックアップ、子プロセスの終了等）。push 前の lint・型検査・12言語のカタログ検査も成功した。
 
 フォークの移転先は [SORALNV/OpenMausBotPersonal](https://github.com/SORALNV/OpenMausBotPersonal/tree/codex/privacy-filter)。改良版は `codex/privacy-filter` ブランチを使う。ローカルの origin も移転先へ更新し、既存の SSH 認証で保存した。
+
+## キーチェーン確認を更新ごとに繰り返さない構成
+
+Personalの通常更新は固定の起動アプリと、更新可能な署名付きランタイムを分ける。自己署名アプリでは、同じ証明書でもキーチェーンのPartition-IDがビルドごとのcdhashを記録していた。2026-10-22の読み取り専用の診断で、Safe Storageの1項目に18個の過去のcdhashが確認された。秘密の値は取得せず、既存項目やACLは削除・緩和しない。
+
+```sh
+OMB_PERSONAL_BASE_APP='/Applications/OpenMausBot Personal.app' node scripts/personal-build-app.mjs
+node scripts/personal-package-runtime.mjs
+# Personalを終了してから実行する
+node scripts/personal-install-runtime.mjs
+```
+
+初回だけ `/Applications/OpenMausBot Personal.app` を固定ランチャーへ移行してバックアップを残す。その後の通常更新ではランチャーを変更しない。ランタイムは `~/.openmausbot-personal/runtime/versions/<UUID>/OpenMausBot Runtime.app` に保存する。privateな `active.json` を原子的に切り替える。起動前に専用識別子とローカル署名証明書を検証し、改ざん・別署名・不正なパス・symlink・他ユーザー所有は拒否する。検証できなければコードを読み込まない。固定ランチャーは署名とASAR整合性情報を保持し、暗号化・Keychain保護を無効にしない。
+
+移行時の初回はmacOSの確認が必要になる可能性がある。対象がPersonalのSafe Storageであることを確認し、継続利用を許可する場合はMac上で「常に許可」を選ぶ。パスワードをチャットへ送る必要はない。固定ランチャーやElectron本体・署名証明書そのものを将来更新した場合、またはキーチェーンのロック・OS側の設定によっては再確認が必要になる。すべてのOS認証が永久に出なくなるという保証ではない。
+
+`node --test electron/personal-runtime-verifier.node-test.mjs` で起動前検証を確認する。アプリ全体を以前のビルド手順だけで上書きすると固定署名の効果が失われるため、通常は上記のランタイム更新手順を使う。履歴の保全・Pi/M1接続・マスクOFF設定も更新時に確認する。
+
+起動部分そのものの修正時に限り、`personal-install-runtime.mjs --migrate-launcher` で固定ランチャーも明示的に更新できる。その場合は署名ハッシュが変わり、OSの再確認が起こり得る。通常更新ではこの指定を使わない。

@@ -100,11 +100,12 @@ export function reachablePeers<T extends RosterMember>(bots: readonly T[], from:
   return bots.filter(bot => canReachPeer(from, bot));
 }
 
-/** A name resolves only inside reachablePeers, so it can never reach a bot its id could not. */
+/** Names resolve only within a caller-validated reachable set; destinations still require fresh access checks. */
 export function resolveTeammate<T extends RosterMember>(
   bots: readonly T[],
   from: RosterMember,
   raw: string,
+  roomPeers?: T[],
 ): { id: string; byName: boolean } | { error: string } {
   const wanted = raw.trim();
   if (bots.some(bot => bot.id === wanted)) return { id: wanted, byName: false };
@@ -114,7 +115,7 @@ export function resolveTeammate<T extends RosterMember>(
   const name = fold(wanted);
   const shown = peerName(wanted) || wanted;
   if (!name) return { error: `No bot with id "${shown}" — call list_bots and copy the exact id from the result` };
-  const reachable = reachablePeers(bots, from);
+  const reachable = roomPeers ?? reachablePeers(bots, from);
   const matches = reachable.filter(bot => fold(bot.name) === name);
   if (matches.length === 1) return { id: matches[0]!.id, byName: true };
   if (matches.length > 1) {

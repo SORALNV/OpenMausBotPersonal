@@ -566,3 +566,14 @@ it("runs a room member's turn a restart cut again once, told so, and resumes the
   ]);
   expect((await f.messages(f.source.activeTaskId)).filter((m: any) => /turn interrupted/.test(m.tool?.name ?? ""))).toEqual([]);
 }), 60_000);
+
+it("coordinates across sidebar categories only through an owner-permitted shared group", () => withRooms(async f => {
+  await f.api(`/api/bots/${f.target.id}`, { section: "端末管理部" }, "PATCH");
+  await f.tool("update_channel", { channel_id: f.source.id, member_ids: [f.sender.id, f.target.id] });
+  await f.api(`/api/groups/${f.source.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } }, "PATCH");
+  f.plan[f.sender.id].steps = [{ arguments: { bot_ids: ["Engineer"], message: "Inspect the synthetic room data" } }];
+  await f.start(); expect((await f.wait()).status).toBe("settled");
+  const children = f.handoffs();expect(children).toHaveLength(1);expect(children[0]).toMatchObject({ botId: f.target.id, groupId: f.source.id, status: "completed" });
+  const discovery=JSON.parse(f.provider().find((entry:any)=>entry.botId===f.sender.id).evidence[1].result.content[0].text);
+  expect(discovery.rooms.find((room:any)=>room.id===f.source.id).members.some((bot:any)=>bot.id===f.target.id)).toBe(true);
+}), 45000);

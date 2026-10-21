@@ -142,7 +142,7 @@ export interface SecretRequestCardData {
 
 export type ComputerControlState = { held: boolean; helpReason: string | null; help?: import("../../shared/wire").ComputerHelpRef | null };
 
-export interface Message extends Pick<import("../../shared/wire").WireMessage, "widget" | "routedBy" | "quickModel"> {
+export interface Message extends Pick<import("../../shared/wire").WireMessage, "widget" | "routedBy" | "quickModel" | "nativeCodex"> {
   id: string;
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "signin" | "routine.run" | "goal.run" | "digest" | "compaction" | "call" | "widget";
@@ -194,6 +194,8 @@ export interface Group extends Pick<WireGroup, "memberContext" | "queue"> {
   name: string;
   memberIds: string[];
   defaultResponder: GroupDefaultResponder;
+  permissions?: import("../../shared/group-permissions").GroupPermissions;
+  permissionsVersion?: number;
   bulletin: string;
   unread: boolean;
   lastReadMessageId?: string;
@@ -779,6 +781,7 @@ export type Action =
   | { type: "createGroup"; memberIds: string[]; name?: string; section?: string }
   | {
       type: "sendGroup";
+      delivery?: "queue" | "steer";
       groupId: string;
       text: string;
       sendId?: string;
@@ -790,7 +793,7 @@ export type Action =
   | {
       type: "patchGroup";
       groupId: string;
-      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "pinnedMessageId" | "section">>;
+      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "permissions" | "pinnedMessageId" | "section">>;
     }
   | { type: "deleteGroup"; groupId: string }
   | { type: "newGroupTask"; groupId: string }
@@ -810,6 +813,7 @@ export type Action =
   | { type: "select"; id: string }
   | {
       type: "send";
+      delivery?: "queue" | "steer";
       botId: string;
       text: string;
       sendId?: string;
@@ -2691,7 +2695,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void waitForExecutionSettings(botBeforeSend ? [botBeforeSend] : [], threadId)
             .then(() => api(`/api/bots/${action.botId}/messages`, {
                 method: "POST",
-                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}) }),
+                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.delivery ? { delivery: action.delivery } : {}), ...(action.dataContext ? { dataContext: action.dataContext } : {}) }),
               }))
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
@@ -2933,6 +2937,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({
               memberIds: action.memberIds,
+              permissions: { crossSection: true, members: {} },
               name: action.name,
               section: action.section,
               ...(window.ogb?.remoteClient?.active
@@ -2981,6 +2986,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   queueId: body.queueId,
                   text: action.text,
                 });
+                if (action.delivery === "steer") wrapped({ type: "steerGroupQueued", groupId: action.groupId, threadId: body.threadId, queueId: body.queueId });
               }
             })
             .catch((error) => {

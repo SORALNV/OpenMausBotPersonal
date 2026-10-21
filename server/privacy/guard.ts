@@ -21,7 +21,8 @@ export class PrivacyGuard {
 
   constructor(vault: PrivacyVault, detector: Detector) { this.vault = vault; this.detector = detector; }
 
-  async protect(scope: string, payload: unknown, signal?: AbortSignal, mandatoryTerms: ProtectedTerm[] = []): Promise<unknown> {
+  async protect(scope: string, payload: unknown, signal?: AbortSignal, mandatoryTerms: ProtectedTerm[] = [], options: { batchTextInputs?: boolean } = {}): Promise<unknown> {
+    if (options.batchTextInputs && (!Array.isArray(payload) || payload.some(text => typeof text !== "string"))) throw new PrivacyBlocked();
     const texts: string[] = [];
     let length = 0;
     const collect = (value: unknown, depth = 0): void => {
@@ -42,13 +43,26 @@ export class PrivacyGuard {
           collect(v, depth + 1);
         }
       } else if (value !== null && !["number", "boolean"].includes(typeof value)) throw new PrivacyBlocked();
-      if (length > 100_000 || texts.length > 512) throw new PrivacyBlocked("保護できるリクエスト量の上限を超えました。");
+      if (length > 100_000 || texts.length > (options.batchTextInputs ? 16_384 : 512)) throw new PrivacyBlocked("保護できるリクエスト量の上限を超えました。");
     };
     collect(payload);
     signal?.throwIfAborted();
     const terms = [...mandatoryTerms, ...this.vault.terms(), ...this.vault.known(scope)];
     let detected: PrivacySpan[][];
-    try { detected = await this.detector.detect(texts, signal); }
+    try {
+      if (!options.batchTextInputs) detected = await this.detector.detect(texts, signal);
+      else {
+        const unique = [...new Set(texts)];
+        const results = new Map<string, PrivacySpan[]>();
+        for (let start = 0; start < unique.length; start += 512) {
+          const batch = unique.slice(start, start + 512);
+          const spans = await this.detector.detect(batch, signal);
+          if (!Array.isArray(spans) || spans.length !== batch.length) throw new PrivacyBlocked();
+          batch.forEach((text, index) => results.set(text, spans[index]));
+        }
+        detected = texts.map(text => results.get(text)!);
+      }
+    }
     catch { throw new PrivacyBlocked("ローカル検出に失敗しました。原文は送信していません。"); }
     if (!Array.isArray(detected) || detected.length !== texts.length) throw new PrivacyBlocked("ローカル検出結果が不正です。");
     const allSpans = texts.map((text, i) => {

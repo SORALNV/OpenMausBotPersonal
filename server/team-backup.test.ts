@@ -60,6 +60,25 @@ function fixture() {
 describe("additive portable team backups", () => {
   beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
 
+  it("preserves group restrictions and remaps member IDs when restoring a backup", () => {
+    const { store, routines, chief, scout, group } = fixture();
+    const row = { response: "mentions" as const, post: false, mention: false, coordinate: false };
+    store.patchGroup(group.id, { permissions: { crossSection: true, members: { [scout.id]: row } }, permissionsVersion: 4 });
+    const backup = createTeamBackup(store, routines.listRoutines(), "Room permissions");
+    expect(backup.groups[0].permissions?.members[scout.id]).toEqual(row);
+    const restored = importTeamBackup(store, routines, backup, selection());
+    const newScout = restored.bots.find(bot => bot.name === "Scout 2")!;
+    const newGroup = restored.groups.find(room => room.name.startsWith(group.name))!;
+    expect(newGroup.permissions).toEqual({ crossSection: true, members: { [newScout.id]: row } });
+    expect(newGroup.permissionsVersion).toBe(1);
+    const invalid = structuredClone(backup);
+    invalid.groups[0].permissions!.members[chief.id + "-outsider"] = row;
+    expect(() => parseTeamBackup(invalid)).toThrow();
+    const narrowed = store.patchGroup(group.id, { memberIds: [chief.id] })!;
+    expect(narrowed.permissions!.members).toEqual({});
+    expect(narrowed.permissionsVersion).toBe(5);
+  });
+
   it("carries tool restrictions through backup and import without restoring execution grants", () => {
     const { store, routines, chief, scout } = fixture();
     const scope = { allow: ["native:read", "mcp:notes:read"], deny: ["mcp:notes:write"] };

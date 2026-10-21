@@ -1,3 +1,4 @@
+import { runtimeResourcesPath } from "./runtime-resources.mjs";
 // Packaged: an embedded cua-driver daemon, so macOS TCC grants attribute to OpenMausBot; dev attaches to CuaDriver.app.
 // Agents use the stdio MCP proxy, which executes nothing; the host-owned daemon does.
 
@@ -73,11 +74,11 @@ function ensureLinuxRuntime() {
     try {
       let bundledDriverPath;
       if (app.isPackaged && !process.env.CUA_DRIVER_PATH) {
-        bundledDriverPath = path.join(process.resourcesPath, "cua-linux-x64", "cua-driver");
+        bundledDriverPath = path.join(runtimeResourcesPath, "cua-linux-x64", "cua-driver");
         // AppImage builders may normalize the resource tree to 0755/0775: copy the pinned binaries to a fresh 0700 dir and re-verify.
         if (process.env.APPIMAGE) {
           reapStaleAppImageCuaBundles();
-          linuxBundleStage ??= stageAppImageCuaBundle({ resourcesPath: process.resourcesPath });
+          linuxBundleStage ??= stageAppImageCuaBundle({ resourcesPath: runtimeResourcesPath });
           bundledDriverPath = linuxBundleStage.driverPath;
         }
       }
@@ -118,7 +119,7 @@ export function resolveWindowsDriver() {
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, "cua-driver" + (process.platform === "win32" ? ".exe" : ""));
+    const bundled = path.join(runtimeResourcesPath, "cua-driver" + (process.platform === "win32" ? ".exe" : ""));
     if (fs.existsSync(bundled)) return bundled;
   }
   if (process.platform === "darwin" && fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
@@ -131,8 +132,8 @@ export function resolveDriverBinary() {
 
 export function resolveEmbeddedDriverBinary(binary) {
   if (process.platform !== "win32" || !app.isPackaged || process.env.CUA_DRIVER_PATH ||
-      binary !== path.join(process.resourcesPath, "cua-driver.exe")) return binary;
-  const background = path.join(process.resourcesPath, "cua-driver-background.exe");
+      binary !== path.join(runtimeResourcesPath, "cua-driver.exe")) return binary;
+  const background = path.join(runtimeResourcesPath, "cua-driver-background.exe");
   if (!fs.existsSync(background)) throw new Error("Packaged background CUA driver is missing; reinstall OpenMausBot");
   return background;
 }
@@ -165,12 +166,12 @@ async function loadEmbeddedSdk() {
   }
   const isWindows = process.platform === "win32";
   process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = path.join(
-    process.resourcesPath,
+    runtimeResourcesPath,
     "cua-sdk",
     "native",
     isWindows ? "cua_driver_sdk.dll" : "libcua_driver_sdk.dylib",
   );
-  return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
+  return import(pathToFileURL(path.join(runtimeResourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
 }
 
 async function attachStandalone(signal) {

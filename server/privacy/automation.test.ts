@@ -79,6 +79,40 @@ it("warms the local model when enabled settings are saved and when the app start
   const restarted = new PersonalPrivacyService(dir, () => null, detector); services.push(restarted);
   restarted.start(); expect(detector.detect.mock.calls.length).toBeGreaterThan(before);
 });
+it("disables automatic detection for Google Chat feeds and forced tool results while retaining literal rules", async () => {
+  const { service, settings, store, detector, filter, context } = fixture(true);
+  store.save({ ...settings, modelDetectionEnabled: false, toolFiltering: true });
+  service.protectThread = () => true;
+  service.start();
+  const raw = "星野架空 hoshino@example.invalid 090-1234-5678";
+  expect(await service.mask("chat", raw, ["星野架空"])).toBe("⟦ユーザーA⟧ hoshino@example.invalid 090-1234-5678");
+  const result = await filter({ content: [{ type: "text", text: raw }], structuredContent: { "Kaku Hoshino": raw } }, "chat");
+  expect(result.status).toBe(200);
+  expect(result.body.value.structuredContent["⟦ユーザーA⟧"]).toBe("⟦ユーザーA⟧ hoshino@example.invalid 090-1234-5678");
+  expect(result.body.value.content[0].text).toContain("hoshino@example.invalid");
+  expect(await service.prompt("ordinary", raw)).toBe(raw);
+  expect(detector.detect).not.toHaveBeenCalled();
+  const read = context("/api/privacy/settings", null); read.ctx.method = "GET";
+  await service.settingsRoute(read.ctx);
+  expect(read.result().body.state).toBe("off");
+});
+it("closes the detector on disable and stays off even when an earlier warmup finishes", async () => {
+  const { service, settings, detector, context } = fixture();
+  let finish!: (spans: never[][]) => void;
+  detector.detect.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const close = vi.spyOn(detector, "close");
+  service.start(); expect(detector.detect).toHaveBeenCalledOnce();
+  const c = context("/api/privacy/settings", { ...settings, modelDetectionEnabled: false }); c.ctx.method = "PUT";
+  await service.settingsRoute(c.ctx);
+  expect(close).toHaveBeenCalledOnce();
+  expect(c.result().body.settings.aliases).toEqual(settings.aliases);
+  expect(c.result().body.state).toBe("off");
+  finish([[]]); await Promise.resolve(); await Promise.resolve();
+  const read = context("/api/privacy/settings", null); read.ctx.method = "GET";
+  await service.settingsRoute(read.ctx); expect(read.result().body.state).toBe("off");
+  expect(validatePrivacySettings({ ...settings, modelDetectionEnabled: undefined }).modelDetectionEnabled).toBe(true);
+  expect(() => validatePrivacySettings({ ...settings, modelDetectionEnabled: "false" })).toThrow();
+});
 it("fails closed on model errors, corrupt settings, large/binary results, and a revoked turn", async () => {
   const { filter, service, context, dir } = fixture(true);
   for (const value of ["星野架空", { content: [{ type: "image", data: "synthetic" }] }, "A".repeat(100001)]) {
@@ -107,4 +141,36 @@ it("wraps registered HTTP MCP behind the local filter without leaving a native U
   expect(wrapped.custom!.chat).not.toHaveProperty("url");
   expect(JSON.stringify((wrapped.custom!.chat as { args: string[] }).args)).not.toContain("synthetic-bearer");
   expect(JSON.stringify(wrapped.custom!.chat)).toContain("privacy-mcp-proxy");
+});
+
+it("keeps literal rules fast while explicitly opted-in tools use the model before the AI boundary", async () => {
+  const { service, store, settings, context, detector, dir } = fixture();
+  store.save({ ...settings, enabled: false, toolFiltering: true, aliases: [{ replacement: "利用者", variants: ["星野架空", "ほしのかくう", "Kaku Hoshino"], restoreAs: "架空さん" }] });
+  const read = async (model: boolean, value: unknown) => {
+    const c = context("/api/internal/privacy-filter", { source: "custom", value, model });
+    await service.internalRoute("ordinary", () => {})(c.ctx); return c.result();
+  };
+  const raw = { content: [{ type: "text", text: "ほしのかくう hoshino@example.invalid" }], structuredContent: { sender: "Kaku Hoshino" } };
+  const literal = await read(false, raw);
+  expect(literal.status).toBe(200); expect(JSON.stringify(literal.body)).not.toMatch(/ほしのかくう|Kaku Hoshino/);
+  expect(detector.detect).not.toHaveBeenCalled();
+  const protectedResult = await read(true, raw);
+  expect(protectedResult.status).toBe(200); expect(JSON.stringify(protectedResult.body)).not.toContain("hoshino@example.invalid");
+  expect(detector.detect).toHaveBeenCalled();
+  expect(service.display("ordinary", "⟦利用者⟧")).toBe("架空さん");
+  expect(service.literals("ordinary", "⟦利用者⟧")).toBe("⟦利用者⟧");
+  const restarted = new PersonalPrivacyService(dir, () => null, detector); services.push(restarted);
+  expect(restarted.display("ordinary", "⟦利用者⟧")).toBe("架空さん");
+  expect(await service.prompt("ordinary", "星野架空")).toBe("星野架空");
+  expect((await read(true, { content: [{ type: "image", data: "synthetic" }] })).status).toBe(503);
+  service.protectThread = () => true;
+  expect(await service.prompt("ordinary", "星野架空")).toBe("星野架空");
+});
+
+it("never returns the original when an explicitly requested tool filter is disabled or fails", async () => {
+  const { service, context, store, settings } = fixture(true);
+  const read = async () => { const c = context("/api/internal/privacy-filter", { source: "custom", value: "星野架空", model: true }); await service.internalRoute("ordinary", () => {})(c.ctx); return c.result(); };
+  expect((await read()).status).toBe(503);
+  store.save({ ...settings, toolFiltering: true });
+  const response = await read(); expect(response.status).toBe(503); expect(JSON.stringify(response.body)).not.toContain("星野架空");
 });

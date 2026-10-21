@@ -769,6 +769,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             selectedMcp.set(mountName, selected);
             selectedApprovals.set(mountName, approval);
             mountMcpServer(appServerArgs, env, mountName, selected, approval, literalEnvs.get(mountName), mountedNames);
+            appServerArgs.push("-c", `mcp_servers.${mountName}.tool_timeout_sec=${Math.max(1, Math.ceil((turn.mcpCallTimeoutMs ?? 600000) / 1000))}`);
             if (turn.toolScope !== undefined && approval === "prompt") appServerArgs.push("-c", `mcp_servers.${mountName}.default_tools_approval_mode="prompt"`);
           }
         };
@@ -832,6 +833,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const selectionConfig: { config?: Record<string, unknown> } = turn.toolScope === undefined ? {} : { config: { mcp_servers: Object.fromEntries(
           [...selectedMcp].map(([name, server]) => [name, {
             command: server.command, args: server.args, env_vars: Object.keys(server.env), env: {}, default_tools_approval_mode: selectedApprovals.get(name) ?? "prompt",
+            tool_timeout_sec: Math.max(1, Math.ceil((turn.mcpCallTimeoutMs ?? 600000) / 1000)),
           }]),
         ) } };
 

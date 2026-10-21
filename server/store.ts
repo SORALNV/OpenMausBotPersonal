@@ -1019,7 +1019,7 @@ export class Store {
     );
   }
 
-  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "lastReadMessageId" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "audienceFloor" | "installedPackage" | "turnTimeoutMinutes" | "holds" | "heldMessages">>): GroupRecord | null {
+  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "permissions" | "permissionsVersion" | "bulletin" | "unread" | "lastReadMessageId" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "audienceFloor" | "installedPackage" | "turnTimeoutMinutes" | "holds" | "heldMessages">>): GroupRecord | null {
     const group = this.group(id);
     if (!group) return null;
     if (Object.prototype.hasOwnProperty.call(patch, "section")) {
@@ -1043,7 +1043,13 @@ export class Store {
       group.memberIds,
       Boolean(group.dm),
     );
-    if (Object.prototype.hasOwnProperty.call(patch, "memberIds")) pruneRoomHolds(group);
+    if (Object.prototype.hasOwnProperty.call(patch, "memberIds")) {
+      pruneRoomHolds(group);
+      if (group.permissions) {
+        group.permissions.members = Object.fromEntries(Object.entries(group.permissions.members).filter(([id]) => group.memberIds.includes(id)));
+        if (patch.permissions === undefined) group.permissionsVersion = (group.permissionsVersion ?? 0) + 1;
+      }
+    }
     this.saveGroups();
     this.emit({ type: "group", groupId: group.id });
     return group;

@@ -79,6 +79,7 @@ export function createTeamBackup(store: Store, routines: Routine[], name: string
     return {
       key: group.id, name: group.name, section: group.section, dm: Boolean(group.dm) && memberIds.length === 2,
       bulletin: group.bulletin, memberIds,
+      ...(group.permissions ? { permissions: { ...group.permissions, members: Object.fromEntries(Object.entries(group.permissions.members).filter(([id]) => memberIds.includes(id))) } } : {}),
       defaultResponder: group.defaultResponder.kind === "member" && !memberIds.includes(group.defaultResponder.botId)
         ? { kind: "mentions" as const }
         : group.defaultResponder.kind === "auto" && group.defaultResponder.fallbackBotId && !memberIds.includes(group.defaultResponder.fallbackBotId)
@@ -208,6 +209,7 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
       const responder = source.defaultResponder;
       store.patchGroup(group.id, {
         bulletin: source.bulletin,
+        ...(source.permissions ? { permissions: { ...source.permissions, members: Object.fromEntries(Object.entries(source.permissions.members).map(([id, p]) => [botIds.get(id)!, p])) }, permissionsVersion: 1 } : {}),
         setupCompletedAt: Date.now(),
         ...(source.dm && source.tasks[0]?.turnTimeoutMinutes != null
           ? { turnTimeoutMinutes: source.tasks[0].turnTimeoutMinutes }

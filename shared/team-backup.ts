@@ -1,3 +1,4 @@
+import { parseGroupPermissions } from "./group-permissions.ts";
 import { z } from "zod";
 
 import { CONNECTOR_SLUG_PATTERN, CONNECTOR_TOOL_NAME_PATTERN } from "./wire.ts";
@@ -117,6 +118,7 @@ const backupSchema = z.object({
   groups: z.array(z.preprocess(knownRoomResponder, z.object({
     ...owner,
     memberIds: z.array(key).max(200),
+    permissions: z.object({ crossSection: z.boolean(), members: z.record(z.string(), z.object({ response: z.enum(["inherit", "mentions", "always", "off"]), post: z.boolean(), mention: z.boolean(), coordinate: z.boolean() })) }).optional(),
     dm: z.boolean(),
     bulletin: z.string().max(200_000),
     defaultResponder: z.discriminatedUnion("kind", [
@@ -165,6 +167,7 @@ export function parseTeamBackup(input: unknown): TeamBackup {
   for (const group of backup.groups) {
     if (group.memberIds.some((id) => !bots.has(id))) throw new Error("Invalid backup: unknown room member");
     unique(group.memberIds, "room member");
+    if (group.permissions) parseGroupPermissions(group.permissions, group.memberIds);
     const lead = group.defaultResponder.kind === "member" ? group.defaultResponder.botId
       : group.defaultResponder.kind === "auto" ? group.defaultResponder.fallbackBotId : undefined;
     if (lead !== undefined && !group.memberIds.includes(lead)) {

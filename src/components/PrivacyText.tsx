@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useCopyFeedback } from "@/lib/copy-text";
+import { RestoredPrivacyDraft } from "./RestoredPrivacyDraft";
 
 export function PrivacyText({ text, threadId }: { text: string; threadId?: string }) {
   const [display, setDisplay] = useState<{ source: string; threadId?: string; value: string }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<{ source: string; threadId?: string }>();
   const restored = display?.source === text && display.threadId === threadId ? display.value : undefined;
   const copy = useCopyFeedback(restored ?? "");
   const restore = async () => {
@@ -29,6 +31,8 @@ export function PrivacyText({ text, threadId }: { text: string; threadId?: strin
     </button>}
     {restored && <p>表示専用の復元です。送信・ツール実行には適用しません。</p>}
     {restored && <button type="button" onClick={() => void copy.copy()}>{copy.state === "copied" ? "コピーしました" : copy.state === "failed" ? "コピーできませんでした" : "確認した復元文をコピー"}</button>}
+    {restored && <button type="button" onClick={() => setDraft({ source: text, threadId })}>復元した下書きを作る</button>}
+    {restored && draft?.source === text && draft.threadId === threadId && <RestoredPrivacyDraft key={`${threadId}:${text}`} text={restored} onClose={() => setDraft(undefined)} />}
     {error && <p role="alert">{error}</p>}
   </div>;
 }

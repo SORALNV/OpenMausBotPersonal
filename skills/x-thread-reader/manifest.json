@@ -1,0 +1,9 @@
+{
+  "id": "x-thread-reader",
+  "name": "Xの本人スレッド取得",
+  "version": "1.0.0",
+  "description": "Use AIのChromeでX投稿URLと本人の返信・引用を読み取る。第三者は明示依頼時のみ。",
+  "defaultEnabled": true,
+  "triggerTerms": ["https://x.com/", "https://www.x.com/", "https://twitter.com/", "https://www.twitter.com/"],
+  "requiredCapabilities": []
+}

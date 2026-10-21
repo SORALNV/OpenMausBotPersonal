@@ -632,6 +632,8 @@ const Bubble = memo(function Bubble({
               ) : text ? (
                 <div data-citation-source={message.id} data-citation-owner-type="bot" data-citation-owner={botId} data-citation-thread={threadId}><ChatMarkdown text={text} mentionPeers={mentionPeers} mentionPerson={mentionPerson} message={{ threadId, messageId: message.id }} delivered={group?.delivered} /></div>
               ) : null}
+              {message.nativeCodex?.formatted && <details className="mt-2 text-xs text-ink-secondary"><summary>Codexの元回答を表示</summary><pre className="mt-2 whitespace-pre-wrap break-words">{message.nativeCodex.originalText}</pre></details>}
+              {message.nativeCodex?.formatterFailure && <p className="mt-2 text-xs text-ink-secondary">短縮処理を利用できなかったため、元回答を表示しています。</p>}
               {group && <AttachmentGallery images={group.images} files={group.files} message={{ threadId, messageId: message.id }} eager={eagerAttachments} beneath />}
             </MessageBoundary>
           )}

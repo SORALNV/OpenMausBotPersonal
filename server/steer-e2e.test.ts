@@ -190,6 +190,26 @@ posixOnly("mid-turn steering e2e", () => {
     40_000,
   );
 
+  it("keeps an explicit queue separate from live steering on a steer-capable engine", async () => {
+    rmSync(steerFinishGate, { force: true });
+    const created = (await api("POST", "/api/bots")).body.bot;
+    await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "claudeSteer", model: "claude-fake" } });
+    try {
+      await api("POST", `/api/bots/${created.id}/messages`, { text: "first", threadId: created.threadId });
+      await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.kind === "activity"), "first activity");
+      const queued = await api("POST", `/api/bots/${created.id}/messages`, { text: "wait for later", threadId: created.threadId, delivery: "queue" });
+      expect(queued.status).toBe(202); expect(queued.body.queued).toBe(true); expect(queued.body.steered).toBeUndefined();
+      expect((await getBot(created.id)).messages.some((m: any) => m.text === "wait for later")).toBe(false);
+      const steered = await api("POST", `/api/bots/${created.id}/messages`, { text: "do this now", threadId: created.threadId, delivery: "steer" });
+      expect(steered.status).toBe(202); expect(steered.body.steered).toBe(true);
+      expect((await api("DELETE", `/api/bots/${created.id}/queue/${queued.body.queueId}`, { threadId: created.threadId })).status).toBe(200);
+    } finally { writeFileSync(steerFinishGate, "finish"); await api("POST", `/api/bots/${created.id}/interrupt`, { threadId: created.threadId }); }
+    await waitFor(async () => !(await getBot(created.id)).busy, "test turn settled");
+    const rejected = await api("POST", `/api/bots/${created.id}/messages`, { text: "cannot steer idle", threadId: created.threadId, delivery: "steer" });
+    expect(rejected.status).toBe(409);
+    expect((await getBot(created.id)).messages.some((m: any) => m.text === "cannot steer idle")).toBe(false);
+  }, 40000);
+
   it("a steer the CLI runs as its next native turn keeps the turn, its busy state and its internal tool pass until that reply lands", async () => {
     rmSync(lateSteerFinishGate, { force: true });
     rmSync(lateSteerContinuationGate, { force: true });

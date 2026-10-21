@@ -5,10 +5,12 @@ import {
   filterShortcutGroups,
   isMacPlatform,
   shortcutGroupsFor,
+  personalShortcutGroups,
   shortcutKeysForPlatform,
   type ShortcutItem,
 } from "@/lib/keyboard-shortcuts";
 import { useSendKey } from "@/lib/send-key";
+import { useComposerKeymap } from "@/lib/composer-keymap";
 
 export interface KeyboardShortcutsModalProps {
   open: boolean;
@@ -41,6 +43,7 @@ export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModal
   const inputRef = useRef<HTMLInputElement>(null);
   const isMac = isMacPlatform();
   const sendKey = useSendKey();
+  const composerKeys = useComposerKeymap();
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -54,7 +57,7 @@ export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModal
 
   if (!open) return null;
 
-  const groups = filterShortcutGroups(shortcutGroupsFor(sendKey), query, isMac);
+  const groups = filterShortcutGroups(import.meta.env.VITE_OMB_PERSONAL === "1" ? personalShortcutGroups(composerKeys) : shortcutGroupsFor(sendKey), query, isMac);
 
   return (
     <dialog

@@ -56,6 +56,7 @@ export interface BotMessageRouteDeps {
     input: {
       botId: string; threadId: string; text: string; sendId?: string; replyTo?: Message; sender?: ResolvedSender;
       trigger: UsageTrigger; dataContext?: DataContext; personPresent: boolean;
+      delivery?: "queue" | "steer";
     },
     guardedStart?: (currentAtStart: BotRecord) => Promise<DirectSendReceipt>,
   ): Promise<DirectSendReceipt>;
@@ -149,6 +150,8 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const pressed = body.widgetAction !== undefined && body.widgetAction !== null;
+      if (body.delivery !== undefined && !["queue", "steer"].includes(body.delivery)) return json(res, 400, { error: "delivery must be queue or steer" });
+      if (body.delivery !== undefined && (guarded || pressed)) return json(res, 400, { error: "delivery cannot override guarded or widget sends" });
       if (guarded && pressed) return json(res, 400, { error: "guarded sends cannot answer a widget" });
       // A distinct route, so an older server answers 404 instead of ignoring the safety preconditions.
       const guardedBody = guarded ? guardedSendSchema.safeParse(body) : null;
@@ -218,6 +221,7 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       try {
         const receipt = await acceptDirectSend({
           botId: bot.id, threadId, text, sendId, replyTo, sender, trigger, dataContext,
+          ...(body.delivery ? { delivery: body.delivery } : {}),
           // The bot's own shell reaches this route on a headless server (loopback is the owner), so only a
           // paired session or the desktop capability proves a person and lifts the webhook block.
           personPresent: auth.kind === "session" || DESKTOP_MANAGED,

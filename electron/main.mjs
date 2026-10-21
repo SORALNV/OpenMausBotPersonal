@@ -1,3 +1,4 @@
+import { runtimeResourcesPath } from "./runtime-resources.mjs";
 import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, Tray, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -110,6 +111,7 @@ const { DESKTOP_MUTATION_HEADER, desktopServerHeaders } = require("./desktop-ser
 const { MIN_BOUNDS, normalizeUnreadCount, parseWindowState, resolveWindowState } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const runtimeAppPath = globalThis[Symbol.for("omb.verifiedRuntimeResources")] ? path.join(runtimeResourcesPath, "app.asar") : app.getAppPath();
 // vite binds IPv4; a bare "localhost" can resolve to ::1.
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 const DEFAULT_COMPOSIO_BROKER_URL = "https://openmausbot-composio.milindsoni201.workers.dev";
@@ -636,7 +638,7 @@ async function desktopCompanionState() {
 
 function companionLaunchOptions(hostedUrl = null) {
   return {
-    resourcesPath: process.resourcesPath,
+    resourcesPath: runtimeResourcesPath,
     harnessPort: SERVER_PORT,
     mutationToken: companionMutationToken,
     hostedUrl,
@@ -651,10 +653,10 @@ function ensureManagedCompanionConnector() {
   managedCompanionConnector = createManagedCompanionTunnel({
     binaryPath: resolveCloudflaredBinary({
       isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath(),
+      resourcesPath: runtimeResourcesPath,
+      appPath: runtimeAppPath,
     }),
-    guardianEntry: resolveManagedCompanionGuardian({ appPath: app.getAppPath() }),
+    guardianEntry: resolveManagedCompanionGuardian({ appPath: runtimeAppPath }),
     runtimeExecutable: process.execPath,
     runtimeRoot: path.join(app.getPath("userData"), "managed-companion-tunnel"),
     onChange: (status) => {
@@ -1221,7 +1223,7 @@ function receivePhoneSecretSave(proc, rawMessage) {
 async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmentDir(environmentsState, desktopDataDir())) {
   if (desktopShutdownStarted) return { proc: null, abort: true };
   const { entry, compileCacheDir } = serverChildLaunch({
-    resourcesPath: process.resourcesPath,
+    resourcesPath: runtimeResourcesPath,
     userData: app.getPath("userData"),
   });
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
@@ -1232,9 +1234,9 @@ async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmen
     // Fail-closed until this process sends the private connection; never a descriptor inherited from the shell.
     OMB_DESKTOP_PARENT: "1",
     OMB_DESKTOP_LAUNCH_ID: desktopLaunchId,
-    OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
-    OMB_RESOURCES_PATH: process.resourcesPath,
-    OMB_SKILLS_DIR: path.join(process.resourcesPath, "skills"),
+    OMB_STATIC_DIR: path.join(runtimeResourcesPath, "ui"),
+    OMB_RESOURCES_PATH: runtimeResourcesPath,
+    OMB_SKILLS_DIR: path.join(runtimeResourcesPath, "skills"),
     OMB_PORT: String(port),
     OMB_APP_VERSION: app.getVersion(),
     OMB_USER_DATA: app.getPath("userData"),
@@ -1366,7 +1368,7 @@ function buildErrorPage({ allPortsOccupied }) {
 }
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
-const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
+const androidDevice = createAndroidDeviceController({ resourcesPath: runtimeResourcesPath });
 const displayMediaGuard = createDisplayMediaGuard();
 let displayMediaRequestCount = 0;
 
@@ -2352,7 +2354,7 @@ function createWindow({ deferNavigation = false } = {}) {
         if (process.env.OMB_SMOKE_BUNDLED_CUA === "1") {
           const connection = await cuaReady;
           const expectedDriver = path.join(
-            process.resourcesPath,
+            runtimeResourcesPath,
             "cua-linux-x64",
             "cua-driver",
           );
@@ -3327,7 +3329,7 @@ app.whenReady().then(async () => {
       desktopCompanionRelay = await startDesktopCompanionRelay({
         access: desktopRemoteAccess,
         staticDir: app.isPackaged
-          ? path.join(process.resourcesPath, "ui")
+          ? path.join(runtimeResourcesPath, "ui")
           : path.join(app.getAppPath(), "dist"),
       });
       SERVER_PORT = desktopCompanionRelay.port;

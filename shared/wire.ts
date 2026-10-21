@@ -395,6 +395,8 @@ export type CardAnswerer = (
 
 /** One transcript line, serialized as stored. */
 export interface WireMessage {
+  nativeOmp?: import("./native-omp.ts").NativeOmpMessage;
+  nativeCodex?: import("./direct-codex.ts").DirectCodexMessage;
   roomRequest?: { id: string; phase: "request" | "result" };
   id: string;
   role: "bot" | "user";
@@ -446,6 +448,8 @@ export interface WireMessage {
   /** A bot line a "post" webhook wrote: whoever called the webhook chose
    * its words. */
   webhookPost?: boolean;
+  /** Local Google Chat delivery receipt; no credentials or raw message text. */
+  googleChatEventId?: string;
   /** user messages sent INTO a running turn (capabilities.queueing). */
   steered?: boolean;
   /** user messages a peer bot handed to this thread's RUNNING turn: peer
@@ -773,6 +777,8 @@ export interface WireGroup {
   name: string;
   memberIds: string[];
   defaultResponder: GroupDefaultResponder;
+  permissions?: import("./group-permissions.ts").GroupPermissions;
+  permissionsVersion?: number;
   /** The room's shared instructions. */
   bulletin: string;
   unread: boolean;

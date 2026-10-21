@@ -1,7 +1,8 @@
+import { GroupPermissionsPanel } from "./GroupPermissionsPanel";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
 import { useShowThreads } from "@/lib/thread-preferences";
-import { Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Pause, Pin, Plus, Search, Square, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Pause, Pin, Plus, Search, Settings, Square, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -1129,6 +1130,7 @@ export function GroupView({ group }: { group: Group }) {
   const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
   const [folderOpen, setFolderOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     group.threadId,
@@ -1242,7 +1244,7 @@ export function GroupView({ group }: { group: Group }) {
 
   useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
   useEffect(() => setFolderOpen(false), [group.id]);
-  useEffect(() => setMembersOpen(false), [group.id]);
+  useEffect(() => { setMembersOpen(false); setPermissionsOpen(false); }, [group.id]);
   const saveBulletin = () => {
     setBulletinOpen(false);
     if (bulletinDraft !== group.bulletin) {
@@ -1311,6 +1313,7 @@ export function GroupView({ group }: { group: Group }) {
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       <GroupCallOverlay group={group} members={members} />
+      {permissionsOpen && !group.dm && !remoteClient && <GroupPermissionsPanel group={group} onClose={() => setPermissionsOpen(false)} />}
       {membersOpen && !remoteClient && !group.dm && (
         <ManageMembersPanel group={group} onClose={closeMembers} triggerRef={membersTriggerRef} />
       )}
@@ -1358,6 +1361,7 @@ export function GroupView({ group }: { group: Group }) {
           <GroupUsageChip usage={group.usage} />
           {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!remoteClient && !setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}
+          {!group.dm && !remoteClient && !setupPending && <button type="button" aria-label="グループ設定" title="グループ設定" className="rounded-full p-1.5 text-ink-secondary hover:bg-raised" onClick={() => setPermissionsOpen(true)}><Settings size={18} /></button>}
           {group.dm || remoteClient ? (
             memberMauses
           ) : (

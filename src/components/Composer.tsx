@@ -2,7 +2,7 @@ import { track } from "@/lib/analytics";
 import { PrivacyWorkbench } from "./PrivacyWorkbench";
 import { ComposerSpeechError } from "./ComposerSpeechError";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Sparkles, Square, Target, Users, X } from "lucide-react";
+import { BookOpen, Mic, Paperclip, Sparkles, Square, Target, Users, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
@@ -10,6 +10,8 @@ import { activeLocale, t } from "@/lib/i18n";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import { useAdvancedMode } from "@/lib/interface-mode";
 import { imeComposing, sendKeyLabel, sendsMessage, useSendKey } from "@/lib/send-key";
+import { handleComposerKeys, useComposerKeymap } from "@/lib/composer-keymap";
+import { ComposerSendControls } from "./ComposerSendControls";
 import {
   draftRevision,
   appendDraftAttachments,
@@ -120,7 +122,9 @@ export function Composer({
   const { capabilities } = useDesktopCapabilities();
   const advanced = useAdvancedMode();
   const sendKey = useSendKey();
-  const sendLabel = sendKeyLabel(sendKey);
+  const composerKeys = useComposerKeymap();
+  const personalKeys = import.meta.env.VITE_OMB_PERSONAL === "1";
+  const sendLabel = sendKeyLabel(personalKeys ? composerKeys.queue : sendKey);
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const threadId = group?.threadId ?? bot?.threadId ?? "";
   const currentGroupTask = group?.tasks?.find((task) => task.threadId === threadId);
@@ -554,8 +558,16 @@ export function Composer({
       dispatch({ type: "send", botId: bot.id, ...retry });
     }
   };
-  const send = () => {
+  const send = (delivery?: "queue" | "steer") => {
     if (locked || attachmentPending) return;
+    if (delivery === "steer" && group && effectiveChannelMode === "goal") {
+      dispatch({ type: "error", message: "目標モードはキューで送信してください。差し込みはチャットモードで使えます。" });
+      return;
+    }
+    if (delivery === "steer" && busy && !canSteer) {
+      dispatch({ type: "error", message: "この接続方式は差し込みに未対応です。キューを使ってください。" });
+      return;
+    }
     if (
       attachments.some((attachment) => attachment.kind === "image") &&
       !imageTargetsSupport(effectiveText, effectiveChannelMode)
@@ -589,6 +601,7 @@ export function Composer({
         replyToId: replyTo?.id,
         threadId,
         mode: effectiveChannelMode,
+        ...(delivery ? { delivery } : {}),
         onError: () => restoreDraft(sentDraft),
       });
       track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
@@ -601,6 +614,7 @@ export function Composer({
         replyToId: replyTo?.id,
         threadId,
         dataContext,
+        ...(delivery ? { delivery } : {}),
         onError: () => restoreDraft(sentDraft),
       });
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
@@ -1066,7 +1080,8 @@ export function Composer({
               onEditLast();
               return;
             }
-            if (sendsMessage(e.nativeEvent, sendKey)) {
+            if (personalKeys && handleComposerKeys(e, composerKeys, { busy, text, onText: setText, onSend: send })) return;
+            if (!personalKeys && sendsMessage(e.nativeEvent, sendKey)) {
               e.preventDefault();
               if (
                 canSteer &&
@@ -1095,7 +1110,7 @@ export function Composer({
               ? t("composer.placeholder.listening")
               : replyTo && !busy
               ? t("composer.placeholder.reply")
-              : busy && canSteer
+              : busy && canSteer && !personalKeys
                 ? pendingCount > 0
                   ? t("composer.placeholder.steerQueued", { name: busyName, key: sendLabel })
                   : t("composer.placeholder.steer", { name: busyName, key: sendLabel })
@@ -1142,34 +1157,7 @@ export function Composer({
           </button>
         )}
         {bot && !group && <CallButton bot={bot} placement="composer" />}
-        {hasContent && !locked && (
-          <button
-            onClick={send}
-            disabled={attachmentPending}
-            aria-label={
-              busy && canSteer
-                  ? t("composer.send.steer")
-                  : busy
-                    ? t("composer.send.queue")
-                    : t("composer.send.message")
-            }
-            title={
-              busy && canSteer
-                  ? t("composer.send.steer")
-                  : busy
-                    ? t("composer.send.queueHint")
-                    : `${t("chat.send")} (${sendLabel})`
-            }
-            className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
-              busy && !canSteer
-                  ? "bg-raised text-ink-secondary hover:bg-raised-hover"
-                  : "bg-accent hover:brightness-110",
-            )}
-          >
-            {busy && !canSteer ? <Clock size={15} /> : <ArrowUp size={17} />}
-          </button>
-          )}
+        {hasContent && !locked && <ComposerSendControls busy={busy} canSteer={canSteer} personal={personalKeys} pending={attachmentPending} sendLabel={sendLabel} steerLabel={sendKeyLabel(composerKeys.steer)} onSend={send} />}
           </div>
         </div>
         </div>
