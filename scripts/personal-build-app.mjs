@@ -28,6 +28,7 @@ const run = (cmd, args, env = process.env) => {
 };
 run("/usr/bin/codesign", ["--verify", "--deep", "--strict", base]);
 run(join(repo, "node_modules/.bin/tsc"), ["-b"]);
+rmSync(join(repo, "dist-server"), { recursive: true, force: true });
 run(join(repo, "node_modules/.bin/tsc"), ["-p", "tsconfig.server.build.json"]);
 run(process.execPath, ["scripts/bundle-server.mjs"]);
 run(join(repo, "node_modules/.bin/tsc"), ["-p", "tsconfig.companion.build.json"]);
