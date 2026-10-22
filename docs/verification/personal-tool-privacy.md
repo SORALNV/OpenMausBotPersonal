@@ -1,36 +1,21 @@
-# Personal fork: tool privacy and composer keys
+# Personal fork: registered words and composer keys
 
-`modelDetectionEnabled: false` stops model and supplementary-rule detection,
-including Google Chat's otherwise forced feed/body filtering and manual masking.
-It closes the local detector without disconnecting Google Chat. Registered literal
-replacements and local restoration remain available; unregistered information
-passes through. Missing settings retain detection for backward compatibility.
+OpenAI privacy-filter inference, automatic PII rules, worker setup and strict mode
+are removed. Settings expose registered literal replacements only. Unregistered
+names, email addresses, phone numbers and secrets pass through unchanged.
 
-The Personal settings keep scheduled filtering separate from an optional tool
-capability. Enabling tool filtering wraps registered MCP/browser/Connected Apps/Data
-servers locally. The tool catalog adds `_openmausbot_local_privacy: true` as an
-optional argument. The proxy consumes it before calling the upstream tool, then
-runs the local OpenAI privacy-filter on the result before returning any text or
-structured mirror to the AI. An error or unsupported binary result blocks that
-protected call; no raw-result fallback is used. Automatic routine filtering cannot
-be disabled by passing false to this option.
+Multiple exact spellings share one alias; `restoreAs` chooses the local spelling.
+The preview runs in the browser without a model or browser storage. Longer matches
+win, replacement does not cascade, and aliases persist with owner-only permissions.
+Existing vault entries remain restorable only within their original thread scope.
+Restored drafts are local editable/copyable text, never an automatic outgoing action.
 
-When this capability is enabled, registered literal replacements apply to all
-wrapped tool results without invoking the model. Ordinary conversation text is
-unchanged. Existing opt-in routine/source selections remain supported. Changes to
-tool availability take effect on the next connection/turn. No remote transcription
-or cloud filter is introduced.
-
-The settings preview is literal-only and runs in the browser without sending its
-sample to a model or saving it to browser storage. Multiple exact spellings share
-one alias. `restoreAs` chooses the local display/draft spelling; old settings fall
-back to the first spelling. The existing Mac-only vault persists this choice with
-the same private permissions and scoped restoration. Already-issued aliases remain
-stable. Reusing an old alias for a different identity is still rejected.
-
-Restored drafts are editable/copyable local text. They are not sent to the AI,
-Google Chat, or other tools, and closing the draft discards it. The user requested
-draft preparation only; no automatic restored outgoing action is implemented.
+Tool-result replacement and selected local routines have separate switches. Normal
+chat prompts remain unchanged. Protected tool failures and unsupported opaque
+results block instead of returning raw contents. The MCP catalog is unchanged;
+the removed `_openmausbot_local_privacy` argument is rejected before upstream calls.
+The proxy uses `/api/internal/registered-words`; the old model endpoint returns410.
+Startup backs up and removes the legacy model setting without deleting aliases.
 
 ## Composer
 
@@ -45,25 +30,24 @@ the accepted queue entry and reports the error. Goal mode uses its existing queu
 
 ## Verification
 
-Run isolated synthetic regression tests:
+Use fictional data in isolated homes and loopback-only mock services:
 
 ```sh
-pnpm exec vitest run server/privacy/privacy.test.ts server/privacy/automation.test.ts server/privacy/tool-batches.test.ts server/privacy/tool-option.test.ts src/lib/privacy-alias-preview.test.ts src/lib/composer-keymap.test.ts src/components/PersonalPrivacySettings.test.ts src/components/PrivacyText.test.ts src/components/Composer.delivery.test.ts src/components/Composer.ime.test.ts src/components/Composer.dictation.test.ts server/routes/bot-messages.test.ts server/steer-e2e.test.ts --maxWorkers=1
+pnpm exec vitest run server/privacy src/lib/privacy-alias-preview.test.ts src/components/PersonalPrivacySettings.test.ts src/components/PrivacyText.test.ts src/components/PrivacyWorkbench.test.ts server/google-chat.test.ts server/google-chat-diagnostics.test.ts
+node scripts/registered-words-acceptance.mjs
 pnpm typecheck
 pnpm lint
 ```
 
-A separate local acceptance fixture exercised the actual stdio MCP proxy, service,
-and MPS detector with fictional Japanese names, email, phone, and mirrored JSON.
-The mock AI boundary received no originals on protected calls. Literal-only calls
-invoked the detector zero times. Model failure returned an error without the
-original result, and the local option did not reach the upstream tool's arguments.
-The first model call, including startup, took 13,104 ms on this Mac.
+The acceptance fixture starts the real server and stdio MCP proxy, a fake tool and
+a mock AI. It checks that ordinary chat is unchanged, scheduled prompts and tool
+results replace three registered spellings, unregistered email is unchanged,
+restoration is scoped, unsupported images are blocked, and corrupt settings stop
+AI dispatch. It uses no real AI credentials, Google Chat content or Pi commands.
+Evidence is written under `.privacy-dev/evidence/registered-words-acceptance.json`.
 
-This feature does not intercept CLI-owned file/browser/network access, MCP servers
-configured only inside a CLI, tool/resource catalogs, direct MCP resource/prompt
-retrieval, existing history/memory, or every
-provider's direct traffic. Calls that omit model filtering use only the registered
-literal rules unless selected by routine/thread protection. Detection can miss
-personal information. No real Google Chat data or live posting was used to verify
-these changes.
+This does not intercept CLI-owned file/browser/network access, MCP servers configured
+only inside a CLI, catalogs, direct MCP resource/prompt retrieval, existing history
+or memory, or every provider's direct traffic. It is literal substitution, not an
+automatic personal-information detector. Physical phone and live Google Chat delivery
+require separate verification.

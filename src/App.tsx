@@ -407,11 +407,11 @@ function Application() {
         <ThreadRefsProvider>
           <Shell viewer={viewer} />
         </ThreadRefsProvider>
-        {import.meta.env.VITE_OMB_PRIVACY_STRICT !== "1" && <WelcomeGate viewer={viewer} />}
-        {import.meta.env.VITE_OMB_PRIVACY_STRICT !== "1" && <GuidedTour />}
-        {import.meta.env.VITE_OMB_PRIVACY_STRICT !== "1" && <LiveCallHost />}
-        {import.meta.env.VITE_OMB_PRIVACY_STRICT !== "1" && <FirstConversationTour quiet={spotlightsQuiet(viewer)} />}
-        {import.meta.env.VITE_OMB_PRIVACY_STRICT !== "1" && <CloudTimeZoneSync viewer={viewer} />}
+        <WelcomeGate viewer={viewer} />
+        <CloudTimeZoneSync viewer={viewer} />
+        <GuidedTour />
+        <LiveCallHost />
+        <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

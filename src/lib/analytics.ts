@@ -26,7 +26,7 @@ let pending: Array<(ph: PostHog) => void> = [];
 let choice: boolean | undefined;
 
 export function analyticsEnabled(): boolean {
-  if (import.meta.env.VITE_OMB_PRIVACY_STRICT === "1" || import.meta.env.VITE_OMB_PERSONAL === "1") return false;
+  if (import.meta.env.VITE_OMB_PERSONAL === "1") return false;
   if (choice !== undefined) return choice;
   const desktop = desktopSwitch()?.enabled();
   if (typeof desktop === "boolean") return desktop;

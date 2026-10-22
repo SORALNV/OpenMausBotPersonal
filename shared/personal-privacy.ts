@@ -9,8 +9,7 @@ export interface PersonalPrivacySettings {
   sources: PrivacySource[];
   aliases: PrivacyAlias[];
   toolFiltering?: boolean;
-  modelDetectionEnabled?: boolean;
 }
 export const DEFAULT_PERSONAL_PRIVACY: PersonalPrivacySettings = {
-  enabled: false, allRoutines: true, routineIds: [], sources: ["custom", "browser", "composio", "data"], aliases: [], toolFiltering: false, modelDetectionEnabled: true,
+  enabled: false, allRoutines: true, routineIds: [], sources: ["custom", "browser", "composio", "data"], aliases: [], toolFiltering: false,
 };

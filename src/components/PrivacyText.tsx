@@ -13,7 +13,7 @@ export function PrivacyText({ text, threadId }: { text: string; threadId?: strin
     setBusy(true);
     setError("");
     try {
-      const endpoint = import.meta.env.VITE_OMB_PERSONAL === "1" ? `/api/threads/${encodeURIComponent(threadId ?? "")}/privacy/display` : "/api/privacy/display";
+      const endpoint = `/api/threads/${encodeURIComponent(threadId ?? "")}/privacy/display`;
       const response = await fetch(endpoint, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ text, threadId }),

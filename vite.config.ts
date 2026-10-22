@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { privacyVite } from "./scripts/privacy-vite.ts";
 import { DurationSequencer } from "./scripts/testing/duration-sequencer.ts";
 import { hostTimeout } from "./server/testing/host-timeout.ts";
 
@@ -14,7 +13,7 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export default defineConfig({
-  plugins: [privacyVite(), react(), tailwindcss()],
+  plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(version),
   },

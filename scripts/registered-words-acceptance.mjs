@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { request, handleToolCall } from "./mcp-server.ts";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const fixture = await mkdtemp(join(tmpdir(), "omb-auto-acceptance-"));
+const fixture = await mkdtemp(join(tmpdir(), "omb-words-acceptance-"));
 const data = join(fixture, "data"); const home = join(fixture, "home");
 await mkdir(data, { mode: 0o700 }); await mkdir(home, { mode: 0o700 });
 const packets = []; let logs = "";
@@ -39,8 +39,6 @@ await writeFile(join(data, "config.json"), JSON.stringify({
 }), { mode: 0o600 });
 const child = spawn(process.execPath, ["server/index.ts"], { cwd: repo, env: {
   PATH: process.env.PATH, HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, OMB_PORT: String(port), OMB_WEBHOOK_PORT: "0", OMB_PERSONAL_BUILD: "1", OMB_PRIVACY_MODE: "off",
-  OMB_PRIVACY_PYTHON: join(repo, ".privacy-dev/venv/bin/python"), OMB_PRIVACY_WORKER: join(repo, "scripts/privacy-worker.py"), OMB_PRIVACY_DEVICE: "mps",
-  OMB_PRIVACY_CHECKPOINT: join(repo, ".privacy-dev/checkpoint/original"), TIKTOKEN_CACHE_DIR: join(repo, ".privacy-dev/tiktoken"),
 }, stdio: ["ignore", "pipe", "pipe"] });
 child.stdout.on("data", c => { logs += c; }); child.stderr.on("data", c => { logs += c; });
 const url = `http://127.0.0.1:${port}`;
@@ -53,10 +51,8 @@ const until = async (read, accept, timeout = 150_000) => {
 try {
   await until(async () => { try { return (await fetch(url + "/api/health")).ok; } catch { return false; } }, Boolean, 45_000);
   const settings = { enabled: true, allRoutines: true, routineIds: [], sources: ["custom"], aliases: [{ replacement: "ユーザーA", variants: originals.slice(0, 3) }] };
-  const warmStarted = Date.now();
   await api("/api/privacy/settings", { method: "PUT", body: settings });
-  await until(() => api("/api/privacy/settings"), value => value.state === "ready");
-  const warmMs = Date.now() - warmStarted;
+  assert.equal((await api("/api/privacy/settings")).mode, "registered-words");
   const { bot } = await tool("create_bot", { name: "Synthetic automation only", instance_id: "fixture", model: "fixture" });
   await api(`/api/bots/${bot.id}`, { method: "PATCH", body: { approvalMode: "full", mcpServers: ["privacy_fixture"], computer: "off", browser: false, composio: false } });
   await tool("send_bot_message", { bot_id: bot.id, text: "Use privacy_fixture_read once and draft a reply. Synthetic fixture only." });
@@ -67,8 +63,9 @@ try {
   await until(async () => (await api("/api/routines")).runs.find(r => r.routineId === routine.id), r => ["completed", "failed"].includes(r?.status));
   const scheduled = packets.slice(before);
   assert(scheduled.some(p => p.messages.some(m => m.role === "tool")), "Scheduled run must call the synthetic MCP tool");
-  for (const original of [...originals, "東京都架空区", "090-1234-5678"]) assert(!JSON.stringify(scheduled).includes(original), "Original reached scheduled mock AI");
+  for (const original of originals.slice(0, 3)) assert(!JSON.stringify(scheduled).includes(original), "Original reached scheduled mock AI");
   assert(JSON.stringify(scheduled).includes("ユーザーA"));
+  assert(JSON.stringify(scheduled).includes("hoshino@example.invalid"), "Unregistered email must remain unchanged");
   const run = (await api("/api/routines")).runs.find(r => r.routineId === routine.id);
   const restored = await api(`/api/threads/${run.threadId}/privacy/display`, { method: "POST", body: { text: "⟦ユーザーA⟧" } });
   assert.equal(restored.text, originals[0]);
@@ -77,15 +74,15 @@ try {
   const { run: binaryRun } = await api(`/api/routines/${routine.id}/run`, { method: "POST", body: {} });
   await until(async () => (await api("/api/routines")).runs.find(r => r.id === binaryRun.id), r => ["completed", "failed"].includes(r?.status));
   const binaryPackets = JSON.stringify(packets.slice(failedBefore));
-  assert(binaryPackets.includes("自動マスクに失敗")); assert(!binaryPackets.includes("synthetic-only"));
-  await writeFile(join(data, "private/terms.json"), "invalid", { mode: 0o600 });
+  assert(/BODY_INVALID|MASK_FAILED/u.test(binaryPackets)); assert(!binaryPackets.includes("synthetic-only"));
+  await writeFile(join(data, "private/settings.json"), "invalid", { mode: 0o600 });
   const beforeFailure = packets.length;
   const { run: failedRun } = await api(`/api/routines/${routine.id}/run`, { method: "POST", body: {} });
   await until(async () => (await api("/api/routines")).runs.find(r => r.id === failedRun.id), r => r?.status === "failed");
   assert.equal(packets.length, beforeFailure, "Filter errors must prevent prompt dispatch");
   assert(!logs.includes(originals[0]));
-  const report = { ok: true, testedAt: new Date().toISOString(), realMpsModel: true, warmMs, scheduledMockRequests: scheduled.length, scheduledPromptAndMcpResultsMasked: true, ordinaryChatUnchanged: true, customAliasDisplayRestore: true, binaryResultBlocked: true, corruptFilterNoDispatch: true, syntheticDataOnly: true };
-  await writeFile(join(repo, ".privacy-dev/evidence/personal-automation-acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
+  const report = { ok: true, testedAt: new Date().toISOString(), modelInferenceRemoved: true, registeredWordsOnly: true, scheduledMockRequests: scheduled.length, scheduledPromptAndMcpResultsMasked: true, ordinaryChatUnchanged: true, customAliasDisplayRestore: true, binaryResultBlocked: true, corruptFilterNoDispatch: true, syntheticDataOnly: true };
+  await writeFile(join(repo, ".privacy-dev/evidence/registered-words-acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify(report, null, 2));
 } finally {
   child.kill("SIGTERM");

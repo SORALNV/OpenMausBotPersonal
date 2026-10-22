@@ -6,7 +6,7 @@ import { BOOT_CLOUD_SECRETS } from "./cloud-secrets-boot.ts";
 import { DirectCodexService } from "./direct-codex-service.ts";
 import { NativeOmpService } from "./native-omp-service.ts";
 import { directReplyFormatter, generateIndependentCodexText, openNativeCodex } from "./direct-codex-formatter.ts";
-import { assertPrivacyStartup, privacyRequestBlocked, privacyStrict, protectPrivacySockets, PrivacyBlocked, privacyDisplayRoute, createPersonalPrivacyRoutes } from "./privacy/routes.ts";
+import { assertPrivacyMode, createPersonalPrivacyRoutes } from "./privacy/routes.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -658,7 +658,7 @@ const MIME: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
   ".woff2": "font/woff2",
 };
-assertPrivacyStartup(DATA_DIR);
+assertPrivacyMode();
 ensureDirs();
 // Acquire before any durable identity, sessions, config or Store state is loaded.
 const dataDirLease = acquireDataDirLeaseForProcess(DATA_DIR);
@@ -10029,7 +10029,6 @@ ROUTES.push(createLimitResetRoutes({ clock: limitClock, routines: routines!, req
 let webhookIngress: WebhookIngress | null = null;
 let webhookIngressError: string | null = null;
 try {
-  if (privacyStrict()) throw new PrivacyBlocked("厳格モードでは Webhook を起動しません。");
   webhookIngress = await listenWebhookIngress(webhooks, {
     port: WEBHOOK_PORT, publicBaseUrl: WEBHOOK_PUBLIC_URL,
     claimRequest: () => { moveFreeze.assertTurns(); return workspaceMaintenance.request(); },
@@ -13122,7 +13121,7 @@ const workspaceBackupAccess = {
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
     pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { if (!privacyStrict() && !moveFreeze.frozen()) { routines?.start(); calendarCalls?.start(); memoryUpkeep.resume(); } watchdog.start(); },
+    resume: () => { if (!moveFreeze.frozen()) { routines?.start(); calendarCalls?.start(); memoryUpkeep.resume(); } watchdog.start(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // Writers gated and work idle: release the WAL connection for a consistent snapshot; Store reopens it lazily.
@@ -13596,7 +13595,7 @@ if (process.env.OMB_PERSONAL_BUILD === "1") {
   googleChat = new GoogleChatLink(join(DATA_DIR, "private"), {
     target: (botId, threadId) => Boolean(store.bot(botId) && !store.bot(botId)?.hidden && store.taskByThread(botId, threadId)),
     ownsThread: (botId, threadId) => store.botByThread(threadId)?.id === botId,
-    mask: async (threadId, text, names, signal) => await personalPrivacy.mask(threadId, text, names, { signal }) as string,
+    mask: async (threadId, text, _names, signal) => await personalPrivacy.mask(threadId, text, { signal }) as string,
     maskResult: (threadId, value, signal) => personalPrivacy.filterToolResult(threadId, value, signal),
     hasEvent: (threadId, eventId) => store.messagesFor(threadId).some(message => message.googleChatEventId === eventId),
     post: (botId, threadId, text, eventId) => {
@@ -13626,7 +13625,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
   } catch {
     return json(res, 400, { error: "invalid request URL" });
   }
-  if (privacyRequestBlocked(req, url)) return json(res, 403, { error: "厳格モード: この経路は未対応のため無効です。" });
   const path = url.pathname;
   const method = req.method ?? "GET";
   let m: RegExpMatchArray | null = null;
@@ -13829,7 +13827,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
 
     // Route modules are tried here, behind the gate; do not add route `if`s below.
-    if (await dispatchRoutes([privacyDisplayRoute, personalPrivacyRoute, ...ROUTES], { req, res, url, path, method, auth, json, readBody })) return;
+    if (await dispatchRoutes([personalPrivacyRoute, ...ROUTES], { req, res, url, path, method, auth, json, readBody })) return;
 
     if (method === "GET" && path === "/api/auth/session") {
       return json(
@@ -16802,9 +16800,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
 };
 
 const server = createServer(handleRequest);
-if (!protectPrivacySockets(server)) upgrades.attach(server, handleRequest);
+upgrades.attach(server, handleRequest);
 
-if (!privacyStrict()) moveFreeze.hold(() => calendarCalls.start(), () => calendarCalls.stop());
+moveFreeze.hold(() => calendarCalls.start(), () => calendarCalls.stop());
 
 // Resolve the edition before accepting requests so /api/edition is never a guess.
 console.log(describeEdition(await loadEnterpriseLayer()));
@@ -16911,10 +16909,8 @@ if (CLOUD_HOME) registerCloudPower(cloudPower = createCloudPower({ dataDir: DATA
 server.listen(PORT, "127.0.0.1", async () => {
   companyRuntimeReady();
   console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
-  if (!privacyStrict()) {
-    browserSweep.start(); moveFreeze.hold(() => appTriggers.start(), () => void appTriggers.stop()); startCloudHomeConnectedApps({ cloudHome: CLOUD_HOME !== null, dataDir: DATA_DIR, cloudGrant: CLOUD_ENV.OMB_CLOUD_CONNECTED_APPS_GRANT, apply: (access) => { composio.setManagedBrokerAccess(access); broadcast({ kind: "config", ...configStatus() }); } });
-    if (builtInBrowserEnabled(cfg)) chromeLauncher.start();
-  }
+  browserSweep.start(); moveFreeze.hold(() => appTriggers.start(), () => void appTriggers.stop()); startCloudHomeConnectedApps({ cloudHome: CLOUD_HOME !== null, dataDir: DATA_DIR, cloudGrant: CLOUD_ENV.OMB_CLOUD_CONNECTED_APPS_GRANT, apply: (access) => { composio.setManagedBrokerAccess(access); broadcast({ kind: "config", ...configStatus() }); } });
+  if (builtInBrowserEnabled(cfg)) chromeLauncher.start();
   followupsReady = true;
   drainQueuedSends();
   drainQueuedChannelSends();
@@ -16924,11 +16920,9 @@ server.listen(PORT, "127.0.0.1", async () => {
     if (companyShutdown) return;
   }
   // Only once every registry is initialized and the endpoint listens: earlier dispatch can hit uninitialized bindings.
-  if (!privacyStrict()) {
-    moveFreeze.hold(() => routines!.start(), () => routines!.stop());
-    limitClock.start();
-    moveFreeze.hold(() => memoryUpkeep.start(), () => memoryUpkeep.stop());
-  }
+  moveFreeze.hold(() => routines!.start(), () => routines!.stop());
+  limitClock.start();
+  moveFreeze.hold(() => memoryUpkeep.start(), () => memoryUpkeep.stop());
 });
 
 // Tunnel requests have no peer address, which request-auth treats as proxied: a session is required, never loopback trust.

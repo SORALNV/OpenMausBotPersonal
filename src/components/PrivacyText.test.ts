@@ -17,7 +17,7 @@ it("restores only on an explicit local click, renders inert text and drops stale
     expect(request).not.toHaveBeenCalled();
     await act(async () => host.querySelector("button")!.click());
     expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0]?.[0]).toBe("/api/privacy/display");
+    expect(request.mock.calls[0]?.[0]).toBe("/api/threads/a/privacy/display");
     expect(host.textContent).toContain("星野 架空");
     expect(host.querySelector("img, a, iframe, script")).toBeNull();
     await act(async () => [...host.querySelectorAll("button")].find(button => button.textContent === "復元した下書きを作る")!.click());

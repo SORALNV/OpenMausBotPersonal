@@ -13,7 +13,6 @@ export function validatePrivacySettings(value: unknown): PersonalPrivacySettings
     || !Array.isArray(s.aliases) || s.aliases.length > 100) return bad();
   const variants = new Set<string>(); const replacements = new Set<string>();
   if (s.toolFiltering !== undefined && typeof s.toolFiltering !== "boolean") return bad();
-  if (s.modelDetectionEnabled !== undefined && typeof s.modelDetectionEnabled !== "boolean") return bad();
   for (const group of s.aliases) {
     if (!group || typeof group.replacement !== "string" || !group.replacement.trim() || group.replacement !== group.replacement.trim()
       || group.replacement.length > 80 || /[⟦⟧\p{Cc}]/u.test(group.replacement) || /^(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d+$/u.test(group.replacement)
@@ -25,7 +24,7 @@ export function validatePrivacySettings(value: unknown): PersonalPrivacySettings
       variants.add(variant);
     }
   }
-  return { enabled: s.enabled, allRoutines: s.allRoutines, routineIds: [...new Set(s.routineIds)], sources: [...new Set(s.sources)], aliases: s.aliases.map(g => ({ replacement: g.replacement, variants: [...g.variants], ...(g.restoreAs ? { restoreAs: g.restoreAs.trim() } : {}) })), toolFiltering: s.toolFiltering ?? false, modelDetectionEnabled: s.modelDetectionEnabled ?? true };
+  return { enabled: s.enabled, allRoutines: s.allRoutines, routineIds: [...new Set(s.routineIds)], sources: [...new Set(s.sources)], aliases: s.aliases.map(g => ({ replacement: g.replacement, variants: [...g.variants], ...(g.restoreAs ? { restoreAs: g.restoreAs.trim() } : {}) })), toolFiltering: s.toolFiltering ?? false };
 }
 
 export class PrivacySettingsStore {
@@ -42,6 +41,14 @@ export class PrivacySettingsStore {
       if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || (st.mode & 0o077) || st.size > 2_000_000) throw new Error();
       return validatePrivacySettings(JSON.parse(readFileSync(this.file, "utf8")));
     } catch { throw new PrivacyBlocked("Mac内の保護設定を読み込めません。対象データの送信を停止します。"); }
+  }
+  retireModelSetting(): void {
+    if (!existsSync(this.file)) return;
+    const settings = this.read();
+    const previous = readFileSync(this.file, "utf8");
+    if (!Object.hasOwn(JSON.parse(previous), "modelDetectionEnabled")) return;
+    writeFileSync(`${this.file}.before-model-removal-${randomUUID()}`, previous, { mode: 0o600, flag: "wx" });
+    this.save(settings);
   }
   save(value: unknown): PersonalPrivacySettings {
     const s = validatePrivacySettings(value);

@@ -39,5 +39,5 @@ async function chooseRoot(): Promise<React.ReactNode> {
 }
 
 void Promise.all([bootstrapBrand(), chooseRoot()]).then(([, root]) => {
-  createRoot(document.getElementById("root")!).render(<StrictMode>{root}{import.meta.env.VITE_OMB_PRIVACY_STRICT === "1" && <aside role="status" style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10000, background: "#0f172a", color: "white", padding: "6px 12px", fontSize: 12, pointerEvents: "none" }}>厳格モード｜このMac内で仮名化・テキスト会話のみ。日本語の検出漏れは残ります。</aside>}</StrictMode>);
+  createRoot(document.getElementById("root")!).render(<StrictMode>{root}</StrictMode>);
 });

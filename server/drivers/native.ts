@@ -1,5 +1,4 @@
 // Tees every provider-native message beside the canonical stream, so protocol drift shows up in a diff.
-import { privacyStrict } from "../privacy/policy.ts";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -46,7 +45,6 @@ function withoutInlineData(value: unknown, depth = 0): unknown {
 }
 
 export function appendNative(threadId: string, entry: { dir: "in" | "out"; source: string; msg: unknown }) {
-  if (privacyStrict()) return;
   const file = join(NATIVE_DIR, `${threadId}.ndjson`);
   try {
     // Session setup carries agent credentials (boat/comms tokens, MCP headers) and

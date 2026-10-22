@@ -13,7 +13,6 @@ function MaskDialog({ threadId, onApply, onClose }: { threadId: string; onApply(
   const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
   const [raw, setRaw] = useState("");
-  const [names, setNames] = useState("");
   const [protectedText, setProtectedText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -27,7 +26,7 @@ function MaskDialog({ threadId, onApply, onClose }: { threadId: string; onApply(
     setBusy(true); setError(""); setProtectedText("");
     try {
       const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/privacy/mask`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: raw, names: names.split(/\r?\n/).map(name => name.trim()).filter(Boolean) }), signal: controller.signal,
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: raw }), signal: controller.signal,
       });
       if (!response.ok) throw new Error();
       const body = await response.json() as { text: string };
@@ -39,13 +38,12 @@ function MaskDialog({ threadId, onApply, onClose }: { threadId: string; onApply(
   };
   return createPortal(<dialog ref={dialog} onCancel={onClose} className="m-auto max-h-[90dvh] w-[min(680px,95vw)] overflow-y-auto rounded-2xl border border-hairline bg-panel p-5 text-ink shadow-2xl backdrop:bg-black/60">
     <h2 className="text-lg font-semibold">Mac内で仮名化してから入力</h2>
-    <p className="my-3 text-sm text-ink-secondary">大学チャットなどの文章をここに貼り付けてください。原文は通常の下書き・会話履歴に保存せず、このMacの検出モデルで処理します。対応表はMac内に保存します。</p>
+    <p className="my-3 text-sm text-ink-secondary">登録した置換ルールだけをこのMacで適用します。未登録の氏名やメールなどは検出しません。原文は通常の下書き・会話履歴に保存せず、対応表はMac内に保存します。</p>
     <label className="block text-sm">原文<textarea autoFocus value={raw} disabled={busy} maxLength={100000} onChange={e => { setRaw(e.target.value); setProtectedText(""); }} className="mt-1 min-h-36 w-full rounded-lg border border-hairline bg-card p-3" /></label>
-    <label className="mt-3 block text-sm">必ず隠す氏名（任意・1行1名）<textarea value={names} disabled={busy} maxLength={5000} onChange={e => { setNames(e.target.value); setProtectedText(""); }} className="mt-1 min-h-16 w-full rounded-lg border border-hairline bg-card p-3" /></label>
     <button type="button" disabled={busy || !raw.trim()} onClick={() => void mask()} className="my-3 rounded-lg bg-accent px-4 py-2 text-accent-ink disabled:opacity-50">{busy ? "Mac内で処理中…" : "仮名化する"}</button>
     {error && <p role="alert" className="text-danger">{error}</p>}
     {protectedText && <label className="block text-sm">送る前に確認・修正<textarea value={protectedText} onChange={e => setProtectedText(e.target.value)} className="mt-1 min-h-36 w-full rounded-lg border border-hairline bg-card p-3" /></label>}
-    <p className="my-3 text-xs text-ink-secondary">検出漏れは残ります。添付ファイル、Codexが直接読むファイル、ツールの通信はこの機能の対象外です。</p>
+    <p className="my-3 text-xs text-ink-secondary">登録していない表記はそのまま残ります。添付ファイル、Codexが直接読むファイル、ツールの通信はこの機能の対象外です。</p>
     <div className="flex justify-end gap-3">
       <button type="button" onClick={onClose} className="rounded-lg border border-hairline px-4 py-2">閉じる</button>
       <button type="button" disabled={!protectedText.trim() || busy} onClick={() => { onApply(protectedText); onClose(); }} className="rounded-lg bg-accent px-4 py-2 text-accent-ink disabled:opacity-50">確認した文章を入力欄へ</button>

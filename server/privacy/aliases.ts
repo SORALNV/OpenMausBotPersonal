@@ -1,11 +1,18 @@
 import type { PrivacyAlias } from "../../shared/personal-privacy.ts";
 import type { PrivacyVault } from "./vault.ts";
 
-export function mapPrivacyStrings(value: unknown, fn: (text: string) => string, depth = 0): unknown {
-  if (depth > 32) throw new Error("Privacy payload too deep");
-  if (typeof value === "string") return fn(value);
-  if (Array.isArray(value)) return value.map(v => mapPrivacyStrings(v, fn, depth + 1));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [fn(k), mapPrivacyStrings(v, fn, depth + 1)]));
+export function mapPrivacyStrings(value: unknown, fn: (text: string) => string, depth = 0, budget = { chars: 0, strings: 0 }): unknown {
+  if (depth > 32) throw new Error("Replacement payload too deep");
+  if (typeof value === "string") {
+    budget.chars += value.length; budget.strings++;
+    if (budget.chars > 100_000 || budget.strings > 16_384) throw new Error("Replacement payload too large");
+    return fn(value);
+  }
+  if (Array.isArray(value)) return value.map(v => mapPrivacyStrings(v, fn, depth + 1, budget));
+  if (value && typeof value === "object") {
+    if (Object.getPrototypeOf(value) !== Object.prototype) throw new Error("Replacement requires JSON text");
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [mapPrivacyStrings(k, fn, depth + 1, budget), mapPrivacyStrings(v, fn, depth + 1, budget)]));
+  }
   return value;
 }
 

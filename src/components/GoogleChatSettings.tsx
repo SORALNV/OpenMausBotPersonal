@@ -35,7 +35,7 @@ export function GoogleChatSettings() {
       setStatus(await api<Status>(connect ? "/api/google-chat/connect" : "/api/google-chat", {
         method: connect ? "POST" : "PUT", body: JSON.stringify(connect ? { botId, threadId: bot!.threadId } : { enabled: false }),
       }));
-    } catch { setError("接続を変更できません。監視サーバー、大学ログイン、Mac内の保護モデルを確認してください。"); }
+    } catch { setError("接続を変更できません。監視サーバー、大学ログイン、登録語句の置換設定を確認してください。"); }
     finally { setBusy(false); }
   };
   const check = async () => {
@@ -50,11 +50,11 @@ export function GoogleChatSettings() {
   };
   return <Card title="Google Chat連携" subtitle="監視専用ブラウザの新着を受け取り、返信を頼んだときだけ送信します。">
     <div className="space-y-3">
-      <p className="text-sm text-ink-secondary">対象は監視サーバーに登録したスレッドだけです。取得本文はこのMacで仮名化し、受信だけでAIや返信を起動しません。</p>
+      <p className="text-sm text-ink-secondary">対象は監視サーバーに登録したスレッドだけです。取得本文は登録語句だけをこのMacで置換します。未登録の個人情報は自動検出しません。受信だけでAIや返信を起動しません。</p>
       <label className="block text-sm">新着を届けるボット<select aria-label="Google Chat接続先" className="mt-1 block w-full rounded-lg border border-hairline bg-inset p-2" value={botId} disabled={busy || !status} onChange={event => setBotId(event.target.value)}>
         <option value="">ボットを選ぶ</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
       </select></label>
-      <p role="status" className="text-sm">{busy ? "接続を設定中（Mac内のモデルを準備しています）…" : status?.enabled ? `監視接続: ${status.state} / 受信位置 ${status.cursor}` : "未接続・停止中"}</p>
+      <p role="status" className="text-sm">{busy ? "接続を設定中…" : status?.enabled ? `監視接続: ${status.state} / 受信位置 ${status.cursor}` : "未接続・停止中"}</p>
       {status?.enabled && <p className="text-sm">本文取得・マスク: {status.diagnostics?.body ? `${status.diagnostics.body.endedAt ? status.diagnostics.body.code === "OK" ? "完了" : "失敗" : "処理中"} / ${status.diagnostics.body.stage} / ${status.diagnostics.body.code ?? "待機"}${status.diagnostics.body.elapsedMs !== undefined ? ` / ${(status.diagnostics.body.elapsedMs / 1000).toFixed(1)}秒` : ""}` : "未確認（接続正常だけでは本文取得の成功を意味しません）"}</p>}
       <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-accent px-4 py-2 text-accent-ink" disabled={busy || checking || !status || !botId} onClick={() => void change(true)}>Google Chatを接続</button>
         <button type="button" className="rounded-lg border border-hairline px-4 py-2" disabled={busy || checking || !status?.enabled} onClick={() => void change(false)}>Google Chatの受信を停止</button>

@@ -1,5 +1,3 @@
-import { protectedChatFetch } from "../privacy/boundary.ts";
-import { privacyStrict, PrivacyBlocked } from "../privacy/policy.ts";
 import { createHash } from "node:crypto";
 import type {
   DriverCreateInput,
@@ -300,8 +298,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     createdAt: new Date().toISOString(),
   });
 
-  const strict = privacyStrict();
-  const toolsEnabled = !strict && options.tools !== false;
   const complete = async (
     messages: OpenAIChatMessage[],
     model: string,
@@ -310,7 +306,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     tools: ChatToolDefinition[] = [],
     onUsage?: TextGenerationOptions["onUsage"],
-    privacyScope = `helper:${input.instanceId}`,
   ): Promise<Completion> => {
     const timeoutController = new AbortController();
     let idleTimer: NodeJS.Timeout | null = null;
@@ -328,7 +323,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ? AbortSignal.any([signal, timeoutController.signal])
         : timeoutController.signal;
 
-      const response = await protectedChatFetch(`${options.apiUrl}/chat/completions`, {
+      const response = await fetch(`${options.apiUrl}/chat/completions`, {
         method: "POST",
         ...(messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url")) ? { redirect: "error" as const } : {}),
         headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
@@ -337,7 +332,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           ...(tools.length ? { tools } : {}),
         }),
         signal: activeSignal,
-      }, privacyScope);
+      });
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
@@ -527,7 +522,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
     const turnId = newId();
     const abort = new AbortController();
-    if (strict && turn.images?.length) throw new PrivacyBlocked("厳格モード: 画像・音声・バイナリは未対応です。");
     const messages = messagesFor(turn);
     const retainImages = chatImageBudget();
     for (const message of messages) retainImages(message.content);
@@ -606,11 +600,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const parsed = parseToolScope(turn.toolScope);
         if (!parsed.ok) throw new Error(parsed.error);
         const scope = parsed.scope;
-        tools = await mountChatTools(!toolsEnabled ? undefined : turn.integrations, abort.signal, options.computerUse, scope, turn.mcpCallTimeoutMs);
+        tools = await mountChatTools(options.tools === false ? undefined : turn.integrations, abort.signal, options.computerUse, scope, turn.mcpCallTimeoutMs);
         for (const { server, reason } of tools.skipped) {
           emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
         }
-        const questionAllowed = toolsEnabled && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
+        const questionAllowed = options.tools !== false && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
         let optionalQuestionOnly = questionAllowed && tools.definitions.length === 0;
           // An MCP server squatting ask_user cannot shadow it (dispatch intercepts the name); skip its definition.
         if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
@@ -648,7 +642,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 streamed = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
                 delta(text, streamKind);
-              }, tools.definitions, undefined, turn.threadId);
+              }, tools.definitions);
               delta("", "assistant_text", true);
               delta("", "reasoning_text", true);
               break;
@@ -888,12 +882,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     },
     adapter: {
       provider: options.driverKind,
-      capabilities: { ...(!strict && options.computerUse ? { computerMcp: toolsEnabled,
-        localComputerMcp: toolsEnabled,
-        browserMcp: toolsEnabled, nativeImageInput: true, images: true } : {}),
-        sessionModelSwitch: "in-session", customMcp: toolsEnabled, agentsMcp: toolsEnabled, composioMcp: toolsEnabled,
-        dataMcp: toolsEnabled,
-        highlevelMcp: toolsEnabled,
+      capabilities: { ...(options.computerUse ? { computerMcp: options.tools !== false,
+        localComputerMcp: options.tools !== false,
+        browserMcp: options.tools !== false, nativeImageInput: true, images: true } : {}),
+        sessionModelSwitch: "in-session", customMcp: options.tools !== false, agentsMcp: options.tools !== false, composioMcp: options.tools !== false,
+        dataMcp: options.tools !== false,
+        highlevelMcp: options.tools !== false,
         queueing: true,
         guestTurns: "confined" },
       sendTurn,

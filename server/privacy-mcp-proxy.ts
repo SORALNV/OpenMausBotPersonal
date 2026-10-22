@@ -3,7 +3,6 @@ import { createLineSplitter } from "./mcp-bridge.ts";
 import { resolveCliSpawn } from "./env-path.ts";
 import { spawnCli, killCliTree } from "./procs.ts";
 import { stripControlPlaneEnv } from "./config.ts";
-import { privacyToolCatalog, privacyToolRequest } from "./privacy/tool-option.ts";
 import { randomUUID } from "node:crypto";
 
 /** Only tool answers cross this boundary. A failed/unknown answer never falls back to the original bytes. */
@@ -21,7 +20,7 @@ export function runPrivacyMcpProxy(): void {
   const child = spawnCli(resolved.command, resolved.args, { env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.resume();
   child.stdin.on("error", () => {});
-  const pending = new Map<string, { method: string; model: boolean; diagnostic?: string; reporting?: Promise<void>; timer?: ReturnType<typeof setTimeout> }>();
+  const pending = new Map<string, { method: string; diagnostic?: string; reporting?: Promise<void>; timer?: ReturnType<typeof setTimeout> }>();
   const requestKey = (id: unknown) => typeof id === "number" || typeof id === "string" ? `${typeof id}:${id}` : undefined;
   const abort = new AbortController();
   const report = async (id: string, phase: string) => {
@@ -36,13 +35,13 @@ export function runPrivacyMcpProxy(): void {
     inputBytes = 0;
     try {
       if (line.length > 2_000_000 || pending.size > 32) return stop();
-      let frame = JSON.parse(line); const id = requestKey(frame.id);
-      let model = config.automatic !== false;
-      if (config.optional && frame.method === "tools/call") {
-        const request = privacyToolRequest(frame); frame = request.frame; model ||= request.model;
+      const frame = JSON.parse(line); const id = requestKey(frame.id);
+      if (frame.method === "tools/call" && Object.hasOwn(frame.params?.arguments ?? {}, "_openmausbot_local_privacy")) {
+        process.stdout.write(JSON.stringify(blocked(frame.id, "MODEL_FILTER_REMOVED")) + "\n");
+        return;
       }
       if (id) {
-        const item: { method: string; model: boolean; diagnostic?: string; reporting?: Promise<void>; timer?: ReturnType<typeof setTimeout> } = { method: frame.method, model };
+        const item: { method: string; diagnostic?: string; reporting?: Promise<void>; timer?: ReturnType<typeof setTimeout> } = { method: frame.method };
         if (config.googleChat && frame.method === "tools/call" && ["get_monitored_thread", "get_thread", "get_recent_messages", "get_message", "search_messages", "get_unread_messages"].includes(frame.params?.name)) {
           item.diagnostic = randomUUID(); item.reporting = report(item.diagnostic, "start");
           item.timer = setTimeout(() => {
@@ -72,12 +71,11 @@ export function runPrivacyMcpProxy(): void {
       pending.delete(id!);
       clearTimeout(request.timer);
       if (request.diagnostic) { await request.reporting; await report(request.diagnostic, "upstream_complete"); }
-      if (request.method === "tools/list" && config.optional && frame.result) frame = { ...frame, result: privacyToolCatalog(frame.result) };
       if (request.method === "tools/call") {
         try {
-          const response = await fetch(new URL("/api/internal/privacy-filter", url), {
+          const response = await fetch(new URL("/api/internal/registered-words", url), {
             method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${config.token}` },
-            body: JSON.stringify({ source: config.source, value: frame.error ?? frame.result, model: request.model, ...(request.diagnostic ? { chatDiagnosticId: request.diagnostic } : {}) }), signal: AbortSignal.any([abort.signal, AbortSignal.timeout(135_000)]),
+            body: JSON.stringify({ source: config.source, value: frame.error ?? frame.result, ...(request.diagnostic ? { chatDiagnosticId: request.diagnostic } : {}) }), signal: AbortSignal.any([abort.signal, AbortSignal.timeout(135_000)]),
           });
           if (!response.ok) {
             const failure = await response.json() as { code?: string };

@@ -1,5 +1,4 @@
 // Provider instance registry — port of upstream's ProviderInstanceRegistryLive behavior, minus Effect.
-import { privacyDriverRefusal } from "../privacy/policy.ts";
 import { findCliCandidates } from "../env-path.ts";
 import { installNpmEngine, npmAvailable, serverInstallFor } from "../engine-install.ts";
 import { withEngineMemory } from "../engine-memory.ts";
@@ -123,8 +122,6 @@ export class ProviderRegistry {
       };
     }
     try {
-      const privacyRefusal = privacyDriverRefusal(entry.driver);
-      if (privacyRefusal) throw new Error(privacyRefusal);
       const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
       // The RAW config: decodeConfig fills in the driver default, which would flag every instance as overridden.
       const rawCli = cliOfRaw(entry.config);
