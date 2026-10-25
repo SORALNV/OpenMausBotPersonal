@@ -46,7 +46,15 @@ def writers(directory=d):
      continue
     resume=parts[parts.index('--resume')+1] if '--resume' in parts else None
     if resume:
-     if b['expectedSessionId'] not in os.path.basename(resume):continue
+     saved_id=None
+     with open(resume) as saved:
+      for i,line in enumerate(saved):
+       if i>=32 or len(line)>1048576:break
+       try:
+        item=json.loads(line)
+        if item.get('type')=='session':saved_id=item.get('id');break
+       except ValueError:pass
+     if saved_id!=b['expectedSessionId']:refuse('NATIVE_TUI_REQUIRES_SHARING')
     else:
      saved=[f for f in os.listdir(directory) if f.endswith('.jsonl')]
      if len(saved)!=1:refuse('AMBIGUOUS_NATIVE_WRITER')

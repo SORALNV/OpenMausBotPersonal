@@ -84,8 +84,10 @@ def inspect():
    h=bypid.get(proc.name)
    if expected and h and h.get('sessionId')!=expected:continue
    resume=args[args.index('--resume')+1] if '--resume' in args else None
-   if not h and file and resume and pathlib.Path(resume)!=pathlib.Path(file):continue
-   if expected and not h and resume and expected not in pathlib.Path(resume).name:continue
+   if expected and not h and resume:
+    saved=descriptor(pathlib.Path(resume)) if allowed(pathlib.Path(resume)) else None
+    if not saved or saved['id']!=expected:raise RuntimeError('NATIVE_TUI_REQUIRES_SHARING')
+   if not h and file and resume and pathlib.Path(resume)!=pathlib.Path(file):raise RuntimeError('NATIVE_TUI_REQUIRES_SHARING')
    if expected and not h and not resume:
     saved=[descriptor(f) for f in pathlib.Path(directory).glob('*.jsonl') if allowed(f)]
     saved=[s for s in saved if s]
