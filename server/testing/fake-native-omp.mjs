@@ -33,6 +33,7 @@ lines.on("line", line => {
     else if (frame.message.includes("SYNTHETIC_SELECT_APPROVAL")) output({ type: "extension_ui_request", id: "fixture-permission", method: "select", title: "Allow tool: write\nPath: /fixture/synthetic.txt", options: ["Approve", "Approve write for this session", "Deny"] });
     else if (frame.message.includes("SYNTHETIC_APPROVAL")) output({ type: "extension_ui_request", id: "fixture-permission", method: "confirm", title: "Synthetic permission", message: "Create a fixture-only marker?" });
     else if (frame.message.includes("SYNTHETIC_QUESTION")) output({ type: "extension_ui_request", id: "fixture-question", method: "select", title: "Choose a fixture", options: ["Alpha", "Beta"] });
+    else if (frame.message.includes("SYNTHETIC_REPORT")) output({ type: "extension_ui_request", id: "fixture-report", method: "select", title: "👻 Your agent swears one of its tools is haunted.\nCall in the devs for an exorcism? Tool name + the spooky bit, nothing personal.", options: ["Yes", "No"] });
     else if (frame.message.includes("SYNTHETIC_HOLD")) { /* Abort is the only synthetic completion. */ }
     else if (frame.message.includes("SYNTHETIC_FAILURE")) output({ type: "prompt_result", id: frame.id, status: "error", sessionSettled: true });
     else answer(frame);

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { verificationServerEnvironment } from "./control-omb.ts";
 import { request, handleToolCall } from "./mcp-server.ts";
+import { formatQuestionAnswers } from "../shared/ask-question.ts";
 
 const repo = process.cwd();
 const root = mkdtempSync(join(tmpdir(), "omb-omp-fixture-")), data = join(root, "data"), native = join(root, "native");
@@ -69,13 +70,17 @@ try {
   await send("SYNTHETIC_QUESTION");
   const questionState = await until(messages, value => value.messages.some(message => message.card?.requestType === "question" && !message.card.answered));
   const question = questionState.messages.find(message => message.card?.requestType === "question" && !message.card.answered);
-  await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: question.card.requestId, behavior: "answer", message: "Beta" } });
+  assert.equal(question.card.tool, undefined);
+  assert.equal(question.card.subtitle, "架空の項目を選んでください");
+  assert.deepEqual(question.card.options, ["アルファ", "ベータ"]);
+  await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: question.card.requestId, behavior: "answer", message: formatQuestionAnswers(question.card.questionRequest.questions, [["ベータ"]]) } });
   await settled(6); assert.ok(calls().some(call => call.type === "extension_ui_response" && call.value === "Beta"));
 
   await send("SYNTHETIC_SELECT_APPROVAL");
   const selectState = await until(messages, value => value.messages.some(message => message.card?.requestType === "permission" && !message.card.answered && !message.card.expired));
   const select = selectState.messages.find(message => message.card?.requestType === "permission" && !message.card.answered && !message.card.expired);
-  assert.deepEqual(select.card.options, ["Allow", "Deny"]);
+  assert.deepEqual(select.card.options, ["許可", "拒否"]);
+  assert.equal(select.card.subtitle, "ツール「write」の実行許可\n対象: /fixture/synthetic.txt");
   await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: select.card.requestId, behavior: "allow" } });
   await settled(7); assert.ok(calls().some(call => call.type === "extension_ui_response" && call.value === "Approve"));
   assert.ok(!calls().some(call => call.value === "Approve write for this session"));
@@ -125,6 +130,9 @@ try {
   const important = importantState.messages.find(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired);
   await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: important.card.requestId, behavior: "deny" } });
   await settled(beforeReview + 2);
+  await send("SYNTHETIC_REPORT"); await settled(beforeReview + 3);
+  assert.ok(calls().some(call => call.type === "extension_ui_response" && call.id === "fixture-report" && call.value === "No"));
+  assert.ok(!(await messages()).messages.some(m => m.card?.subtitle?.includes("haunted")));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
     nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));

@@ -10,10 +10,12 @@ import { presentDirectReply, type ReplyFormatter } from "./direct-thread-bridge.
 import type { Message, Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
 import { reviewNativeQuestion } from "./native-omp-review.ts";
+import { automaticReportDecline, japaneseNativeQuestion, japanesePermissionDetail, nativeToolApproval } from "./native-omp-question.ts";
+import { questionAnswersByQuestion } from "../shared/ask-question.ts";
 
 type Binding = NativeOmpBinding & { threadId: string };
-type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string };
-type Active = { controller: AbortController; source: Pick<Message, "id" | "text">; client?: NativeOmpTransport; questions: Set<string>; cards: Map<string, { nativeId: string; question: OmpQuestion; card: Message; allowValue?: string }>; stopped: boolean; onSettled?: () => void };
+type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string; admissionEntryId?: string; failure?: { phase: string; status?: string } };
+type Active = { controller: AbortController; source: Pick<Message, "id" | "text">; client?: NativeOmpTransport; questions: Set<string>; cards: Map<string, { nativeId: string; question: OmpQuestion; card: Message; allowValue?: string; choices?: Map<string, string> }>; stopped: boolean; onSettled?: () => void };
 const refuse = (message: string) => Object.assign(new Error(message), { status: 409 });
 const validId = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,100}$/u.test(value);
 
@@ -128,15 +130,56 @@ export class NativeOmpService {
     const client = NativeOmpCollab.connect({ ...binding, expectedSessionId: this.sessions[binding.threadId] }, { timeoutMs: 90_000 });
     this.clients.set(binding.threadId, client);
     const approvals: Active = { controller: new AbortController(), source: { id: `native-host-${binding.threadId}`, text: "" }, client, questions: new Set(), cards: new Map(), stopped: false };
+    let lastNotice = "";
+    client.on("nativeNotice", ({ code, admitted }: { code: string; admitted: boolean }) => {
+      if (this.closing || this.clients.get(binding.threadId) !== client || code !== "host-operation-error") return;
+      const key = this.active.get(binding.threadId)?.source.id ?? approvals.source.id;
+      if (this.ledger[key]) { this.ledger[key].failure = { phase: "native-notice", status: admitted ? "accepted" : "unconfirmed" }; this.save(this.ledgerFile, this.ledger); }
+      if (lastNotice === key) return;
+      lastNotice = key;
+      this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi / OhMyPi: 操作エラーの通知を受けました。依頼の受理状態と履歴の確認を続けています。再送はしていません。" });
+    });
+    let recoveredFinal: { entryId: string; sessionId: string; text: string } | undefined;
+    const recoverFinal = () => {
+      const key = approvals.source.id, receipt = this.ledger[key];
+      if (!recoveredFinal || this.active.has(binding.threadId) || !receipt || !["submitted", "indeterminate"].includes(receipt.stage)) return;
+      const reply = this.store.messagesFor(binding.threadId).find(message => message.nativeOmp?.entryId === recoveredFinal!.entryId);
+      if (!reply) return;
+      this.store.patchMessage(binding.threadId, reply.id, {
+        requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(),
+        nativeOmp: { sessionId: recoveredFinal.sessionId, requestId: key, entryId: recoveredFinal.entryId, originalText: recoveredFinal.text },
+      });
+      receipt.stage = "completed"; this.save(this.ledgerFile, this.ledger);
+      this.store.patchMessage(binding.threadId, key, { requestPending: false });
+      recoveredFinal = undefined;
+    };
     this.sharedQuestions.set(binding.threadId, approvals);
-    client.on("question", (question: OmpQuestion) => { void this.question(binding, approvals, question, this.active.get(binding.threadId)); });
+    client.on("question", (question: OmpQuestion) => {
+      const receipt = this.ledger[approvals.source.id];
+      const recovered = approvals.source.text && receipt && ["submitted", "indeterminate"].includes(receipt.stage) ? approvals : undefined;
+      void this.question(binding, approvals, question, this.active.get(binding.threadId) ?? recovered);
+    });
     client.on("questionCancelled", (id: string) => {
       approvals.questions.delete(id);
       for (const [requestId, pending] of approvals.cards) if (pending.nativeId === id) this.expire(binding.threadId, approvals, requestId);
     });
-    client.on("nativeEntry", (event: { entryId: string; role?: string; text: string; own: boolean; activeOwn: boolean; snapshot: boolean; sessionId: string }) => {
+    client.on("nativeEntry", (event: { entryId: string; role?: string; text: string; own: boolean; activeOwn: boolean; snapshot: boolean; sessionId: string; stopReason?: string }) => {
       if (this.closing || this.clients.get(binding.threadId) !== client || (this.sessions[binding.threadId] && event.sessionId !== this.sessions[binding.threadId])) return;
       if (!event.entryId || !["user", "assistant"].includes(event.role ?? "") || !event.text) return;
+      if (event.role === "user") {
+        recoverFinal(); recoveredFinal = undefined;
+        const candidates = event.own ? this.store.messagesFor(binding.threadId).filter(message => {
+          const receipt = this.ledger[message.id];
+          return message.role === "user" && message.text === event.text && receipt?.sessionId === event.sessionId &&
+            ["submitted", "indeterminate"].includes(receipt.stage) && (!receipt.admissionEntryId || receipt.admissionEntryId === event.entryId) &&
+            receipt.digest === createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, event.text])).digest("hex");
+        }) : [];
+        const current = candidates.find(message => message.id === this.active.get(binding.threadId)?.source.id);
+        const source = current ?? (candidates.length === 1 ? candidates[0] : undefined);
+        if (source && !this.ledger[source.id]!.admissionEntryId) { this.ledger[source.id]!.admissionEntryId = event.entryId; this.save(this.ledgerFile, this.ledger); }
+        approvals.source = source || { id: `native-host-${binding.threadId}`, text: "" };
+      }
+      if (event.role === "assistant" && event.stopReason === "stop" && approvals.source.text && !this.active.has(binding.threadId)) recoveredFinal = event;
       const seen = this.observed[binding.threadId] ??= [];
       if (seen.includes(event.entryId)) return;
       if (seen.length >= 10_000) { client.close(); this.states.set(binding.threadId, "history-review-required"); return; }
@@ -146,13 +189,14 @@ export class NativeOmpService {
       const isExisting = existing.some(m => m.nativeOmp?.entryId === event.entryId) || event.snapshot && (existing.some(m => m.role === (event.role === "user" ? "user" : "bot") && (m.text === event.text || m.nativeOmp?.originalText === event.text)) || Boolean(oldEnvelope && this.ledger[oldEnvelope]));
       if (!isExisting && !event.own && !(event.activeOwn && event.role === "assistant")) {
         this.store.appendMessage(binding.threadId, { role: event.role === "user" ? "user" : "bot", kind: "text", text: event.text,
-          nativeOmp: { sessionId: event.sessionId, requestId: `native-entry-${event.entryId}`, entryId: event.entryId, originalText: event.text, source: "human" } });
+          nativeOmp: { sessionId: event.sessionId, requestId: approvals.source.text ? approvals.source.id : `native-entry-${event.entryId}`, entryId: event.entryId, originalText: event.text, ...(approvals.source.text ? {} : { source: "human" as const }) } });
       }
       this.save(this.observedFile, this.observed);
     });
     client.on("nativeState", ({ busy, reconnecting }: { busy: boolean; reconnecting?: boolean }) => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
       this.nativeBusy.set(binding.threadId, busy);
+      if (!busy) recoverFinal();
       if (!this.active.has(binding.threadId)) {
         this.states.set(binding.threadId, reconnecting ? "reconnecting" : busy ? "human-working" : "idle");
         this.store.setTaskActivity(binding.botId, binding.threadId, approvals.cards.size ? "waiting-on-you" : busy ? "working" : "idle");
@@ -257,11 +301,13 @@ export class NativeOmpService {
       const queued = binding.connection === "shared-tui" && (job.client as NativeOmpCollab | undefined)?.requestStatus?.(key) === "queued";
       if (queued) submitted = false;
       if (ownsReceipt && (this.ledger[key]?.stage === "prepared" || this.ledger[key]?.stage === "submitted")) {
-        this.ledger[key].stage = submitted ? "indeterminate" : "not-sent"; this.save(this.ledgerFile, this.ledger);
+        this.ledger[key].stage = submitted ? "indeterminate" : "not-sent";
+        this.ledger[key].failure = { phase, status: binding.connection === "shared-tui" ? (job.client as NativeOmpCollab | undefined)?.requestStatus?.(key) : undefined };
+        this.save(this.ledgerFile, this.ledger);
       }
       this.states.set(binding.threadId, job.stopped ? "stopped" : submitted ? "indeterminate" : `not-sent:${phase}`);
       this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: submitted
-        ? "Piへ依頼を送信しましたが、処理の完了を確認できませんでした。Pi側の承認待ち・実行状況を確認してください。重複実行を避けるため自動再送はしていません。停止要求を出した場合も、実機での停止確認が必要です。"
+        ? "Piへの依頼は送信済みですが、中継で完了を確認できませんでした。同じ会話への接続と履歴の照合を続けています。依頼は再送していません。停止した場合も、停止完了を確認するまでは未確認として扱います。"
         : queued ? "Pi側の処理・承認待ちで、この入力はまだ送信していません。自動再送はしていません。"
         : "仲介処理またはPiのOhMyPiへの接続に失敗したため、依頼本文は送信していません。認証と接続設定を確認してください。",
       requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: false, turnTerminal: true, turnCompletedAt: Date.now() });
@@ -286,6 +332,15 @@ export class NativeOmpService {
     if (!owns()) return;
     if (job.questions.has(question.id)) return;
     job.questions.add(question.id);
+    const decline = automaticReportDecline(question);
+    if (decline) {
+      try {
+        job.client!.answerUi(question.id, decline);
+        this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi / OhMyPi: 開発元への自動不具合報告を辞退しました。外部へ報告は送信していません。" });
+      } catch { /* The native TUI may have answered while the report was being declined. */ }
+      finally { job.questions.delete(question.id); }
+      return;
+    }
     const reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
     const allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewer.source.text ?? "", question, this.generate, AbortSignal.any([job.controller.signal, reviewer.controller.signal])) : false;
     if (!owns() || job.stopped || reviewer?.stopped || !job.questions.has(question.id)) return;
@@ -299,14 +354,19 @@ export class NativeOmpService {
     }
     const id = `native-omp-${randomUUID()}`;
     // OhMyPi 18.12.5 emits native tool approvals as select dialogs; never expose its session-wide approval option.
-    const allowValue = question.method === "select" && question.title?.startsWith("Allow tool:") && question.options?.includes("Approve") && question.options.includes("Deny") ? "Approve" : undefined;
+    const allowValue = nativeToolApproval(question) ? "Approve" : undefined;
     const permission = question.method === "confirm" || allowValue !== undefined;
+    const presentation = allowValue ? { text: japanesePermissionDetail(question), labels: [], translated: true }
+      : await japaneseNativeQuestion(binding, question, this.generate, job.controller.signal);
+    if (!owns() || job.stopped || !job.questions.has(question.id)) return;
+    const choices = new Map(presentation.labels.map((label, index) => [label, question.options![index]!]));
     const card = this.store.appendMessage(binding.threadId, { role: "bot", kind: "options", card: {
       title: permission ? "Pi / OhMyPiの操作許可" : "Pi / OhMyPiからの確認",
-      subtitle: [question.title, question.message].filter(Boolean).join("\n").slice(0, 16000),
-      options: permission ? ["Allow", "Deny"] : question.options ?? [], requestId: id, requestType: permission ? "permission" : "question", tool: `OhMyPi/${question.method}`,
+      subtitle: presentation.text,
+      options: permission ? ["許可", "拒否"] : presentation.labels, requestId: id, requestType: permission ? "permission" : "question",
+      ...(permission ? { tool: `OhMyPi/${question.method}` } : { questionRequest: { version: 1 as const, questions: [{ question: presentation.text, options: presentation.labels.map(label => ({ label })), ...(question.method === "select" ? { custom: false as const } : {}) }] } }),
     } });
-    job.cards.set(id, { nativeId: question.id, question, card, ...(allowValue ? { allowValue } : {}) });
+    job.cards.set(id, { nativeId: question.id, question, card, choices, ...(allowValue ? { allowValue } : {}) });
     this.states.set(binding.threadId, "waiting-on-you");
     this.store.setTaskActivity(binding.botId, binding.threadId, "waiting-on-you");
   }
@@ -321,7 +381,14 @@ export class NativeOmpService {
     if (!job || !pending) return requestId.startsWith("native-omp-") ? "unavailable" : undefined;
     const permission = pending.question.method === "confirm" || pending.allowValue !== undefined;
     if (permission ? !["allow", "deny"].includes(behavior) : behavior !== "answer" || !text?.trim()) return "unavailable";
-    try { job.client!.answerUi(pending.nativeId, pending.allowValue ? { value: behavior === "allow" ? pending.allowValue : "Deny" } : permission ? { confirmed: behavior === "allow" } : { value: text! }); }
+    let value = text;
+    if (!permission && pending.card.card?.questionRequest) {
+      const questions = pending.card.card.questionRequest.questions;
+      const parsed = questionAnswersByQuestion(text!, questions)[questions[0]!.question] ?? text!;
+      value = pending.choices?.get(parsed) ?? parsed;
+      if (pending.question.method === "select" && !pending.question.options?.includes(value)) return "unavailable";
+    }
+    try { job.client!.answerUi(pending.nativeId, pending.allowValue ? { value: behavior === "allow" ? pending.allowValue : "Deny" } : permission ? { confirmed: behavior === "allow" } : { value: value! }); }
     catch { this.expire(threadId, job, requestId); return "unavailable"; }
     job.cards.delete(requestId);
     job.questions.delete(pending.nativeId);

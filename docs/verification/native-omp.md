@@ -139,6 +139,32 @@ The service tests also check background reader recovery without prompt replay an
 shutdown cancellation. These are synthetic tests; deployment still requires a
 read-only check of the intended native session and preserved history.
 
+### Japanese questions and interrupted-request ownership
+
+Native tool approval descriptions use Japanese labels while preserving the exact
+command, path and content. Ordinary select/editor questions use structured question
+cards, with a separate tool-free translation call and a mapping from Japanese display
+labels back to the original native option. The translation cannot approve an operation.
+If translation fails, the card explicitly reports that failure and retains the original
+for inspection; it never invents an answer. Native approvals still permit only a
+one-time grant. Closed-source phone clients may retain their own English button labels.
+
+The known OhMyPi 18.12.5 developer-report confirmation is answered No, and writes to
+`xd://report_issue` are denied, without asking the owner to approve an unsolicited
+external report. Other Yes/No questions retain the normal human response path.
+
+An admitted native input is linked to its durable receipt by native entry ID. After a
+disconnect, the same native history can restore low-risk review context without a new
+prompt. A later human input clears that context. Only a linked final assistant entry
+and idle state can reconcile an interrupted receipt as completed. Ambiguous identical
+inputs are not guessed. Native host error frames are operation notices, matching the
+standard pinned guest; they do not detach an already admitted prompt. Room resync
+retains an unchanged pending question rather than cancelling and recreating its card.
+
+The service/question/review regressions and loopback Collab tests cover these cases.
+`node scripts/native-omp-acceptance.mjs` additionally drives translated structured
+answers, one-time permission and developer-report decline through isolated HTTP routes.
+
 ### 2026-10-25 recovery qualification
 
 The native session had finished the request while OMB showed an indeterminate

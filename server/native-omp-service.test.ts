@@ -10,6 +10,7 @@ import { NativeOmpService } from "./native-omp-service.ts";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
 import { Store } from "./store.ts";
 import type { RouteContext } from "./routes/table.ts";
+import { formatQuestionAnswers } from "../shared/ask-question.ts";
 
 const dirs: string[] = [], services: NativeOmpService[] = [];
 beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
@@ -290,4 +291,75 @@ it("shutdown cancels native reconnection instead of reviving a closed service", 
   f.native.emit("disconnected", "connection lost"); f.service.close();
   await new Promise(resolve => setTimeout(resolve, 1100));
   expect(NativeOmpCollab.connect).toHaveBeenCalledOnce();
+});
+
+it("does not send unsolicited developer reports or show the English reporting dialog", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() });
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の作業");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("question", { id: "report", method: "select", title: "👻 Your agent swears one of its tools is haunted.\nCall in the devs for an exorcism? Tool name + the spooky bit, nothing personal.", options: ["Yes", "No"] });
+  await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("report", { value: "No" }));
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.subtitle?.includes("haunted"))).toBe(false);
+  expect(f.native.submit).toHaveBeenCalledOnce();
+});
+
+it("renders ordinary native questions as questions and maps Japanese choices to original native values", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() });
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の作業");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.generate.mockResolvedValue('{"question":"どちらを続けますか？","options":["最初","次"]}');
+  f.native.emit("question", { id: "which", method: "select", title: "Which one?", options: ["First", "Next"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.questionRequest)).toBe(true));
+  const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.questionRequest)!.card!;
+  expect(card.tool).toBeUndefined(); expect(card.requestType).toBe("question");
+  expect(f.service.answer(f.bot.threadId, card.requestId!, "allow")).toBe("unavailable");
+  expect(f.service.answer(f.bot.threadId, card.requestId!, "answer", formatQuestionAnswers(card.questionRequest!.questions, [["次"]]))).toBe("answered");
+  expect(f.native.answerUi).toHaveBeenCalledWith("which", { value: "Next" });
+});
+
+it("recovers the review context from admitted history after a failed BOT turn, but never lends it to a human turn", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() });
+  f.service.close();
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  const service = f.create();
+  vi.mocked(f.native.submit).mockRejectedValue(new Error("synthetic disconnect"));
+  service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "ディスクの容量を調べて");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry", { entryId: "admission", role: "user", text: "ディスクの容量を調べて", sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
+  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.native.emit("question", { id: "inspection-after-failure", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("inspection-after-failure", { value: "Approve" }));
+  f.native.emit("nativeEntry", { entryId: "human", role: "user", text: "人間から別の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
+  f.native.emit("question", { id: "human-inspection", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
+});
+
+it("reconciles an interrupted receipt only after its own admission, final answer and idle state, without replay", async () => {
+  const f = sharedFixture();
+  vi.mocked(f.native.submit).mockRejectedValue(new Error("synthetic interrupted connection"));
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の復旧対象");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  const receipt = () => JSON.parse(readFileSync(join(f.dir, "native-omp-ledger.json"), "utf8"))[source.id];
+  expect(receipt().stage).toBe("indeterminate");
+  f.native.emit("nativeEntry", { entryId: "own-recovered", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
+  f.native.emit("nativeEntry", { entryId: "final-recovered", role: "assistant", text: "架空の最終回答", stopReason: "stop", sessionId: "native-one", own: false, activeOwn: false, snapshot: true });
+  expect(receipt().stage).toBe("indeterminate");
+  f.native.emit("nativeState", { busy: false });
+  expect(receipt()).toMatchObject({ stage: "completed", admissionEntryId: "own-recovered" });
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.nativeOmp?.entryId === "final-recovered"))
+    .toMatchObject({ requestMessageId: source.id, turnSucceeded: true, nativeOmp: { requestId: source.id } });
+  expect(f.native.submit).toHaveBeenCalledOnce();
+});
+
+it("cannot use a foreign human answer to settle an interrupted BOT receipt", async () => {
+  const f = sharedFixture();
+  vi.mocked(f.native.submit).mockRejectedValue(new Error("synthetic interruption"));
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "元の架空入力");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry", { entryId: "admitted", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
+  f.native.emit("nativeEntry", { entryId: "human-new", role: "user", text: "別の依頼", sessionId: "native-one", own: false, activeOwn: false, snapshot: true });
+  f.native.emit("nativeEntry", { entryId: "human-final", role: "assistant", text: "別の依頼の回答", stopReason: "stop", sessionId: "native-one", own: false, activeOwn: false, snapshot: true });
+  f.native.emit("nativeState", { busy: false });
+  expect(JSON.parse(readFileSync(join(f.dir, "native-omp-ledger.json"), "utf8"))[source.id].stage).toBe("indeterminate");
 });

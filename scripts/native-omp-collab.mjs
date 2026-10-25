@@ -190,7 +190,7 @@ export class NativeOmpCollab extends EventEmitter {
     if (this.closed || this.ws?.readyState !== WebSocket.OPEN) throw Error('Native Collab unavailable');
     this.ws.send(sealOmpFrame(this.key,frame));
   }
-  idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0; }
+  idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0 && !this.resyncUi?.size; }
   async submit(id, text) {
     if (!this.session || this.closed || this.turn) throw Error('Native shared session unavailable');
     if (!id || typeof text !== 'string' || !text.trim() || text.length > 100000) throw Error('Invalid native prompt');
@@ -219,7 +219,7 @@ export class NativeOmpCollab extends EventEmitter {
     if (frame.t==='welcome') {
       if (frame.proto!==3 || frame.readOnly || !frame.header?.id || (this.hostSessionId && frame.header.id!==this.hostSessionId) || (this.binding.expectedSessionId && frame.header.id!==this.binding.expectedSessionId)) throw Error('Unsupported native Collab welcome');
       this.session={sessionId:frame.header.id,sessionFile:'',resumed:true,cancelled:false}; this.state=frame.state; this.snapshot=[];
-      for (const id of this.ui.keys()) this.emit('questionCancelled', id); this.ui.clear();
+      this.resyncUi = new Map([...(this.resyncUi ?? []), ...this.ui]); this.ui.clear();
     }
     if (frame.t==='snapshot-chunk') {
       if (!this.snapshot || !Array.isArray(frame.entries) || this.entries.size+frame.entries.length>100000) throw Error('Invalid native snapshot');
@@ -227,7 +227,11 @@ export class NativeOmpCollab extends EventEmitter {
       if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
     }
     if (frame.t==='entry') this.entry(frame.entry,false);
-    if (frame.t==='state') { this.state=frame.state; this.emit('nativeState',{busy:!this.idle()}); this.pump(); this.finish(); }
+    if (frame.t==='state') {
+      this.state=frame.state;
+      if (this.resyncUi) { for (const id of this.resyncUi.keys()) this.emit('questionCancelled',id); this.resyncUi=undefined; }
+      this.emit('nativeState',{busy:!this.idle()}); this.pump(); this.finish();
+    }
     if (frame.t==='event') {
       const e=frame.event;
       if (e.type==='agent_start') { if(this.state)this.state.isStreaming=true; this.emit('nativeState',{busy:true}); }
@@ -238,13 +242,17 @@ export class NativeOmpCollab extends EventEmitter {
     if (frame.t==='ui-request') {
       const r=frame.request;
       if (!['select','editor'].includes(r.kind) || !Number.isInteger(r.reqId)) throw Error('Unsupported native question');
+      const id=String(r.reqId), previous=this.resyncUi?.get(id) ?? this.ui.get(id);
+      this.resyncUi?.delete(id);
+      if (previous && JSON.stringify(previous)!==JSON.stringify(r)) this.emit('questionCancelled',id);
       const options=r.options?.map(o=>typeof o==='string'?o:o.label);
-      this.ui.set(String(r.reqId),r);
+      this.ui.set(id,r);
       this.armTurnDeadline();
-      this.emit('question',{id:String(r.reqId),method:r.kind,title:r.title,options});
+      if (!previous || JSON.stringify(previous)!==JSON.stringify(r)) this.emit('question',{id,method:r.kind,title:r.title,options});
     }
-    if(frame.t==='ui-request-end') {this.ui.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.finish();this.pump();}
-    if(frame.t==='error') this.fail('Native shared operation refused; do not replay');
+    if(frame.t==='ui-request-end') {this.ui.delete(String(frame.reqId));this.resyncUi?.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.finish();this.pump();}
+    // OhMyPi 18.12.5 guest.ts treats host errors as notices: they do not revoke a prompt already admitted into native history.
+    if(frame.t==='error') this.emit('nativeNotice', { code: 'host-operation-error', admitted: !!this.turn?.admitted });
     if(frame.t==='bye') this.reconnect();
   }
   entry(entry,snapshot) {
@@ -261,7 +269,7 @@ export class NativeOmpCollab extends EventEmitter {
       if(text)turn.texts.push(text);
       if (snapshot && msg.stopReason === 'stop') turn.ended=true;
     }
-    this.emit('nativeEntry',{entryId:entry.id,role:msg?.role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted});
+    this.emit('nativeEntry',{entryId:entry.id,role:msg?.role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted,stopReason:msg?.stopReason});
   }
   finish() {
     const turn=this.turn;

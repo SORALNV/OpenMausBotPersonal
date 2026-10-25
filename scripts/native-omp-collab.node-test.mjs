@@ -24,6 +24,29 @@ test('standard Collab AES-GCM frames authenticate without exposing plaintext',()
  assert.ok(!data.includes(Buffer.from('架空の入力')));assert.equal(openOmpFrame(key,data).text,'架空の入力');
  const tampered=Buffer.from(data);tampered[17]^=1;assert.throws(()=>openOmpFrame(key,tampered));
 });
+test('a host operation error cannot discard an admitted prompt or its later approvals and answer',async()=>{
+ const {client:c,sent}=peer();const notices=[];c.on('nativeNotice',notice=>notices.push(notice));
+ const result=c.submit('admitted-error','Original');await pause(300);c.frame(own('accepted','Original'));
+ c.frame({t:'error',message:'synthetic unrelated host operation error'});
+ assert.equal(c.closed,false);assert.equal(c.requestStatus('admitted-error'),'accepted');
+ c.frame({t:'ui-request',request:{reqId:90,kind:'select',title:'Allow tool: bash',options:['Approve','Deny']}});
+ c.answerUi('90',{value:'Deny'});c.frame({t:'ui-request-end',reqId:90});
+ c.frame(answer('final-after-error','Native answer'));end(c);
+ assert.equal((await result).text,'Native answer');assert.equal(sent.filter(f=>f.t==='prompt').length,1);
+ assert.deepEqual(notices,[{code:'host-operation-error',admitted:true}]);c.close();
+});
+test('resynchronizing the same pending question does not ask the user again and retires missing questions',()=>{
+ const {client:c}=peer(),questions=[],cancelled=[];
+ c.on('question',q=>questions.push(q));c.on('questionCancelled',id=>cancelled.push(id));
+ const request={reqId:91,kind:'select',title:'Allow tool: write',options:['Approve','Deny']};
+ c.frame({t:'ui-request',request});
+ c.frame({t:'ui-request',request:{...request,reqId:92}});
+ c.frame({t:'welcome',proto:3,header:{id:'synthetic-session'},state:{isStreaming:true,queuedMessageCount:0}});
+ c.frame({t:'snapshot-chunk',final:true,entries:[]});c.frame({t:'ui-request',request});
+ c.frame({t:'state',state:{isStreaming:true,queuedMessageCount:0}});
+ assert.equal(questions.length,2);assert.deepEqual(cancelled,['92']);assert.equal(c.ui.size,1);
+ c.close();
+});
 test('BOT waits while the human native turn is active and preserves exact text',async()=>{
  const {client:c,sent}=peer();c.state.isStreaming=true;
  const result=c.submit('synthetic-A','変更しない原文');await pause(300);assert.equal(sent.length,0);
