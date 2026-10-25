@@ -138,3 +138,24 @@ WebSocket rotation, missed-answer, foreign-session and silent-host regressions.
 The service tests also check background reader recovery without prompt replay and
 shutdown cancellation. These are synthetic tests; deployment still requires a
 read-only check of the intended native session and preserved history.
+
+### 2026-10-25 recovery qualification
+
+The native session had finished the request while OMB showed an indeterminate
+result. Its TUI recorded a Collab send-backlog overload and loss of sharing. The
+updated reader rejoined the same native session and read the missing terminal
+answer without submitting a prompt. Personal imported that answer exactly once
+and returned to idle. The original failure remains in history rather than being
+erased or silently reported as an originally successful delivery.
+
+37 transport/Collab tests, 41 service/review/M1 regression tests, source ratchets,
+isolated HTTP acceptance, and the packaged-server smoke passed. An actual Pi
+read-only connection and the Personal UI verified recovery. Live in-flight room
+rotation was not injected into the user's session; that path was exercised with
+real loopback WebSockets and synthetic native entries.
+
+The runtime-only update preserved the fixed launcher, M1/Pi identity and approval
+settings, Google Chat and registered-word settings. All 2,941 existing messages
+retained their IDs, text and JSON; the recovered answer was the only added message.
+The per-thread update time advanced. Evidence and rollback copies are under the
+Git-ignored `.privacy-dev/native-omp-recovery-20261025/` directory.
