@@ -1,8 +1,8 @@
 import { NativeOmpTransport, type OmpDestination } from './native-omp-transport.mjs';
 /** Standard Collab guest; the native TUI retains sole ownership of the session writer. */
 export class NativeOmpCollab extends NativeOmpTransport {
-  constructor(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number });
-  static connect(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number }): NativeOmpCollab;
+  constructor(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number; reconnectTimeoutMs?: number });
+  static connect(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number; reconnectTimeoutMs?: number }): NativeOmpCollab;
   closed: boolean;
   tmux?: string;
   requestStatus(id: string): 'queued' | 'sent' | 'accepted' | 'completed' | undefined;

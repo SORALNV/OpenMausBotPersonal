@@ -115,3 +115,26 @@ the native transport tests or this initial qualification alone.
   owner review rather than silently switching to a fresh conversation.
 - Inference uses the selected remote model. The disabled Privacy Filter is
   not re-enabled by NativeConnect, and this is not an egress masking boundary.
+
+## Shared connection recovery
+
+The OMB guest keeps the private relay and SSH tunnel alive when the native host
+rotates its Collab room. It requests a fresh link from the same native host, checks
+the pinned session identity, and reads the new snapshot. A submitted prompt is
+never sent again. A missed terminal answer can complete the original turn only
+when its own native admission and an idle native state are established; concurrent
+human input still marks the result as shared. Invalid encrypted frames, a foreign
+session, and native execution errors do not become successful recovery.
+
+Relay heartbeat retires silent sockets so an old host connection cannot prevent
+room reclamation indefinitely. A lost SSH process is replaced with bounded-backoff
+reader reconnection; this imports missed native history without calling the
+mediator or submitting a prompt. Shutdown cancels those retries, and stale readers
+cannot append history or change the replacement connection's state. Important
+operations retain the existing human approval policy.
+
+Run `node --test scripts/native-omp-collab.node-test.mjs` for the real loopback
+WebSocket rotation, missed-answer, foreign-session and silent-host regressions.
+The service tests also check background reader recovery without prompt replay and
+shutdown cancellation. These are synthetic tests; deployment still requires a
+read-only check of the intended native session and preserved history.

@@ -2,10 +2,17 @@ import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 /** OhMyPi 18.12.5 Collab relay framing, confined to loopback; session payloads remain AES-GCM sealed. */
-export async function startOmpRelay() {
+export async function startOmpRelay(options = {}) {
   const server = createServer((_req, res) => { res.writeHead(404); res.end(); });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024, perMessageDeflate: false });
   const rooms = new Map();
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.alive === false) ws.terminate();
+      else { ws.alive = false; ws.ping(); }
+    }
+  }, options.heartbeatMs ?? 15000);
+  heartbeat.unref();
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
     const match = /^\/r\/([A-Za-z0-9_-]{10,64})$/.exec(url.pathname), role = url.searchParams.get('role');
@@ -13,6 +20,8 @@ export async function startOmpRelay() {
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, { roomId: match[1], role }));
   });
   wss.on('connection', (ws, info) => {
+    ws.alive = true; ws.on('pong', () => { ws.alive = true; });
+    ws.on('error', () => {});
     let room = rooms.get(info.roomId), peerId = 0;
     if (info.role === 'host') {
       if (room) { ws.close(4009); return; }
@@ -35,7 +44,6 @@ export async function startOmpRelay() {
         data.writeUInt32BE(peerId, 0); room.host.send(data);
       }
     });
-    ws.on('error', () => {});
     ws.on('close', () => {
       if (info.role === 'host') {
         if (rooms.get(info.roomId)?.host !== ws) return;
@@ -49,6 +57,7 @@ export async function startOmpRelay() {
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   return { port: server.address().port, close: async () => {
+    clearInterval(heartbeat);
     for (const ws of wss.clients) ws.terminate();
     await new Promise(resolve => wss.close(resolve));
     await new Promise(resolve => server.close(resolve));

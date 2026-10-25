@@ -27,6 +27,9 @@ export class NativeOmpService {
   private sharedQuestions = new Map<string, Active>();
   private nativeBusy = new Map<string, boolean>();
   private states = new Map<string, string>();
+  private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private reconnectAttempts = new Map<string, number>();
+  private closing = false;
   private readonly file: string;
   private readonly ledgerFile: string;
   private readonly sessionsFile: string;
@@ -102,8 +105,20 @@ export class NativeOmpService {
   start(): void {
     for (const threadId of Object.keys(this.sessions)) {
       const bot = this.store.botByThread(threadId), binding = bot && this.binding(bot.id, threadId);
-      if (binding?.connection === "shared-tui") void this.sharedClient(binding).initialize().catch(() => this.states.set(threadId, "disconnected"));
+      if (binding?.connection === "shared-tui") void this.sharedClient(binding).initialize().catch(() => { this.states.set(threadId, "disconnected"); this.scheduleReconnect(binding); });
     }
+  }
+
+  private scheduleReconnect(binding: Binding): void {
+    if (this.closing || this.reconnectTimers.has(binding.threadId) || !this.binding(binding.botId, binding.threadId)) return;
+    const attempt = this.reconnectAttempts.get(binding.threadId) ?? 0;
+    this.reconnectAttempts.set(binding.threadId, Math.min(attempt + 1, 5));
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(binding.threadId);
+      if (this.closing || !this.binding(binding.botId, binding.threadId)) return;
+      void this.sharedClient(binding).initialize().then(() => this.reconnectAttempts.delete(binding.threadId), () => this.scheduleReconnect(binding));
+    }, Math.min(30000, 1000 * 2 ** attempt));
+    timer.unref(); this.reconnectTimers.set(binding.threadId, timer);
   }
 
   private sharedClient(binding: Binding): NativeOmpTransport {
@@ -120,6 +135,7 @@ export class NativeOmpService {
       for (const [requestId, pending] of approvals.cards) if (pending.nativeId === id) this.expire(binding.threadId, approvals, requestId);
     });
     client.on("nativeEntry", (event: { entryId: string; role?: string; text: string; own: boolean; activeOwn: boolean; snapshot: boolean; sessionId: string }) => {
+      if (this.closing || this.clients.get(binding.threadId) !== client || (this.sessions[binding.threadId] && event.sessionId !== this.sessions[binding.threadId])) return;
       if (!event.entryId || !["user", "assistant"].includes(event.role ?? "") || !event.text) return;
       const seen = this.observed[binding.threadId] ??= [];
       if (seen.includes(event.entryId)) return;
@@ -134,21 +150,29 @@ export class NativeOmpService {
       }
       this.save(this.observedFile, this.observed);
     });
-    client.on("nativeState", ({ busy }: { busy: boolean }) => {
+    client.on("nativeState", ({ busy, reconnecting }: { busy: boolean; reconnecting?: boolean }) => {
+      if (this.closing || this.clients.get(binding.threadId) !== client) return;
       this.nativeBusy.set(binding.threadId, busy);
       if (!this.active.has(binding.threadId)) {
-        this.states.set(binding.threadId, busy ? "human-working" : "idle");
+        this.states.set(binding.threadId, reconnecting ? "reconnecting" : busy ? "human-working" : "idle");
         this.store.setTaskActivity(binding.botId, binding.threadId, approvals.cards.size ? "waiting-on-you" : busy ? "working" : "idle");
         if (!busy) this.settled();
       }
     });
+    client.on("reconnecting", () => {
+      if (this.closing || this.clients.get(binding.threadId) !== client) return;
+      this.states.set(binding.threadId, "reconnecting");
+      this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi / OhMyPi: 共有接続を復旧し、履歴を照合しています。送信済みの依頼は再送しません。" });
+    });
     client.on("disconnected", () => {
+      if (this.closing || this.clients.get(binding.threadId) !== client) return;
       approvals.stopped = true; approvals.controller.abort();
       for (const id of approvals.cards.keys()) this.expire(binding.threadId, approvals, id);
       if (this.sharedQuestions.get(binding.threadId) === approvals) this.sharedQuestions.delete(binding.threadId);
       this.nativeBusy.delete(binding.threadId);
       this.clients.delete(binding.threadId); this.states.set(binding.threadId, "disconnected");
       if (!this.active.has(binding.threadId)) this.store.setTaskActivity(binding.botId, binding.threadId, "idle");
+      this.scheduleReconnect(binding);
     });
     return client;
   }
@@ -243,6 +267,7 @@ export class NativeOmpService {
       requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: false, turnTerminal: true, turnCompletedAt: Date.now() });
     } finally {
       clearTimeout(timeout);
+      if (binding.connection === "shared-tui" && (job.client as NativeOmpCollab | undefined)?.closed) this.scheduleReconnect(binding);
       job.controller.abort();
       if (binding.connection !== "shared-tui") job.client?.close();
       if (binding.connection !== "shared-tui") { job.client?.removeAllListeners("question"); job.client?.removeAllListeners("questionCancelled"); }
@@ -315,6 +340,8 @@ export class NativeOmpService {
   }
 
   close(): void {
+    this.closing = true;
+    for (const timer of this.reconnectTimers.values()) clearTimeout(timer); this.reconnectTimers.clear();
     for (const id of this.active.keys()) void this.stop(id);
     for (const [threadId, job] of this.sharedQuestions) { job.stopped = true; job.controller.abort(); for (const id of job.cards.keys()) this.expire(threadId, job, id); }
     for (const client of this.clients.values()) client.close(); this.clients.clear(); this.sharedQuestions.clear();
@@ -334,6 +361,7 @@ export class NativeOmpService {
         const old = this.settings.bindings.find(item => item.botId === binding.botId);
         if (old && ["host", "user", "stateRoot", "profile"].some(key => old[key as keyof NativeOmpBinding] !== binding[key as keyof NativeOmpBinding])) throw refuse("Changing a native identity requires a separately reviewed migration");
       }
+      for (const timer of this.reconnectTimers.values()) clearTimeout(timer); this.reconnectTimers.clear(); this.reconnectAttempts.clear();
       this.save(this.file, next); this.settings = next;
       for (const client of this.clients.values()) client.close(); this.clients.clear(); this.start();
       return json(res, 200, this.settings);

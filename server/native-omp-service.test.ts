@@ -262,3 +262,32 @@ it("disconnecting a prompt still waiting in the shared queue is recorded as not 
   expect(JSON.parse(readFileSync(join(f.dir, "native-omp-ledger.json"), "utf8"))[source.id].stage).toBe("not-sent");
   expect(f.store.messagesFor(f.bot.threadId).filter(m => m.turnTerminal).at(-1)?.text).toContain("まだ送信していません");
 });
+
+it("reconnects a detached native reader and imports missed history without another prompt", async () => {
+  const f = sharedFixture();
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "送信済みの架空入力");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  const preparationCount = f.generate.mock.calls.length;
+  Object.assign(f.native, { closed: true });
+  const next = f.open({} as OmpDestination);
+  vi.mocked(NativeOmpCollab.connect).mockReturnValue(next as NativeOmpCollab);
+  f.native.emit("disconnected", "connection lost");
+  await vi.waitFor(() => expect(next.initialize).toHaveBeenCalledOnce(), { timeout: 3000 });
+  expect(next.submit).not.toHaveBeenCalled(); expect(f.generate.mock.calls.length).toBe(preparationCount);
+  const entry = { entryId: "missed-terminal-answer", role: "assistant", text: "Piで生成済みの架空回答", sessionId: "native-one", own: false, activeOwn: false, snapshot: true };
+  f.native.emit("nativeEntry", { ...entry, entryId: "stale-reader", text: "旧接続の遅延イベント" });
+  next.emit("nativeEntry", { ...entry, entryId: "foreign-reader", sessionId: "another-session", text: "別セッション" });
+  next.emit("nativeEntry", entry); next.emit("nativeEntry", entry);
+  const messages = f.store.messagesFor(f.bot.threadId);
+  expect(messages.filter(message => message.text === entry.text)).toHaveLength(1);
+  expect(messages.some(message => ["旧接続の遅延イベント", "別セッション"].includes(message.text ?? ""))).toBe(false);
+});
+
+it("shutdown cancels native reconnection instead of reviving a closed service", async () => {
+  const f = sharedFixture();
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の終了確認");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("disconnected", "connection lost"); f.service.close();
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  expect(NativeOmpCollab.connect).toHaveBeenCalledOnce();
+});

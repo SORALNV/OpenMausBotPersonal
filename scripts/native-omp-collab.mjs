@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { createInterface } from 'node:readline';
 import { WebSocket } from 'ws';
 import { nativeOmpCommand } from './native-omp-transport.mjs';
 import { startOmpRelay } from './native-omp-collab-relay.mjs';
@@ -31,26 +32,30 @@ if run(['tmux','has-session','-t',name]).returncode:
  import shlex
  r=run(['tmux','new-session','-d','-s',name,'-x','120','-y','40',shlex.join(args)])
  if r.returncode: raise RuntimeError('Could not start managed native TUI')
-for attempt in range(40):
- if select.select([sys.stdin],[],[],0)[0] and not sys.stdin.readline():raise RuntimeError('Native caller disconnected during startup')
- r=run(base+['collab','list','--json'])
- try: hosts=json.loads(r.stdout)['hosts']
- except Exception: hosts=[]
- matches=[h for h in hosts if h.get('cwd')==b['cwd'] and h.get('sessionId')==b.get('expectedSessionId')]
- if not b.get('expectedSessionId'):
-  pid=run(['tmux','display-message','-p','-t',name,'#{pane_pid}']).stdout.strip()
-  matches=[h for h in hosts if str(h.get('pid'))==pid]
- if len(matches)==1 and matches[0].get('connected',matches[0].get('relayConnected',True)):
-  h=matches[0]; link=run(base+['collab','link',h['instanceId'],'--json'])
-  if link.returncode==0:
-   files=[f for f in os.listdir(d) if f.endswith('.jsonl') and h['sessionId'] in f]
-   if len(files)!=1:raise RuntimeError('Native session file identity unavailable')
-   print(json.dumps({'type':'nativeconect_host','host':h,'link':json.loads(link.stdout),'tmux':name,'sessionFile':d+'/'+files[0]}),flush=True)
-   break
- time.sleep(.5)
-else:raise RuntimeError('Native Collab host unavailable; no alternate session created')
+def discover():
+ for attempt in range(80):
+  if select.select([sys.stdin],[],[],0)[0] and not sys.stdin.readline():raise RuntimeError('Native caller disconnected during startup')
+  r=run(base+['collab','list','--json'])
+  try: hosts=json.loads(r.stdout)['hosts']
+  except Exception: hosts=[]
+  matches=[h for h in hosts if h.get('cwd')==b['cwd'] and h.get('sessionId')==b.get('expectedSessionId')]
+  if not b.get('expectedSessionId'):
+   pid=run(['tmux','display-message','-p','-t',name,'#{pane_pid}']).stdout.strip()
+   matches=[h for h in hosts if str(h.get('pid'))==pid]
+  if len(matches)==1 and matches[0].get('connected',matches[0].get('relayConnected',True)):
+   h=matches[0]; link=run(base+['collab','link',h['instanceId'],'--json'])
+   if link.returncode==0:
+    files=[f for f in os.listdir(d) if f.endswith('.jsonl') and h['sessionId'] in f]
+    if len(files)!=1:raise RuntimeError('Native session file identity unavailable')
+    return {'type':'nativeconect_host','host':h,'link':json.loads(link.stdout),'tmux':name,'sessionFile':d+'/'+files[0]}
+  time.sleep(.5)
+ return {'error':'NATIVE_SHARING_UNAVAILABLE'}
+meta=discover()
+print(json.dumps(meta),flush=True)
+if meta.get('host'):b['expectedSessionId']=meta['host']['sessionId']
 for line in sys.stdin:
  if line.strip()=='close':break
+ if line.strip()=='refresh':print(json.dumps(discover()),flush=True)
 `;
 
 export function sealOmpFrame(key, frame) {
@@ -68,7 +73,7 @@ const textOf = message => typeof message?.content === 'string' ? message.content
 /** Attaches as a standard OhMyPi 18.12.5 Collab guest. The native TUI alone owns the session writer. */
 export class NativeOmpCollab extends EventEmitter {
   constructor(binding, options = {}) {
-    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.receipts = new Map(); this.closed = false;
+    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.receipts = new Map(); this.closed = false; this.lifetime = new AbortController();
   }
   static connect(binding, options) { return new NativeOmpCollab(binding, options); }
   initialize() { return this.initializing ??= this.boot(); }
@@ -85,18 +90,30 @@ export class NativeOmpCollab extends EventEmitter {
       const env = Object.fromEntries(['HOME','PATH','SSH_AUTH_SOCK','TMPDIR'].flatMap(k => process.env[k] ? [[k,process.env[k]]] : []));
       this.child = spawn(plan.command, args, { env, stdio: ['pipe','pipe','pipe'], shell: false });
       this.child.stderr.on('data', () => {});
-      const meta = await new Promise((resolve, reject) => {
-        let buffer = ''; const timer = setTimeout(() => reject(Error('Native TUI startup timed out')), this.options.timeoutMs ?? 90000);
-        this.child.once('error', () => { clearTimeout(timer); reject(Error('Native SSH startup failed')); });
-        this.child.once('close', () => { clearTimeout(timer); reject(Error('Native SSH disconnected')); this.fail('Native SSH disconnected; no automatic replay'); });
-        this.child.stdout.on('data', chunk => {
-          buffer += chunk;
-          if (buffer.length > 64000) { clearTimeout(timer); reject(Error('Invalid native host metadata')); return; }
-          if (buffer.includes('\n')) { clearTimeout(timer); try { resolve(JSON.parse(buffer.split('\n')[0])); } catch { reject(Error('Invalid native host metadata')); } }
-        });
-        this.child.stdin.on('error', () => {});
-        this.child.stdin.write(JSON.stringify({ ...this.binding, sessionDir: plan.sessionDir, remotePort })+'\n');
+      const lines = createInterface({ input: this.child.stdout });
+      lines.on('line', line => {
+        if (line.length > 64000) { this.fail('Invalid native host metadata'); return; }
+        try { this.emit('metadata', JSON.parse(line)); } catch { this.fail('Invalid native host metadata'); }
       });
+      this.child.once('error', () => this.fail('Native SSH startup failed'));
+      this.child.once('close', () => this.fail('Native SSH disconnected; no automatic replay'));
+      this.child.stdin.on('error', () => {});
+      this.plan = plan;
+      const metadata = this.nextMetadata(this.options.timeoutMs ?? 90000);
+      this.child.stdin.write(JSON.stringify({ ...this.binding, sessionDir: plan.sessionDir, remotePort })+'\n');
+      const meta = await metadata;
+      this.remotePort = remotePort;
+      await this.join(meta);
+      return this.session;
+    } catch (error) { this.close(); throw error; }
+  }
+  async nextMetadata(timeout) {
+    return (await once(this, 'metadata', { signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(timeout)]) }))[0];
+  }
+  async join(meta, timeoutMs = 30000) {
+      const { remotePort, plan } = this;
+      if (!meta.host?.sessionId || (this.hostSessionId && this.hostSessionId !== meta.host.sessionId)
+        || (this.binding.expectedSessionId && meta.host.sessionId !== this.binding.expectedSessionId)) throw Error('Native session identity unavailable or changed');
       let link = typeof meta.link === 'string' ? meta.link : meta.link.url ?? meta.link.link;
       if (typeof link === 'string' && link.startsWith('http://')) {
         const url = new URL(link);
@@ -111,23 +128,63 @@ export class NativeOmpCollab extends EventEmitter {
       this.hostSessionId=meta.host.sessionId;
       this.name = 'OMB-'+this.binding.threadId.slice(0,24);
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(Error('Native Collab welcome timed out')), 30000);
-        this.onWelcome = () => { clearTimeout(timer); resolve(); };
-        this.ws = new WebSocket(`ws://127.0.0.1:${this.relay.port}/r/${match[1]}?role=guest`, { maxPayload: 8*1024*1024, perMessageDeflate: false });
-        this.ws.on('open', () => this.send({t:'hello',proto:3,name:this.name,writeToken:secret.subarray(32).toString('base64url')}));
-        this.ws.on('message', (data,binary) => {
-          try { if (!binary) throw Error('Native host closed'); this.frame(openOmpFrame(this.key,Buffer.from(data))); }
-          catch { clearTimeout(timer); reject(Error('Invalid native Collab stream')); this.fail('Native Collab disconnected; no automatic replay'); }
+        const timer = setTimeout(() => reject(Error('Native Collab welcome timed out')), timeoutMs);
+        let ready = false;
+        this.onJoinAbort = () => { clearTimeout(timer); reject(Error('Native Collab closed')); };
+        this.onWelcome = () => { clearTimeout(timer); this.onJoinAbort = undefined; ready = true; resolve(); };
+        const ws = this.ws = new WebSocket(`ws://127.0.0.1:${this.relay.port}/r/${match[1]}?role=guest`, { maxPayload: 8*1024*1024, perMessageDeflate: false });
+        ws.on('open', () => { if (this.ws === ws && !this.closed) this.send({t:'hello',proto:3,name:this.name,writeToken:secret.subarray(32).toString('base64url')}); });
+        const lost = () => {
+          if (this.ws !== ws || this.closed) return;
+          clearTimeout(timer);
+          if (!ready) reject(Error('Native Collab connection failed'));
+          else this.reconnect();
+        };
+        ws.on('message', (data,binary) => {
+          if (this.ws !== ws || this.closed) return;
+          if (!binary) {
+            try { if (JSON.parse(data.toString()).t === 'room-closed') { lost(); return; } } catch { this.fail('Invalid native Collab stream'); reject(Error('Invalid native Collab stream')); return; }
+            this.fail('Invalid native Collab stream'); reject(Error('Invalid native Collab stream')); return;
+          }
+          try { this.frame(openOmpFrame(this.key,Buffer.from(data))); }
+          catch { clearTimeout(timer); reject(Error('Invalid native Collab stream')); this.fail('Invalid native Collab stream'); }
         });
-        this.ws.on('error', () => { clearTimeout(timer); reject(Error('Native Collab connection failed')); });
-        this.ws.on('close', () => this.fail('Native Collab disconnected; no automatic replay'));
+        ws.on('error', lost); ws.on('close', lost);
       });
-      if (this.session.sessionId !== meta.host.sessionId || (this.binding.expectedSessionId && this.session.sessionId !== this.binding.expectedSessionId)) throw Error('Native session identity changed');
+      if (this.closed) throw Error('Native Collab closed');
+      if (this.session.sessionId !== meta.host.sessionId) throw Error('Native session identity changed');
       if (typeof meta.sessionFile !== 'string' || !meta.sessionFile.startsWith(plan.sessionDir+'/') || meta.sessionFile.split('/').includes('..')) throw Error('Invalid native session file');
       this.session.sessionFile = meta.sessionFile;
       this.tmux = meta.tmux;
-      return this.session;
-    } catch (error) { this.close(); throw error; }
+  }
+  reconnect() {
+    if (this.closed || this.reconnecting) return;
+    this.reconnecting = true;
+    clearTimeout(this.pumpTimer);
+    const old = this.ws; this.ws = undefined; old?.terminate();
+    this.emit('reconnecting'); this.emit('nativeState', { busy: true, reconnecting: true });
+    void this.recoverLink().then(() => {
+      if (this.closed) return;
+      this.reconnecting = false;
+      this.emit('nativeState', { busy: !this.idle() }); this.finish(); this.pump();
+    }, () => this.fail('Native shared reconnection failed; no automatic replay'));
+  }
+  async recoverLink() {
+    const deadline = Date.now() + (this.options.reconnectTimeoutMs ?? 120000);
+    while (!this.closed && Date.now() < deadline) {
+      try {
+        const metadata = this.nextMetadata(Math.max(1, Math.min(90000, deadline-Date.now())));
+        this.child.stdin.write('refresh\n');
+        await this.join(await metadata, Math.max(1, Math.min(30000, deadline-Date.now())));
+        if (this.ws?.readyState !== WebSocket.OPEN) throw Error("Native Collab disconnected during recovery");
+        return;
+      } catch {
+        if (this.closed || Date.now() >= deadline) throw Error('Native shared reconnection failed');
+        const old = this.ws; this.ws = undefined; old?.terminate();
+        await new Promise(resolve => { const timer = setTimeout(resolve, 1000); this.lifetime.signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true }); });
+      }
+    }
+    throw Error('Native shared reconnection failed');
   }
   send(frame) {
     if (this.closed || this.ws?.readyState !== WebSocket.OPEN) throw Error('Native Collab unavailable');
@@ -146,7 +203,7 @@ export class NativeOmpCollab extends EventEmitter {
   }
   pump() {
     const turn=this.turn;
-    if (!turn || turn.sent || !this.idle()) return;
+    if (this.reconnecting || !turn || turn.sent || !this.idle()) return;
     clearTimeout(this.pumpTimer);
     this.pumpTimer=setTimeout(() => { if (this.turn!==turn || !this.idle()) return; turn.sent=true; this.receipts.get(turn.id).stage='sent'; this.send({t:'prompt',text:turn.text}); this.armTurnDeadline(); },250);
   }
@@ -162,11 +219,12 @@ export class NativeOmpCollab extends EventEmitter {
     if (frame.t==='welcome') {
       if (frame.proto!==3 || frame.readOnly || !frame.header?.id || (this.hostSessionId && frame.header.id!==this.hostSessionId) || (this.binding.expectedSessionId && frame.header.id!==this.binding.expectedSessionId)) throw Error('Unsupported native Collab welcome');
       this.session={sessionId:frame.header.id,sessionFile:'',resumed:true,cancelled:false}; this.state=frame.state; this.snapshot=[];
+      for (const id of this.ui.keys()) this.emit('questionCancelled', id); this.ui.clear();
     }
     if (frame.t==='snapshot-chunk') {
       if (!this.snapshot || !Array.isArray(frame.entries) || this.entries.size+frame.entries.length>100000) throw Error('Invalid native snapshot');
       this.snapshot.push(...frame.entries);
-      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{busy:!this.idle()}); this.onWelcome?.(); }
+      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
     }
     if (frame.t==='entry') this.entry(frame.entry,false);
     if (frame.t==='state') { this.state=frame.state; this.emit('nativeState',{busy:!this.idle()}); this.pump(); this.finish(); }
@@ -186,7 +244,8 @@ export class NativeOmpCollab extends EventEmitter {
       this.emit('question',{id:String(r.reqId),method:r.kind,title:r.title,options});
     }
     if(frame.t==='ui-request-end') {this.ui.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.finish();this.pump();}
-    if(frame.t==='error'||frame.t==='bye') this.fail('Native shared operation failed; do not replay');
+    if(frame.t==='error') this.fail('Native shared operation refused; do not replay');
+    if(frame.t==='bye') this.reconnect();
   }
   entry(entry,snapshot) {
     if (!entry || typeof entry.id!=='string' || this.entries.has(entry.id)) return;
@@ -195,17 +254,18 @@ export class NativeOmpCollab extends EventEmitter {
     const text=textOf(msg);
     const own=entry.type==='custom_message' && entry.details?.from===this.name;
     const turn=this.turn;
-    if (!snapshot && turn?.sent && own && text===turn.text) { turn.admitted=true; this.receipts.get(turn.id).stage='accepted'; }
-    if (!snapshot && turn?.sent && !own && msg?.role==='user') turn.contended=true;
-    if (!snapshot && turn?.admitted && msg?.role==='assistant') {
+    if (turn?.sent && own && text===turn.text) { turn.admitted=true; this.receipts.get(turn.id).stage='accepted'; }
+    if (turn?.sent && !own && msg?.role==='user') turn.contended=true;
+    if (turn?.admitted && msg?.role==='assistant') {
       if (['error','aborted'].includes(msg.stopReason)) { this.fail('Native shared turn failed; do not replay'); return; }
       if(text)turn.texts.push(text);
+      if (snapshot && msg.stopReason === 'stop') turn.ended=true;
     }
     this.emit('nativeEntry',{entryId:entry.id,role:msg?.role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted});
   }
   finish() {
     const turn=this.turn;
-    if (!turn?.admitted || !turn.ended || !this.idle() || !turn.texts.length) return;
+    if (this.reconnecting || !turn?.admitted || !turn.ended || !this.idle() || !turn.texts.length) return;
     clearTimeout(turn.timer); this.turn=null;
     this.receipts.get(turn.id).stage='completed';
     turn.resolve({requestId:turn.id,sessionId:this.session.sessionId,sessionFile:this.session.sessionFile,text:turn.texts.join('\n\n'),sharedTurn:turn.contended});
@@ -231,7 +291,7 @@ export class NativeOmpCollab extends EventEmitter {
     this.emit('disconnected',message);this.close();
   }
   close() {
-    if(this.closed)return;this.closed=true;clearTimeout(this.pumpTimer);
+    if(this.closed)return;this.closed=true;this.lifetime.abort();this.onJoinAbort?.();clearTimeout(this.pumpTimer);
     if(this.turn){clearTimeout(this.turn.timer);this.turn.reject(Error('Native connection detached; do not replay'));this.turn=null;}
     this.ws?.close();this.child?.stdin.end();this.child?.kill('SIGTERM');void this.relay?.close();
   }

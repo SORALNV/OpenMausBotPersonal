@@ -93,3 +93,69 @@ test('a prompt waiting for the human native turn is not called a failed remote e
  await pause(55);assert.ok(c.turn);assert.equal(sent.length,0);
  const rejected=assert.rejects(result,/cancelled/);assert.equal(await c.stop(),true);await rejected;c.close();
 });
+
+test('a rotated native room resynchronizes an admitted turn without resending it',async()=>{
+ const relay=await startOmpRelay();
+ const keys=[randomBytes(32),randomBytes(32)], ids=['rotated-room-0001','rotated-room-0002'];
+ const tokens=keys.map(key=>Buffer.concat([key,randomBytes(16)]));
+ const hosts=[]; const prompts=[];let refreshes=0;
+ const c=new NativeOmpCollab({threadId:'synthetic'});
+ c.plan={sessionDir:'/fixture'};c.remotePort=relay.port;c.relay=relay;
+ c.child={stdin:{write:()=>{refreshes++;},end:()=>{}},kill:()=>{}};
+ const meta=index=>({host:{sessionId:'same-session'},link:`ws://127.0.0.1:${relay.port}/r/${ids[index]}.${tokens[index].toString('base64url')}`,tmux:'fixture',sessionFile:'/fixture/native.jsonl'});
+ const nativeOwn={type:'custom_message',id:'admitted-entry',content:'Original prompt',details:{from:'OMB-synthetic'}};
+ try{
+  for(let i=0;i<2;i++){
+   const host=new WebSocket(`ws://127.0.0.1:${relay.port}/r/${ids[i]}?role=host`);hosts.push(host);await once(host,'open');
+   host.on('message',(data,binary)=>{
+    if(!binary)return;
+    const peer=Buffer.from(data).readUInt32BE(0),frame=openOmpFrame(keys[i],Buffer.from(data));
+    const send=frame=>{const data=sealOmpFrame(keys[i],frame);data.writeUInt32BE(peer,0);host.send(data);};
+    if(frame.t==='hello'){
+     send({t:'welcome',proto:3,header:{id:'same-session'},state:{isStreaming:false,queuedMessageCount:0}});
+     send({t:'snapshot-chunk',final:true,entries:i?[nativeOwn,{type:'message',id:'finished-entry',message:{role:'assistant',content:[{type:'text',text:'Native completed while disconnected'}],stopReason:'stop'}}]:[]});
+    }
+    if(frame.t==='prompt'){
+     prompts.push(frame.text);send({t:'entry',entry:nativeOwn});
+     setTimeout(()=>host.close(),20);
+    }
+   });
+  }
+  c.nextMetadata=async()=>meta(1);
+  await c.join(meta(0));
+  const result=await c.submit('once-only','Original prompt');
+  assert.equal(result.text,'Native completed while disconnected');
+  assert.equal(result.sessionId,'same-session');
+  assert.deepEqual(prompts,['Original prompt']);assert.equal(refreshes,1);
+ }finally{c.close();for(const host of hosts)host.terminate();await relay.close();}
+});
+
+test('reconnection snapshots preserve concurrent human input and do not resend',async()=>{
+ const {client:c,sent}=peer();
+ const pending=c.submit('snapshot-turn','BOT');await pause(280);
+ c.frame(own('own-entry','BOT'));
+ c.recoverLink=async()=>{
+  c.frame({t:'welcome',proto:3,header:{id:'synthetic-session'},state:{isStreaming:false,queuedMessageCount:0}});
+  c.frame({t:'snapshot-chunk',final:true,entries:[human('late-human','Human').entry,answer('late-answer','Shared completed answer').entry]});
+ };
+ c.reconnect();
+ assert.equal((await pending).sharedTurn,true);
+ assert.deepEqual(sent,[{t:'prompt',text:'BOT'}]);c.close();
+});
+
+test('an unknown replacement session is never imported as a recovered answer',async()=>{
+ const {client:c,sent}=peer();c.binding.expectedSessionId='synthetic-session';
+ const pending=c.submit('pinned-turn','BOT');const rejected=assert.rejects(pending,/reconnection failed/);await pause(280);
+ c.recoverLink=async()=>c.frame({t:'welcome',proto:3,header:{id:'foreign-session'},state:{isStreaming:false,queuedMessageCount:0}});
+ c.reconnect();await rejected;assert.equal(sent.length,1);assert.equal(c.closed,true);
+});
+
+test('a silent relay host is retired so the native host can reclaim its room',async()=>{
+ const relay=await startOmpRelay({heartbeatMs:20});const base=`ws://127.0.0.1:${relay.port}/r/heartbeat-room-0001`;
+ const host=new WebSocket(base+'?role=host',{autoPong:false});let replacement;
+ try{
+  await once(host,'open');await once(host,'close');
+  replacement=new WebSocket(base+'?role=host');await once(replacement,'open');
+  await pause(65);assert.equal(replacement.readyState,WebSocket.OPEN);
+ }finally{host.terminate();replacement?.terminate();await relay.close();}
+});
