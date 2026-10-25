@@ -25,14 +25,14 @@ async function mount(failFirstConnection = false) {
     }
     throw Error("Unexpected API path");
   });
-  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
-  await act(async () => root.render(createElement(NativeOmpSettings)));
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host); const onOpenThread = vi.fn();
+  await act(async () => root.render(createElement(NativeOmpSettings, { onOpenThread })));
   const click = async (label: string) => act(async () => [...host.querySelectorAll("button")].find(button => button.textContent === label)!.click());
   const select = async (label: string, value: string) => act(async () => {
     const element = host.querySelector(`[aria-label="${label}"]`) as HTMLSelectElement;
     element.value = value; element.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  return { host, root, click, select, close: async () => { await act(async () => root.unmount()); host.remove(); } };
+  return { host, root, click, select, onOpenThread, close: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 
 it("selects an existing native session or OMP management mode for the chosen OMB thread", async () => {
@@ -44,6 +44,7 @@ it("selects an existing native session or OMP management mode for the chosen OMB
     const call = mocked.api.mock.calls.find(([path]) => path === "/api/native-omp/threads")!;
     expect(JSON.parse(call[1].body)).toEqual({ botId: "pi", threadId: "old", kind: "manager", sessionId: "native-project" });
     expect(f.host.textContent).toContain("接続しました");
+    await f.click("選択したスレッドを開く"); expect(f.onOpenThread).toHaveBeenCalledWith("pi", "old");
   } finally { await f.close(); }
 });
 

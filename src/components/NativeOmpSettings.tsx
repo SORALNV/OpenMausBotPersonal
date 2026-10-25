@@ -6,7 +6,7 @@ import type { NativeOmpBinding, NativeOmpSessionInfo, NativeOmpThreadTarget } fr
 type Bot = { id: string; name: string; threadId: string; tasks?: { threadId: string; title: string }[] };
 type Snapshot = { bindings: NativeOmpBinding[]; threadTargets: Record<string, NativeOmpThreadTarget>; sessionIds: Record<string, string>; states: Record<string, string> };
 const statusLabel = (value?: string) => ({ idle: "待機中", "human-working": "標準TUIで実行中", "waiting-on-you": "確認待ち", preparing: "仲介処理中", working: "実行中", disconnected: "未接続", reconnecting: "再接続中" }[value ?? ""] ?? (value?.startsWith("not-sent:") ? "接続前に停止（入力は未送信）" : "未確認"));
-export function NativeOmpSettings() {
+export function NativeOmpSettings({ onOpenThread }: { onOpenThread?: (botId: string, threadId: string) => void }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [bots, setBots] = useState<Bot[]>([]);
   const [botId, setBotId] = useState("");
@@ -90,6 +90,7 @@ export function NativeOmpSettings() {
       </select></label>
       <p className="text-xs">接続状態: {statusLabel(snapshot?.states[threadId])}</p>
       <button type="button" disabled={!threadId} onClick={() => void save()}>このスレッドを接続</button>
+      {onOpenThread && <button type="button" disabled={!threadId} onClick={() => onOpenThread(botId, threadId)}>選択したスレッドを開く</button>}
       <label className="block">新しいプロジェクト名<input aria-label="OMPプロジェクト名" maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
       <label className="block">作成後の接続<select aria-label="OMP作成後の接続" value={destination} onChange={event => setDestination(event.target.value)}>
         <option value="new-thread">新しいOMBスレッドを作って接続</option><option value="current">このOMBスレッドへ接続</option><option value="none">セッションを保存するだけ</option>

@@ -674,7 +674,7 @@ export function SettingsModal() {
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <DirectCodexSettings />}
-            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeOmpSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeOmpSettings onOpenThread={(botId, threadId) => { dispatch({ type: "switchTask", botId, threadId }); dispatch({ type: "toggleAppSettings", open: false }); }} />}
 
             <ProSettingsCard />
             <Card title={t("settings.profile.title")} subtitle={t("settings.profile.sharedSubtitle")}>
