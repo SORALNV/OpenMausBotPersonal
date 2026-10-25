@@ -32,3 +32,21 @@ export interface NativeOmpMessage {
   source?: "human" | "bot";
   sharedTurn?: boolean;
 }
+
+/** Native profile metadata only; filenames are resolved by the connector, never chosen by a model. */
+export interface NativeOmpSessionInfo {
+  id: string;
+  name: string;
+  directory: string;
+  file?: string;
+  cwd?: string;
+  running: boolean;
+  shared: boolean;
+  busy?: boolean;
+}
+
+/** Management conversations keep their own native history and may manage other sessions without merging their histories. */
+export interface NativeOmpThreadTarget {
+  kind: "manager" | "session";
+  session: NativeOmpSessionInfo;
+}

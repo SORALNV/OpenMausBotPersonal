@@ -49,6 +49,7 @@ import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
 import { PersonalComposerSettings } from "./PersonalComposerSettings";
 import { GoogleChatSettings } from "./GoogleChatSettings";
 import { DirectCodexSettings } from "./DirectCodexSettings";
+import { NativeOmpSettings } from "./NativeOmpSettings";
 import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
 import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
@@ -673,6 +674,7 @@ export function SettingsModal() {
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <DirectCodexSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeOmpSettings />}
 
             <ProSettingsCard />
             <Card title={t("settings.profile.title")} subtitle={t("settings.profile.sharedSubtitle")}>

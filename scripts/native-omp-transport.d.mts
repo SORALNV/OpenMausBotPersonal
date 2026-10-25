@@ -13,6 +13,9 @@ export interface OmpDestination {
   model?: string;
   expectedSessionId?: string;
   advisor?: boolean;
+  /** Resolved from the owner-selected native session catalog, never from model-generated shell arguments. */
+  sessionDir?: string;
+  sessionFile?: string;
 }
 export interface OmpQuestion {
   id: string;
@@ -28,6 +31,7 @@ export class NativeOmpTransport extends EventEmitter {
   constructor(child: ChildProcessWithoutNullStreams, sessionDir: string, options?: { timeoutMs?: number; turnTimeoutMs?: number });
   static connect(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number }): NativeOmpTransport;
   initialize(): Promise<OmpSession>;
+  command(type: string, args?: Record<string, unknown>): Promise<any>;
   submit(requestId: string, text: string): Promise<OmpReply>;
   answerUi(id: string, answer: { cancelled?: boolean; confirmed?: boolean; value?: string }): void;
   stop(): Promise<boolean>;

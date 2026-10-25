@@ -133,8 +133,34 @@ try {
   await send("SYNTHETIC_REPORT"); await settled(beforeReview + 3);
   assert.ok(calls().some(call => call.type === "extension_ui_response" && call.id === "fixture-report" && call.value === "No"));
   assert.ok(!(await messages()).messages.some(m => m.card?.subtitle?.includes("haunted")));
+  const created = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
+  const duplicate = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
+  assert.equal(created.session.id, duplicate.session.id);
+  await api("/api/native-omp/threads", { method: "POST", body: { botId: bot.id, threadId: secondThread, sessionId: created.session.id, kind: "session" } });
+  await tool("send_bot_message", { bot_id: bot.id, task_id: secondThread, text: "選択した既存セッションへの架空入力" });
+  const selected = await until(() => messages(secondThread), value => value.messages.some(m => m.nativeOmp?.sessionId === created.session.id && m.nativeOmp?.formatted));
+  assert.ok(selected.messages.some(m => m.nativeOmp?.sessionId === created.session.id && m.nativeOmp.originalText.includes("選択した既存セッションへの架空入力")));
+  const promptsBeforeManagement = calls().filter(call => call.type === "prompt").length;
+  await send("研究用のセッションを作り、新しいThreadsへ接続してください。FIXTURE_CREATE_AND_LINK");
+  await until(messages, value => value.messages.some(m => m.turnSucceeded && m.text?.includes("架空の研究プロジェクト") && m.text.includes("接続しました")));
+  const managedState = await api("/api/native-omp");
+  const newLink = Object.entries(managedState.threadTargets).find(([, value]) => value.session.name === "架空の研究プロジェクト");
+  assert.ok(newLink); assert.notEqual(newLink[0], threadId);
+  assert.equal(calls().filter(call => call.type === "prompt").length, promptsBeforeManagement);
+  await tool("send_bot_message", { bot_id: bot.id, task_id: newLink[0], text: "名前付き新規セッションの架空入力" });
+  await until(() => messages(newLink[0]), value => value.messages.some(m => m.nativeOmp?.sessionId === newLink[1].session.id && m.nativeOmp.formatted));
+  const taskCount = (await api("/api/bots?messages=0")).bots.find(b => b.id === bot.id).tasks.length;
+  await send("保存だけするセッションを作って。新しいスレッドは不要です。FIXTURE_CREATE_ONLY");
+  await until(messages, value => value.messages.some(m => m.turnSucceeded && m.text?.includes("架空の保存専用") && m.text.includes("接続先は変更していません")));
+  assert.equal((await api("/api/bots?messages=0")).bots.find(b => b.id === bot.id).tasks.length, taskCount);
+  const beforeMalformed = calls().filter(call => call.type === "prompt").length;
+  await send("新しいセッションを作成して。FIXTURE_BAD_SESSION_PLAN");
+  await until(messages, value => value.messages.some(m => m.role === "user" && m.text?.includes("FIXTURE_BAD_SESSION_PLAN") && !m.requestPending));
+  assert.equal(calls().filter(call => call.type === "prompt").length, beforeMalformed);
+  assert.ok(!calls().some(call => call.type === "prompt" && call.message?.includes("FIXTURE_CREATE_AND_LINK")));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
-    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true, testedAt: new Date().toISOString() };
+    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
+    namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
 } catch (error) {
   writeFileSync(join(reportDir, "fixture-error.log"), logs, { mode: 0o600 });

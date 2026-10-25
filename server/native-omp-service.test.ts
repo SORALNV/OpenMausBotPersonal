@@ -32,7 +32,7 @@ function fixture() {
   });
   const settled = vi.fn();
   const create = () => {
-    const service = new NativeOmpService({ dir, store, generate, open, formatter: { format: async () => "短い回答" }, settled });
+    const service = new NativeOmpService({ dir, store, generate, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: async () => "短い回答" }, settled });
     services.push(service); return service;
   };
   const service = create();

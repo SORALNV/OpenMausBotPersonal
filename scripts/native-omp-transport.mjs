@@ -7,7 +7,7 @@ const FRAME_LIMIT = 1_048_576;
 const MESSAGE_LIMIT = 64 * 1_048_576;
 
 function remotePath(value) {
-  if (typeof value !== "string" || !/^\/[A-Za-z0-9_./-]+$/u.test(value) || value.split("/").includes("..")) throw new Error("Invalid remote path");
+  if (typeof value !== "string" || !/^\/[\p{L}\p{N}_./ -]+$/u.test(value) || value.split("/").includes("..")) throw new Error("Invalid remote path");
   return value;
 }
 
@@ -15,7 +15,8 @@ export function nativeOmpCommand(binding) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/u.test(binding.host ?? "") || !/^[a-z_][a-z0-9_-]{0,31}$/u.test(binding.user ?? "")) throw new Error("Invalid SSH destination");
   if (![binding.botId, binding.threadId].every(value => typeof value === "string" && value.trim() && value.length <= 200)) throw new Error("Explicit bot and thread required");
   const key = createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId])).digest("hex");
-  const sessionDir = `${remotePath(binding.stateRoot).replace(/\/$/u, "")}/${key}`;
+  const sessionDir = binding.sessionDir === undefined ? `${remotePath(binding.stateRoot).replace(/\/$/u, "")}/${key}` : remotePath(binding.sessionDir);
+  if (binding.sessionFile !== undefined && (!remotePath(binding.sessionFile).startsWith(sessionDir + "/") || !binding.sessionFile.endsWith(".jsonl"))) throw new Error("Invalid native session file");
   const binary = remotePath(binding.binary);
   const profile = binding.profile ?? "omb-native";
   if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(profile)) throw new Error("Invalid native profile");
@@ -26,7 +27,7 @@ export function nativeOmpCommand(binding) {
   return {
     command: "/usr/bin/ssh",
     args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", `${binding.user}@${binding.host}`,
-      `exec '${binary}' --mode rpc-ui ${options.join(" ")} --session-dir '${sessionDir}' --continue`],
+      `exec '${binary}' --mode rpc-ui ${options.join(" ")} --session-dir '${sessionDir}' ${binding.sessionFile ? `--resume '${binding.sessionFile}'` : "--continue"}`],
     sessionDir,
   };
 }

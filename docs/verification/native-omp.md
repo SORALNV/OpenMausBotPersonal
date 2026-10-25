@@ -6,8 +6,68 @@ standard Collab instead of starting an independent RPC session writer.
 
 The Personal build exposes `/api/native-omp` for owner-managed, per-Bot
 OhMyPi NativeConnect destinations. Each Bot thread derives a separate remote
-session directory. The mediator prepares a short note while preserving the
+session directory by default, or explicitly selects a catalogued native session.
+The mediator prepares a short note while preserving the
 original request; display formatting is independent of native history.
+
+## Session management
+
+Personal Settings → General → OhMyPi / NativeConnect selects a Bot, its OMB
+thread, and a native session. The management option covers the configured OMP
+profile's catalog, creation and binding; it does not merge project transcripts.
+The catalog reads bounded headers under the configured state root, its sibling
+`project-threads`, and that profile's native session directories. An arbitrary
+external session directory is not accepted from the model.
+
+The same tool-free mediator interprets ordinary chat instructions as bounded
+list/create/connect/manager operations. For example, ask to create a named
+project session and connect a new OMB thread, select an existing named session
+for the current thread, or create a session without changing any OMB thread.
+These are semantic intents rather than exact command phrases. A new OMB thread
+requires an explicit quoted span of the user's instruction. Ambiguous names
+require an ID or an exact unique name; no arbitrary selection is made.
+
+`GET /api/native-omp/sessions` lists the native catalog. `POST` creates a named
+empty persistent session with a request ID. `POST /api/native-omp/threads`
+validates a real shared connection before committing the thread target. All
+routes retain the normal authenticated owner boundary. The private management
+journal reuses a partially created native session and OMB thread on retry.
+Creating a native session uses standard RPC `new_session` and `set_session_name`,
+without a model prompt. Normal work continues through the native standard TUI.
+
+The connector accepts native sessions which have not yet saved a JSONL file.
+When multiple saved sessions share a directory, pool ownership, private relay,
+tmux name and lock are scoped to native identity. Existing legacy private
+relays are discovered and reused. Multiple OMB views of one native session
+share an input queue and expose each approval in only its owning view.
+
+An already running unshared TUI can be adopted through its standard `/collab`
+command only when its tmux client is detached and its composer is proven empty.
+A draft, dialog, unknown writer or attached human TUI refuses adoption without
+clearing input or restarting it. Enable native Collab there or detach after
+finishing the draft, then reconnect. Public relay destinations are unsupported.
+At most eight native processes in the configured profile may be started by
+this connector; it does not kill or silently recycle existing sessions.
+
+Additional checks:
+
+```sh
+node --test scripts/native-omp-pool.node-test.mjs
+node node_modules/vitest/vitest.mjs run server/native-omp-sessions.test.ts src/components/NativeOmpSettings.test.ts
+```
+
+The HTTP fixture covers idempotent session creation, selecting an existing
+native session, chat-driven creation plus a new OMB thread, round-trip input to
+that selected native session, save-only creation without an extra thread, and
+rejection of malformed management output before any native prompt.
+
+On 2026-10-26, isolated Pi sessions also verified native TUI human input mirrored
+to two OMB views, serialized OMB submissions, connecting an empty unsaved native
+session, preserving a draft during refused adoption, adoption of the same TUI
+process without a model prompt, and two distinct sessions in the same directory
+with independent answers and no crossed history. These synthetic sessions used
+the installed OhMyPi 18.12.5 binary and existing Pi authentication. They did not
+execute or resend a production Bot request.
 
 Run the synthetic stdio/SSH-plan checks without provider credentials:
 

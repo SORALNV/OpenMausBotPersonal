@@ -70,8 +70,13 @@ The shared connector currently handles plain text and standard select/editor
 questions. Attachments, OMB routines, delegated turns and edited reruns retain
 their existing blocks. It reads normal native turn output and idle state; this
 does not prove all independently launched background jobs or a native goal
-have finished. Native session switches/branches require owner review and a
-new explicit binding; OMB never silently follows them. Unsupported dialogs,
+have finished. Use Personal Settings → General → OhMyPi / NativeConnect or an
+explicit chat instruction to select an existing session, create a named session,
+or create and connect a new OMB thread. Native session switches/branches require
+an explicit binding; OMB never silently follows them. The OMP management option
+handles sessions within the configured profile and keeps project histories
+separate. See [session management verification](verification/native-omp.md).
+Unsupported dialogs,
 protocol mismatches, another detected session writer, or lost connectivity
 stop the connection without a raw-input fallback.
 
