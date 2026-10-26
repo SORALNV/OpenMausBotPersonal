@@ -235,7 +235,7 @@ export class NativeOmpService {
     client.on("nativeState", ({ busy, reconnecting }: { busy: boolean; reconnecting?: boolean }) => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
       this.nativeBusy.set(binding.threadId, busy);
-      if (!busy) { recoverFinal(); this.progress.delete(binding.threadId); if (!this.active.has(binding.threadId)) this.consent.delete(binding.threadId); }
+      if (!busy) { recoverFinal(); this.progress.delete(binding.threadId); if (!this.active.has(binding.threadId) && this.consent.get(binding.threadId)?.requestId) this.consent.delete(binding.threadId); }
       if (!this.active.has(binding.threadId)) {
         this.states.set(binding.threadId, reconnecting ? "reconnecting" : busy ? "human-working" : "idle");
         this.store.setTaskActivity(binding.botId, binding.threadId, approvals.cards.size ? "waiting-on-you" : busy ? "working" : "idle");

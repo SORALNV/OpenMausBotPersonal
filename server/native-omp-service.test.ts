@@ -559,3 +559,23 @@ it("an idle grant covers only the next request, and cannot survive Stop or resta
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId && !m.card.answered && !m.card.expired)).toBe(true));
   expect(f.client.answerUi).toHaveBeenCalledTimes(1); f.complete();
 });
+
+
+it("idle shared-state refresh does not consume a grant for the next request", async () => {
+  const f = sharedFixture(); f.service.close();
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  const service = f.create();
+  Object.assign(f.native, { answerUi: vi.fn() });
+  let finish!: (value: unknown) => void;
+  vi.mocked(f.native.submit).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  service.start();
+  service.ownerConsent(f.bot.id, f.bot.threadId, "全て許可");
+  f.native.emit("nativeState", { busy: false });
+  service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "次の架空のサービス更新");
+  await vi.waitFor(() => expect(f.native.submit).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry", { entryId: "owned-input", role: "user", text: "次の架空のサービス更新", own: true, activeOwn: true, snapshot: false, sessionId: "native-one" });
+  f.native.emit("question", { id: "idle-grant-tool", method: "select", title: "Allow tool: bash", message: "Command: sudo systemctl restart fixture", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("idle-grant-tool", { value: "Approve" }));
+  finish({ requestId: "fixture", sessionId: "native-one", sessionFile: "/fixture/session", text: "完了" });
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+});
