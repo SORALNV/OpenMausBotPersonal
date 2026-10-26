@@ -7,6 +7,7 @@ export class NativeOmpCollab extends NativeOmpTransport {
   tmux?: string;
   reconnect(): void;
   requestStatus(id: string): 'queued' | 'sent' | 'accepted' | 'completed' | undefined;
+  recentFileWrites(): {path:string;content:string}[];
 }
 export function sealOmpFrame(key: Buffer, frame: unknown): Buffer;
 export function openOmpFrame(key: Buffer, data: Buffer): any;

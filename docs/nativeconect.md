@@ -87,20 +87,37 @@ masking when that setting is OFF.
 
 The owner can set `approvalPolicy: "mediator"` on a Pi binding. The native
 session keeps its approval gate; OMB asks the binding's tool-free mediator
-model to judge eligible low-risk inspection commands and text-note changes
-inside its workspace. Only a valid low-importance allow verdict answers the
+model to judge eligible inspection commands, ordinary project source/configuration
+saves and supported local Python unittest runs inside its workspace. Relative
+project paths and `command -v` lookups are candidates. A test run additionally
+requires recent successful native writes containing test source; failed writes
+and subsequent edits invalidate that source evidence. The reviewer receives
+bounded earlier user requests from the same native session to interpret short
+follow-ups. Only a valid low-importance allow verdict answers the
 current native question once. A native safety reason, an important or unknown
 command, a sensitive/executable/configuration target, a failed/late review, or
 a high-importance verdict retains the owner's Allow/Deny card. Defaults remain
 `human` for bindings that have not opted in.
 
-The deterministic checks limit automatic shell approval to supported literal
-inspection commands. They are approval checks, not an operating-system sandbox
+The deterministic checks limit automatic shell review to supported literal
+inspection commands and a limited Python unittest invocation. Arbitrary Python
+scripts, shell syntax, dependency installation, service changes and operations
+outside the workspace retain human confirmation. They are approval checks, not an operating-system sandbox
 or a complete proof of a command's effects. Existing PATH, native tool behavior
 and filesystem links remain part of the destination's trust boundary. The model
 cannot grant session-wide permission or approve a native question already
 answered in the human TUI. Review requests use the same authenticated mediator
 model as the binding, in a tool-free independent call, bounded to 20 seconds.
+Recent write evidence is native history, not a fresh filesystem attestation;
+the model's judgment does not prove that a test has no side effects. Unknown
+test code, unsafe contents or an unsuccessful review retain human confirmation.
+
+Native `attribution: agent` background results do not replace the current
+user's review context or impersonate human input. A matching admitted receipt
+can restore that context after reconnection, including native background work
+following a completed turn. A subsequent human input or cancellation removes
+that delegated context. Closing OMB detaches its shared guests without sending
+a native Abort; explicit Stop retains its existing behavior.
 
 `advisor: true` additionally configures OhMyPi's native passive Advisor for a
 managed standard TUI, using the binding's existing worker model and no backlog

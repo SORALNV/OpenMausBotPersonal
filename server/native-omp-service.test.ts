@@ -363,3 +363,41 @@ it("cannot use a foreign human answer to settle an interrupted BOT receipt", asy
   f.native.emit("nativeState", { busy: false });
   expect(JSON.parse(readFileSync(join(f.dir, "native-omp-ledger.json"), "utf8"))[source.id].stage).toBe("indeterminate");
 });
+
+it("restores completed BOT authorization for native background work after restart without lending it to a new human", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn(), recentFileWrites: vi.fn(() => [{ path: "tests/test_a.py", content: "import unittest\n" }]) });
+  f.service.close();
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  const service = f.create(); const source = service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "プロジェクトのコードとテストを作って");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce()); service.close();
+  const restart = f.create(); restart.start();
+  f.native.emit("nativeEntry", { entryId: "completed-own", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
+  f.native.emit("nativeEntry", { entryId: "native-background", role: "system", text: "Background completed", sessionId: "native-one", own: false, activeOwn: false, snapshot: true });
+  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.native.emit("question", { id: "background-test", method: "select", title: "Allow tool: bash\nCommand: .venv/bin/python -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("background-test", { value: "Approve" }));
+  f.native.emit("nativeEntry", { entryId: "next-human", role: "user", text: "別の人間の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
+  f.native.emit("question", { id: "human-next", method: "select", title: "Allow tool: bash\nCommand: command -v python3", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.subtitle?.includes("依頼との対応を確認できない"))).toBe(true));
+  expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
+});
+
+it("closing OMB detaches shared native work without sending a native Stop", async () => {
+  const f = sharedFixture(); vi.mocked(f.native.submit).mockImplementation(() => new Promise(() => {}));
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の継続作業");
+  await vi.waitFor(() => expect(f.native.submit).toHaveBeenCalledOnce()); f.service.close();
+  expect(f.native.stop).not.toHaveBeenCalled(); expect(f.native.close).toHaveBeenCalled();
+});
+
+it("an active OMB request never authorizes a new human native turn", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() }); f.service.close();
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  vi.mocked(f.native.submit).mockImplementation(() => new Promise(() => {})); const service = f.create();
+  const source = service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "元のBOT作業");
+  await vi.waitFor(() => expect(f.native.submit).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry", { entryId: "active-admission", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: true, snapshot: false });
+  f.native.emit("nativeEntry", { entryId: "active-human", role: "user", text: "新しい人間の依頼", sessionId: "native-one", own: false, activeOwn: true, snapshot: false });
+  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.native.emit("question", { id: "human-during-bot", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true)); expect(f.native.answerUi).not.toHaveBeenCalled();
+});

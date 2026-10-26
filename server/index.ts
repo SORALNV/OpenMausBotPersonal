@@ -16972,6 +16972,7 @@ const gracefulShutdown = createGracefulShutdown({
       // Invalidate turn bearers before any cleanup reaches an await: child MCP processes and the listener may outlive it.
       revokeAllInternalCapabilities();
       googleChat?.stop();
+      nativeOmp?.close();
       sharedComputers.close(); deviceLinks.close();
       sharedComputerControl.close();
       browserLive.closeAll();

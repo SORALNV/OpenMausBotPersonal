@@ -11,7 +11,7 @@ import type { RelayTextGenerator } from "./codex-relay-mediator.ts";
 import { presentDirectReply, type ReplyFormatter } from "./direct-thread-bridge.ts";
 import type { Message, Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
-import { reviewNativeQuestion } from "./native-omp-review.ts";
+import { nativeReviewCandidate, reviewNativeQuestion } from "./native-omp-review.ts";
 import { automaticReportDecline, japaneseNativeQuestion, japanesePermissionDetail, nativeToolApproval } from "./native-omp-question.ts";
 import { questionAnswersByQuestion } from "../shared/ask-question.ts";
 
@@ -175,8 +175,9 @@ export class NativeOmpService {
     this.sharedQuestions.set(binding.threadId, approvals);
     client.on("question", (question: OmpQuestion) => {
       const receipt = this.ledger[approvals.source.id];
-      const recovered = approvals.source.text && receipt && ["submitted", "indeterminate"].includes(receipt.stage) ? approvals : undefined;
-      void this.question(binding, approvals, question, this.active.get(binding.threadId) ?? recovered);
+      const recovered = approvals.source.text && receipt && ["submitted", "indeterminate", "completed"].includes(receipt.stage) && !this.store.messagesFor(binding.threadId).find(message => message.id === approvals.source.id)?.requestCancelled ? approvals : undefined;
+      const active = this.active.get(binding.threadId);
+      void this.question(binding, approvals, question, active?.source.id === approvals.source.id ? active : recovered);
     });
     client.on("questionCancelled", (id: string) => {
       approvals.questions.delete(id);
@@ -190,7 +191,7 @@ export class NativeOmpService {
         const candidates = event.own ? this.store.messagesFor(binding.threadId).filter(message => {
           const receipt = this.ledger[message.id];
           return message.role === "user" && message.text === event.text && receipt?.sessionId === event.sessionId &&
-            ["submitted", "indeterminate"].includes(receipt.stage) && (!receipt.admissionEntryId || receipt.admissionEntryId === event.entryId) &&
+            !message.requestCancelled && ["submitted", "indeterminate", "completed"].includes(receipt.stage) && (!receipt.admissionEntryId || receipt.admissionEntryId === event.entryId) &&
             receipt.digest === createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, event.text])).digest("hex");
         }) : [];
         const current = candidates.find(message => message.id === this.active.get(binding.threadId)?.source.id);
@@ -402,7 +403,12 @@ export class NativeOmpService {
       return;
     }
     const reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
-    const allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewer.source.text ?? "", question, this.generate, AbortSignal.any([job.controller.signal, reviewer.controller.signal])) : false;
+    const messages = this.store.messagesFor(binding.threadId);
+    const sourceIndex = reviewer ? messages.findIndex(message => message.id === reviewer.source.id) : -1;
+    const sessionId = reviewer && this.ledger[reviewer.source.id]?.sessionId;
+    const priorRequests = sourceIndex < 0 ? [] : messages.slice(0, sourceIndex).filter(message => message.role === "user" && !message.nativeOmp && this.ledger[message.id]?.sessionId === sessionId).slice(-6).map(message => message.text ?? "");
+    const native = job.client as NativeOmpCollab | undefined;
+    const allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewer.source.text ?? "", question, this.generate, AbortSignal.any([job.controller.signal, reviewer.controller.signal]), { priorRequests, files: native?.recentFileWrites?.() }) : false;
     if (!owns() || job.stopped || reviewer?.stopped || !job.questions.has(question.id)) return;
     if (allowed) {
       try {
@@ -416,7 +422,11 @@ export class NativeOmpService {
     // OhMyPi 18.12.5 emits native tool approvals as select dialogs; never expose its session-wide approval option.
     const allowValue = nativeToolApproval(question) ? "Approve" : undefined;
     const permission = question.method === "confirm" || allowValue !== undefined;
-    const presentation = allowValue ? { text: japanesePermissionDetail(question), labels: [], translated: true }
+    const reason = binding.approvalPolicy !== "mediator" ? "この接続は人間が許可する設定です。"
+      : !reviewer ? "今回の依頼との対応を確認できないため、人間への確認が必要です。"
+      : !nativeReviewCandidate(question, binding.cwd) ? "この操作は自動判定の対象外のため、人間への確認が必要です。"
+      : "Lunaが低リスクと確認できなかったため、人間への確認が必要です。";
+    const presentation = allowValue ? { text: `${reason}\n\n${japanesePermissionDetail(question)}`, labels: [], translated: true }
       : await japaneseNativeQuestion(binding, question, this.generate, job.controller.signal);
     if (!owns() || job.stopped || !job.questions.has(question.id)) return;
     const choices = new Map(presentation.labels.map((label, index) => [label, question.options![index]!]));
@@ -467,9 +477,14 @@ export class NativeOmpService {
   }
 
   close(): void {
+    if (this.closing) return;
     this.closing = true;
     for (const timer of this.reconnectTimers.values()) clearTimeout(timer); this.reconnectTimers.clear();
-    for (const id of this.active.keys()) void this.stop(id);
+    for (const [id, job] of this.active) {
+      const bot = this.store.botByThread(id);
+      if (bot && this.binding(bot.id, id)?.connection === "shared-tui") job.controller.abort();
+      else void this.stop(id);
+    }
     for (const [threadId, job] of this.sharedQuestions) { job.stopped = true; job.controller.abort(); for (const id of job.cards.keys()) this.expire(threadId, job, id); }
     for (const client of this.clients.values()) client.close(); this.clients.clear(); this.sharedQuestions.clear();
     this.pool.close();

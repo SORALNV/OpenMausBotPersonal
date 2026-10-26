@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import { createInterface } from 'node:readline';
+import { posix } from 'node:path';
 import { WebSocket } from 'ws';
 import { nativeOmpCommand } from './native-omp-transport.mjs';
 import { startOmpRelay } from './native-omp-collab-relay.mjs';
@@ -309,6 +310,29 @@ export class NativeOmpCollab extends EventEmitter {
     this.pumpTimer=setTimeout(() => { if (this.turn!==turn || !this.idle()) return; turn.sent=true; this.receipts.get(turn.id).stage='sent'; this.send({t:'prompt',text:turn.text}); this.armTurnDeadline(); },Math.max(250,(turn.notBefore??0)-Date.now()));
   }
   requestStatus(id) { return this.receipts.get(id)?.stage; }
+  recentFileWrites() {
+    const writes=new Map(),complete=[];
+    const samePath=(left,right)=>posix.resolve(this.binding.cwd??'/',left)===posix.resolve(this.binding.cwd??'/',right);
+    for(const entry of [...this.entries.values()].slice(-160)) {
+      const message=entry.message;
+      if(message?.role==='assistant' && Array.isArray(message.content))for(const item of message.content) {
+        const args=item.arguments;
+        if(item.type==='toolCall' && ['write','edit'].includes(item.name) && typeof args?.path==='string') {
+          for(let i=complete.length-1;i>=0;i--)if(samePath(complete[i].path,args.path))complete.splice(i,1);
+          for(const [id,file] of writes)if(samePath(file.path,args.path))writes.delete(id);
+          if(item.name==='write' && typeof args.content==='string' && args.content.length<=12000)writes.set(item.id,{path:args.path,content:args.content});
+        }
+      }
+      if(message?.role==='toolResult' && writes.has(message.toolCallId)) {
+        const file=writes.get(message.toolCallId);writes.delete(message.toolCallId);
+        if(message.isError===false){
+          if(typeof message.details?.resolvedPath==='string')file.path=message.details.resolvedPath;
+          for(let i=complete.length-1;i>=0;i--)if(complete[i].path===file.path)complete.splice(i,1);complete.push(file);
+        }
+      }
+    }
+    return complete.slice(-8);
+  }
   armTurnDeadline() {
     const turn=this.turn;
     if (!turn) return;
@@ -373,13 +397,14 @@ export class NativeOmpCollab extends EventEmitter {
     const own=entry.type==='custom_message' && entry.details?.from===this.name;
     const turn=this.turn;
     if (turn?.sent && own && text===turn.text) { turn.admitted=true; this.receipts.get(turn.id).stage='accepted'; }
-    if (turn?.sent && !own && msg?.role==='user') turn.contended=true;
+    const role=entry.type==='custom_message' && entry.attribution==='agent' ? 'system' : msg?.role;
+    if (turn?.sent && !own && role==='user') turn.contended=true;
     if (turn?.admitted && msg?.role==='assistant') {
       if (['error','aborted'].includes(msg.stopReason)) { this.fail('Native shared turn failed; do not replay'); return; }
       if(text)turn.texts.push(text);
       if (snapshot && msg.stopReason === 'stop') turn.ended=true;
     }
-    this.emit('nativeEntry',{entryId:entry.id,role:msg?.role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted,stopReason:msg?.stopReason});
+    this.emit('nativeEntry',{entryId:entry.id,role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted,stopReason:msg?.stopReason});
   }
   finish() {
     const turn=this.turn;

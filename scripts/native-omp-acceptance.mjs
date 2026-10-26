@@ -80,7 +80,7 @@ try {
   const selectState = await until(messages, value => value.messages.some(message => message.card?.requestType === "permission" && !message.card.answered && !message.card.expired));
   const select = selectState.messages.find(message => message.card?.requestType === "permission" && !message.card.answered && !message.card.expired);
   assert.deepEqual(select.card.options, ["許可", "拒否"]);
-  assert.equal(select.card.subtitle, "ツール「write」の実行許可\n対象: /fixture/synthetic.txt");
+  assert.ok(select.card.subtitle.endsWith("ツール「write」の実行許可\n対象: /fixture/synthetic.txt"));
   await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: select.card.requestId, behavior: "allow" } });
   await settled(7); assert.ok(calls().some(call => call.type === "extension_ui_response" && call.value === "Approve"));
   assert.ok(!calls().some(call => call.value === "Approve write for this session"));
@@ -133,6 +133,12 @@ try {
   await send("SYNTHETIC_REPORT"); await settled(beforeReview + 3);
   assert.ok(calls().some(call => call.type === "extension_ui_response" && call.id === "fixture-report" && call.value === "No"));
   assert.ok(!(await messages()).messages.some(m => m.card?.subtitle?.includes("haunted")));
+  const developmentCards = (await messages()).messages.filter(m => m.card?.requestType === "permission").length;
+  for (const [index, mode] of ["PROJECT", "TEST", "LOOKUP"].entries()) {
+    await send(`架空の開発とローカルテスト。SYNTHETIC_REVIEW_${mode}`); await settled(beforeReview + 4 + index);
+  }
+  assert.equal((await messages()).messages.filter(m => m.card?.requestType === "permission").length, developmentCards);
+  for (const id of ["fixture-project", "fixture-test", "fixture-lookup"]) assert.equal(calls().filter(call => call.type === "extension_ui_response" && call.id === id && call.value === "Approve").length, 1);
   const created = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   const duplicate = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   assert.equal(created.session.id, duplicate.session.id);
@@ -160,7 +166,8 @@ try {
   assert.ok(!calls().some(call => call.type === "prompt" && call.message?.includes("FIXTURE_CREATE_AND_LINK")));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
     nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
-    namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true, testedAt: new Date().toISOString() };
+    namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
+    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, noDevelopmentApprovalCards: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
 } catch (error) {
   writeFileSync(join(reportDir, "fixture-error.log"), logs, { mode: 0o600 });

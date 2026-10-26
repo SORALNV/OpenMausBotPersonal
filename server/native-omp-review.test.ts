@@ -23,7 +23,7 @@ describe("native execution review", () => {
   });
 
   it("allows routine OS, network and version inspections as review candidates", () => {
-    for (const command of ["cat /etc/os-release", "cat /proc/meminfo /proc/cpuinfo", "hostname -I", "dmesg --human --nopager", "ip -br addr", "systemctl status ssh --no-pager", "python3 --version"]) expect(nativeReviewCandidate(question(command), cwd), command).toBe("inspection");
+    for (const command of ["command -v omp omb omb-native", "cat /etc/os-release", "cat /proc/meminfo /proc/cpuinfo", "hostname -I", "dmesg --human --nopager", "ip -br addr", "systemctl status ssh --no-pager", "python3 --version"]) expect(nativeReviewCandidate(question(command), cwd), command).toBe("inspection");
   });
 
   it("native safety overrides and generic confirmations cannot be auto-answered", async () => {
@@ -43,6 +43,32 @@ describe("native execution review", () => {
     const write = (path: string) => ({ ...question(""), title: "Allow tool: write", message: `Allow tool: write\nPath: ${path}\nContent: note` });
     expect(nativeReviewCandidate(write(`${cwd}/notes.md`), cwd)).toBe("workspace-change");
     for (const path of ["/etc/fstab", `${cwd}/../secret.md`, `${cwd}/auth.json`, `${cwd}/run.sh`, `${cwd}/.git/config`, `${cwd}/.hidden.txt`, `${cwd}/AGENTS.md`, `${cwd}/WATCHDOG.md`]) expect(nativeReviewCandidate(write(path), cwd)).toBeNull();
+  });
+
+  it("reviews ordinary relative project source and config saves without granting execution or escapes", async () => {
+    const generate = vi.fn(async () => '{"decision":"allow","importance":"low"}');
+    for (const path of ["wol_mcp.py", "tests/test_wol.py", ".gitignore", "requirements.txt", "computers.toml", "src/index.ts"]) {
+      const q = { ...question(""), title: `Allow tool: write\nPath: ${path}\nContent: ${"x".repeat(8500)}`, message: undefined };
+      expect(nativeReviewCandidate(q, cwd), path).toBe("workspace-change");
+      expect(await reviewNativeQuestion(binding, "専用のMCPを開発して", q, generate, new AbortController().signal)).toBe(true);
+    }
+    for (const path of ["../other/file.py", "src/../../file.py", "/etc/config.toml", ".git/hooks/start.py", ".venv/start.py", "src/.hidden/file.py", "sitecustomize.py", "run.sh", "AGENTS.md", "auth.json", "proc://process/input.py", "~/start.py"]) {
+      expect(nativeReviewCandidate({ ...question(""), title: `Allow tool: write\nPath: ${path}\nContent: x`, message: undefined }, cwd), path).toBeNull();
+    }
+  });
+
+  it("reviews a limited project unittest command only with successfully saved test source evidence", async () => {
+    const generate = vi.fn(async (_provider: string, _model: string, _prompt: string, _signal: AbortSignal) => '{"decision":"allow","importance":"low"}');
+    const q = question(".venv/bin/python -m unittest discover -s tests -v");
+    expect(nativeReviewCandidate(q, cwd)).toBe("workspace-test");
+    expect(await reviewNativeQuestion(binding, "とりあえずWOL", q, generate, new AbortController().signal)).toBe(false);
+    expect(generate).not.toHaveBeenCalled();
+    const files = [{ path: "tests/test_wol.py", content: "import unittest\nclass T(unittest.TestCase):\n def test_value(self): self.assertEqual(1, 1)" }];
+    expect(await reviewNativeQuestion(binding, "とりあえずWOL", q, generate, new AbortController().signal, { files, priorRequests: ["自分用のMCPを開発して"] })).toBe(true);
+    expect(generate.mock.calls[0]![2]).toContain("自分用のMCPを開発して");
+    expect(generate.mock.calls[0]![2]).toContain("test_value");
+    for (const command of [".venv/bin/python -m unittest discover -s /etc", "python3 -m unittest --locals", "python3 -m unittest discover -s tests/../other", ".venv/bin/python -m pip install example", "python3 -c arbitrary", "command -v omp; reboot"]) expect(nativeReviewCandidate(question(command), cwd), command).toBeNull();
+    expect(await reviewNativeQuestion(binding, "検証して", q, generate, new AbortController().signal, { files: [{ ...files[0]!, path: "/other/tests/test_wol.py" }] })).toBe(false);
   });
 
   it("only a valid low-importance allow verdict permits execution", async () => {

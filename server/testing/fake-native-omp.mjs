@@ -10,6 +10,7 @@ const sessionDir = process.argv[2];
 const sessionId = createHash("sha256").update(sessionDir).digest("hex");
 const sessionFile = `${sessionDir}/synthetic.jsonl`;
 const historyFile = join(root, `${sessionId}.json`);
+const testSource = "import unittest\nclass T(unittest.TestCase):\n def test_value(self): self.assertEqual(1, 1)\n";
 const output = frame => process.stdout.write(JSON.stringify(frame) + "\n");
 const answer = frame => {
   const history = existsSync(historyFile) ? JSON.parse(readFileSync(historyFile, "utf8")) : [];
@@ -28,7 +29,10 @@ lines.on("line", line => {
   if (frame.type === "prompt") {
     active = frame;
     output({ type: "response", id: frame.id, command: "prompt", success: true });
-    if (frame.message.includes("SYNTHETIC_REVIEW_INSPECTION")) output({ type: "extension_ui_request", id: "fixture-permission", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: lsblk -o NAME,SIZE", options: ["Approve", "Deny"] });
+    if (frame.message.includes("SYNTHETIC_REVIEW_PROJECT")) output({ type: "extension_ui_request", id: "fixture-project", method: "select", title: "Allow tool: write", message: "Allow tool: write\nPath: tests/test_fixture.py\nContent: " + testSource, options: ["Approve", "Deny"] });
+    else if (frame.message.includes("SYNTHETIC_REVIEW_TEST")) output({ type: "extension_ui_request", id: "fixture-test", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: .venv/bin/python -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
+    else if (frame.message.includes("SYNTHETIC_REVIEW_LOOKUP")) output({ type: "extension_ui_request", id: "fixture-lookup", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: command -v omp omb", options: ["Approve", "Deny"] });
+    else if (frame.message.includes("SYNTHETIC_REVIEW_INSPECTION")) output({ type: "extension_ui_request", id: "fixture-permission", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: lsblk -o NAME,SIZE", options: ["Approve", "Deny"] });
     else if (frame.message.includes("SYNTHETIC_REVIEW_IMPORTANT")) output({ type: "extension_ui_request", id: "fixture-permission", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: mkfs.ext4 /dev/sda", options: ["Approve", "Deny"] });
     else if (frame.message.includes("SYNTHETIC_SELECT_APPROVAL")) output({ type: "extension_ui_request", id: "fixture-permission", method: "select", title: "Allow tool: write\nPath: /fixture/synthetic.txt", options: ["Approve", "Approve write for this session", "Deny"] });
     else if (frame.message.includes("SYNTHETIC_APPROVAL")) output({ type: "extension_ui_request", id: "fixture-permission", method: "confirm", title: "Synthetic permission", message: "Create a fixture-only marker?" });
@@ -40,6 +44,7 @@ lines.on("line", line => {
   }
   if (frame.type === "extension_ui_response") {
     if (frame.confirmed === true || frame.value === "Approve") {
+      if (frame.id === "fixture-project") writeFileSync(join(root, `review-writes-${sessionId}.json`), JSON.stringify([{ path: "tests/test_fixture.py", content: testSource }]));
       writeFileSync(join(root, "approved-marker"), "synthetic");
       output({ type: "tool_execution_start", toolName: "write", toolCallId: "fixture-write" });
       output({ type: "tool_execution_end", toolName: "write", toolCallId: "fixture-write", isError: false });

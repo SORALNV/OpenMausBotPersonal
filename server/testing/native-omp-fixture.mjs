@@ -10,8 +10,11 @@ import { createHash } from "node:crypto";
 if (!process.env.FAKE_CLAUDE_OMP_ROOT || !process.env.HOME?.includes("omb-omp-fixture-")) throw new Error("Native fixture requires an isolated home");
 NativeOmpTransport.connect = binding => {
   const plan = nativeOmpCommand(binding);
-  return new NativeOmpTransport(spawn(process.execPath, [new URL("./fake-native-omp.mjs", import.meta.url).pathname, plan.sessionDir],
+  const client = new NativeOmpTransport(spawn(process.execPath, [new URL("./fake-native-omp.mjs", import.meta.url).pathname, plan.sessionDir],
     { stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME, FAKE_CLAUDE_OMP_ROOT: process.env.FAKE_CLAUDE_OMP_ROOT } }), plan.sessionDir, { timeoutMs: 1000, turnTimeoutMs: 20_000 });
+  const writes = join(process.env.FAKE_CLAUDE_OMP_ROOT, `review-writes-${createHash("sha256").update(plan.sessionDir).digest("hex")}.json`);
+  client.recentFileWrites = () => existsSync(writes) ? JSON.parse(readFileSync(writes, "utf8")) : [];
+  return client;
 };
 NativeOmpCollab.connect = NativeOmpTransport.connect;
 NativeOmpPool.prototype.acquire = NativeOmpTransport.connect;

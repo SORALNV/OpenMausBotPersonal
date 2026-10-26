@@ -93,6 +93,16 @@ confirmation/select approvals, questions, Stop, provider failure and an
 unrelated ordinary Bot. No real account or Raspberry Pi is contacted by it.
 The service tests additionally prove restart receipts prevent replay and that
 Stop settles a preparation model even if it ignores its AbortSignal.
+Development approval fixtures cover relative source/test/configuration saves,
+`command -v` and a Python unittest run with saved-source evidence without new
+human cards. Unsupported commands, filesystem escapes, URI targets, native
+risk reasons, missing test source and important operations retain human cards.
+Transport/service cases cover successful-write evidence, its invalidation after
+edit/failure, native agent background attribution, restored authorization after
+restart, refusal to lend that authorization to human input, and detach without
+native Abort on application shutdown. A tool-free live Luna check with synthetic
+code allowed ordinary saves/lookup/local tests and retained confirmation for a
+test that restarts SSH and an explicit service restart.
 Mediator review checks cover read-only inspection, independent low-risk verdicts,
 native full-title Collab requests, owner-only destructive actions, failed reviews
 and a human answering during an in-flight model review. HTTP acceptance also

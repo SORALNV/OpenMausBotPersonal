@@ -63,6 +63,23 @@ test('human input racing a submitted BOT prompt is flagged as a shared turn',asy
  c.frame(own('one','BOT'));c.frame(human('human','人間の追加入力'));c.frame(answer('answer','共有の回答'));end(c);
  assert.equal((await result).sharedTurn,true);c.close();
 });
+test('native agent background results are not human input and cannot replace the BOT review context',async()=>{
+ const {client:c}=peer(),events=[];c.on('nativeEntry',e=>events.push(e));
+ const result=c.submit('background','BOT');await pause(300);c.frame(own('own-background','BOT'));
+ c.frame({t:'entry',entry:{type:'custom_message',id:'async-background',customType:'async-result',attribution:'agent',content:'Background job completed'}});
+ c.frame(answer('after-background','Done'));end(c);
+ assert.equal((await result).sharedTurn,false);assert.equal(events.find(e=>e.entryId==='async-background').role,'system');c.close();
+});
+test('test review evidence includes only successful native writes and invalidates later failed writes or edits',()=>{
+ const {client:c}=peer();c.binding.cwd='/fixture/project';
+ const call=(id,name,path,content)=>c.frame({t:'entry',entry:{id,type:'message',message:{role:'assistant',content:[{type:'toolCall',id,name,arguments:{path,content}}]}}});
+ const done=(id,callId,isError=false)=>c.frame({t:'entry',entry:{id,type:'message',message:{role:'toolResult',toolCallId:callId,isError,details:{resolvedPath:'/fixture/project/tests/test_a.py'},content:[]}}});
+ call('write-one','write','tests/test_a.py','Saved test');assert.deepEqual(c.recentFileWrites(),[]);done('result-one','write-one');
+ assert.deepEqual(c.recentFileWrites(),[{path:'/fixture/project/tests/test_a.py',content:'Saved test'}]);
+ call('edit-one','edit','tests/test_a.py','');assert.deepEqual(c.recentFileWrites(),[]);
+ call('write-two','write','tests/test_a.py','New test');done('result-two','write-two');
+ call('write-three','write','tests/test_a.py','Unknown state');done('result-three','write-three',true);assert.deepEqual(c.recentFileWrites(),[]);c.close();
+});
 test('unrelated assistant output cannot complete a BOT request without its native admission',async()=>{
  const {client:c}=peer();const result=c.submit('synthetic','BOT');let settled=false;void result.then(()=>{settled=true;},()=>{});
  await pause(300);c.frame(human('human','人間の依頼'));c.frame(answer('human-answer','人間への回答'));end(c);await pause(10);assert.equal(settled,false);
