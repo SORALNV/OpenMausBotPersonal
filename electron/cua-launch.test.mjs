@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,22 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform !== "darwin")("async standalone CUA launch (isolated commands)", () => {
+  it("passes an explicitly saved Personal Chrome grant only to the owned SDK child", async () => {
+    vi.stubEnv("OMB_PERSONAL_BUILD", "1");
+    vi.resetModules();
+    cua = await import("./cua.mjs");
+    writeFileSync(join(fixture.home, "cua-existing-profile.json"), JSON.stringify({ version: 1, allowed: true }), { mode: 0o600 });
+    fixture.embeddedDelays = [1];
+    const connection = await cua.startCua();
+    expect(connection.mode).toBe("embedded");
+    expect(connection.mcpCommand).toBe("/fixture/cua-driver");
+    expect(fixture.hosts[0].binary).toBe(join(fixture.home, "cua-profile-launch"));
+    const launch = readFileSync(fixture.hosts[0].binary, "utf8");
+    expect(launch).toContain("--grant existing-profile");
+    expect(launch).not.toContain("unrestricted");
+    expect(launch).not.toContain("bypass");
+  });
+
   it.each([[undefined, "com.openmausbot.app"], ["1", "dev.sora.openmausbot.personal"]])("uses the matching host identity for Personal mode %s", async (mode, expected) => {
     vi.stubEnv("OMB_PERSONAL_BUILD", mode);
     vi.resetModules();
