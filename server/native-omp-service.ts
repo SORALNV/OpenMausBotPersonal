@@ -13,13 +13,15 @@ import type { Message, Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
 import { classifyNativeRisk, type NativeRiskDecision } from "./native-omp-review.ts";
 import { automaticReportDecline, japaneseNativeQuestion, japanesePermissionDetail, nativeToolApproval } from "./native-omp-question.ts";
+import { nativeAuditText, nativeConsentCommand } from "./native-omp-consent.ts";
 import { questionAnswersByQuestion } from "../shared/ask-question.ts";
 
 type Binding = NativeOmpBinding & OmpDestination;
 type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string; admissionEntryId?: string; failure?: { phase: string; status?: string } };
 type Active = { controller: AbortController; source: Pick<Message, "id" | "text">; client?: NativeOmpTransport; questions: Set<string>; cards: Map<string, { nativeId: string; question: OmpQuestion; card: Message; allowValue?: string; choices?: Map<string, string> }>; stopped: boolean; onSettled?: () => void };
 type NativeProgress = { requestId: string; turnId: string; rowId?: string; completed: string[] };
-type NativeToolProgress = { type: string; toolName?: string; isError?: boolean; args?: unknown };
+type NativeToolProgress = { type: string; toolName?: string; isError?: boolean; args?: unknown; toolCallId?: string };
+type NativeAudit = { row: Message; name: string; callId?: string; command?: string; started: boolean };
 const refuse = (message: string) => Object.assign(new Error(message), { status: 409 });
 const validId = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,100}$/u.test(value);
 
@@ -37,6 +39,8 @@ export class NativeOmpService {
   private reconnectAttempts = new Map<string, number>();
   private closing = false;
   private progress = new Map<string, NativeProgress>();
+  private consent = new Map<string, { requestId?: string; expiresAt: number }>();
+  private audits = new Map<string, NativeAudit[]>();
   private configuring = new Set<string>();
   private readonly pool = new NativeOmpPool();
   private readonly management: NativeOmpSessions;
@@ -173,7 +177,7 @@ export class NativeOmpService {
       });
       receipt.stage = "completed"; this.save(this.ledgerFile, this.ledger);
       this.store.patchMessage(binding.threadId, key, { requestPending: false });
-      recoveredFinal = undefined; this.progress.delete(binding.threadId);
+      recoveredFinal = undefined; this.progress.delete(binding.threadId); this.audits.delete(binding.threadId);
     };
     this.sharedQuestions.set(binding.threadId, approvals);
     client.on("nativeTool", (event: NativeToolProgress) => {
@@ -203,6 +207,7 @@ export class NativeOmpService {
         const current = candidates.find(message => message.id === this.active.get(binding.threadId)?.source.id);
         const source = current ?? (candidates.length === 1 ? candidates[0] : undefined);
         if (source && !this.ledger[source.id]!.admissionEntryId) { this.ledger[source.id]!.admissionEntryId = event.entryId; this.save(this.ledgerFile, this.ledger); }
+        if (!source || this.consent.get(binding.threadId)?.requestId && this.consent.get(binding.threadId)?.requestId !== source.id) this.consent.delete(binding.threadId);
         approvals.source = source || { id: `native-host-${binding.threadId}`, text: "" };
         if (source && !event.snapshot) this.progressStatus(binding, source, "OhMyPiが依頼を受け取り、処理を進めています。");
       }
@@ -230,7 +235,7 @@ export class NativeOmpService {
     client.on("nativeState", ({ busy, reconnecting }: { busy: boolean; reconnecting?: boolean }) => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
       this.nativeBusy.set(binding.threadId, busy);
-      if (!busy) { recoverFinal(); this.progress.delete(binding.threadId); }
+      if (!busy) { recoverFinal(); this.progress.delete(binding.threadId); if (!this.active.has(binding.threadId)) this.consent.delete(binding.threadId); }
       if (!this.active.has(binding.threadId)) {
         this.states.set(binding.threadId, reconnecting ? "reconnecting" : busy ? "human-working" : "idle");
         this.store.setTaskActivity(binding.botId, binding.threadId, approvals.cards.size ? "waiting-on-you" : busy ? "working" : "idle");
@@ -239,11 +244,13 @@ export class NativeOmpService {
     });
     client.on("reconnecting", () => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
+      this.consent.delete(binding.threadId);
       this.states.set(binding.threadId, "reconnecting");
       this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi / OhMyPi: 共有接続を復旧し、履歴を照合しています。送信済みの依頼は再送しません。" });
     });
     client.on("disconnected", () => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
+      this.consent.delete(binding.threadId);
       approvals.stopped = true; approvals.controller.abort();
       for (const id of approvals.cards.keys()) this.expire(binding.threadId, approvals, id);
       if (this.sharedQuestions.get(binding.threadId) === approvals) this.sharedQuestions.delete(binding.threadId);
@@ -297,6 +304,70 @@ export class NativeOmpService {
     } finally { this.configuring.delete(threadId); }
   }
 
+  ownerConsent(botId: string, threadId: string, text: string, sendId?: string, sender?: Message["sender"]): Message | undefined {
+    const binding = this.binding(botId, threadId), command = nativeConsentCommand(text);
+    if (!binding || binding.approvalPolicy !== "mediator" || !command) return undefined;
+    const messages = this.store.messagesFor(threadId);
+    const duplicate = sendId && messages.find(message => message.sendId === sendId);
+    if (duplicate) {
+      if (duplicate.text !== text) throw refuse("この送信IDは別の入力で使用済みです。");
+      return duplicate;
+    }
+    const active = this.active.get(threadId);
+    const shared = this.sharedQuestions.get(threadId);
+    const source = active?.source ?? (shared?.source.text && this.nativeBusy.get(threadId) ? shared.source : undefined);
+    const sourceMessage = source && messages.find(message => message.id === source.id);
+    if (command === "grant" && this.nativeBusy.get(threadId) && (!source || sourceMessage?.requestCancelled)) throw refuse("人間が標準TUIで操作中です。BOTの依頼への切り替え後に許可してください。");
+    const message = this.store.appendMessage(threadId, { role: "user", kind: "text", text, sendId, sender });
+    if (command === "revoke") this.consent.delete(threadId);
+    else this.consent.set(threadId, { requestId: source?.id, expiresAt: Date.now() + (source ? 24 * 60 * 60_000 : 10 * 60_000) });
+    this.store.appendMessage(threadId, { role: "bot", kind: "activity", text: command === "revoke"
+      ? "今回の一括許可を取り消しました。以後の高リスク操作は確認します。既に開始した操作は取り消されません。"
+      : source ? "今回の依頼の操作をすべて許可しました。高リスク操作は実行状況をカードで記録します。完了・停止・接続解除で許可を解除します。"
+      : "次の依頼1件の操作をすべて許可します。10分以内の次の依頼に適用し、完了・停止・接続解除で解除します。" });
+    if (command === "grant" && source) {
+      for (const job of [active, shared]) if (job) for (const [id, pending] of job.cards) {
+        if (!nativeToolApproval(pending.question) || pending.card.requestMessageId !== source.id) continue;
+        this.expire(threadId, job, id); job.questions.delete(pending.nativeId);
+        void this.question(binding, job, pending.question, active ?? shared);
+      }
+    }
+    return message;
+  }
+
+  private hasConsent(threadId: string, requestId: string): boolean {
+    const consent = this.consent.get(threadId);
+    if (consent && consent.expiresAt <= Date.now()) this.consent.delete(threadId);
+    return Boolean(consent && consent.expiresAt > Date.now() && consent.requestId === requestId);
+  }
+
+  private auditPermission(binding: Binding, question: OmpQuestion, reason: string, client: NativeOmpTransport): void {
+    const operation = (client as NativeOmpCollab).pendingOperation?.(question);
+    const raw = question.message ?? question.title ?? "";
+    const name = operation?.name ?? question.title?.split("\n")[0]?.replace("Allow tool: ", "") ?? "操作";
+    const summary = japanesePermissionDetail(question).split(/\n内容:|\n変更前:|\n変更後:/u)[0]!;
+    const row = this.store.appendMessage(binding.threadId, { role: "bot", kind: "options", card: {
+      title: "高リスク操作の実行記録", subtitle: nativeAuditText(`今回の一括許可によりLunaが許可しました。\n${reason}\n${summary}`) + "\n状態: 実行許可済み・開始は未確認",
+      options: [], requestId: `native-omp-audit-${randomUUID()}`, requestType: "permission", tool: `OhMyPi/${name}`, answered: "allow",
+    } });
+    const audits = this.audits.get(binding.threadId) ?? [];
+    audits.push({ row, name, callId: operation?.id, command: name === "bash" ? raw.match(/^Command: ([\s\S]+)$/mu)?.[1] : undefined, started: false }); this.audits.set(binding.threadId, audits);
+  }
+
+  private auditProgress(threadId: string, event: NativeToolProgress): void {
+    const audits = this.audits.get(threadId) ?? [];
+    const args = event.args && typeof event.args === "object" ? event.args as Record<string, unknown> : undefined;
+    const matching = audits.filter(audit => audit.callId ? audit.callId === event.toolCallId : audit.name === event.toolName && audit.command && args?.command === audit.command);
+    if (matching.length !== 1) return;
+    const audit = matching[0]!;
+    if (event.type === "tool_execution_start") { audit.started = true; audit.callId ??= event.toolCallId; }
+    if (event.type === "tool_execution_end" && !audit.started && !audit.callId) return;
+    const status = event.type === "tool_execution_start" ? "実行開始を確認" : event.isError === true ? "実行終了（エラー）" : event.isError === false ? "実行終了（ツールの正常終了を確認）" : "実行終了（成否は未確認）";
+    audit.row.card!.subtitle = audit.row.card!.subtitle.replace(/状態: [^\n]*$/u, `状態: ${status}`);
+    this.store.patchMessage(threadId, audit.row.id, { card: { ...audit.row.card! } });
+    if (event.type === "tool_execution_end") this.audits.set(threadId, audits.filter(item => item !== audit));
+  }
+
   dispatch(binding: Binding, text: string, fields: Pick<Message, "sendId" | "sender" | "via" | "callId"> = {}, existingSource?: Message, onSettled?: () => void): Message {
     if (!this.binding(binding.botId, binding.threadId) || this.active.has(binding.threadId)) throw refuse("Native OhMyPi session is unavailable or busy");
     if (this.store.taskByThread(binding.botId, binding.threadId)?.busy) throw refuse("Native OhMyPi session is busy");
@@ -304,7 +375,11 @@ export class NativeOmpService {
     if (Object.keys(this.ledger).length >= 5000) throw refuse("Native request ledger needs owner review before further submissions");
     const source = existingSource ?? this.store.appendMessage(binding.threadId, { role: "user", kind: "text", text, ...fields, requestPending: true });
     if (existingSource) this.store.patchMessage(binding.threadId, source.id, { requestPending: true });
+    this.audits.delete(binding.threadId);
     const job: Active = { controller: new AbortController(), source, questions: new Set(), cards: new Map(), stopped: false, onSettled };
+    const consent = this.consent.get(binding.threadId);
+    if (consent && !consent.requestId && consent.expiresAt > Date.now()) consent.requestId = source.id;
+    else this.consent.delete(binding.threadId);
     this.active.set(binding.threadId, job); this.states.set(binding.threadId, "preparing");
     this.store.setTaskActivity(binding.botId, binding.threadId, "working");
     void this.run(binding, text, job);
@@ -367,7 +442,7 @@ export class NativeOmpService {
       this.ledger[key].stage = "completed"; this.save(this.ledgerFile, this.ledger);
       const reply = this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: displayText, requestMessageId: key,
         turnId: this.progress.get(binding.threadId)?.turnId ?? `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(), nativeOmp: metadata });
-      this.progress.delete(binding.threadId);
+      this.progress.delete(binding.threadId); this.consent.delete(binding.threadId); this.audits.delete(binding.threadId);
       this.states.set(binding.threadId, "idle");
       void presentDirectReply(text, displayText, this.formatter, binding.formatter).then(presentation => {
         if (this.store.taskByThread(binding.botId, binding.threadId)) this.store.patchMessage(binding.threadId, reply.id,
@@ -391,6 +466,7 @@ export class NativeOmpService {
       requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: false, turnTerminal: true, turnCompletedAt: Date.now() });
     } finally {
       clearTimeout(timeout);
+      if (job.stopped || this.ledger[key]?.stage !== "indeterminate") this.consent.delete(binding.threadId);
       if (binding.connection === "shared-tui" && (job.client as NativeOmpCollab | undefined)?.closed) this.scheduleReconnect(binding);
       job.controller.abort();
       if (binding.connection !== "shared-tui") job.client?.close();
@@ -423,6 +499,7 @@ export class NativeOmpService {
   }
 
   private progressTool(binding: Binding, source: Pick<Message, "id" | "text">, event: NativeToolProgress): void {
+    this.auditProgress(binding.threadId, event);
     const names: Record<string, string> = { read: "ファイル・情報の確認", grep: "内容の検索", glob: "ファイルの検索", bash: "コマンド・検証の実行", write: "ファイルの保存", edit: "ファイルの編集" };
     const args = event.args && typeof event.args === "object" ? event.args as Record<string, unknown> : {};
     const path = typeof args.path === "string" && !/^https?:/u.test(args.path) ? basename(args.path).slice(0, 100) : undefined;
@@ -486,10 +563,12 @@ export class NativeOmpService {
         });
       }
       if (!current()) return;
-      if (risk.kind === "proceed") {
+      const delegated = risk.kind === "high-risk" && this.hasConsent(binding.threadId, reviewer.source.id);
+      if (risk.kind === "proceed" || delegated) {
         try {
+          if (delegated && risk.kind === "high-risk") this.auditPermission(binding, question, risk.reason, job.client!);
           job.client!.answerUi(question.id, { value: "Approve" }); job.questions.delete(question.id);
-          this.progressStatus(binding, reviewer.source, "高リスクは検出されなかったため、操作を進めています。");
+          this.progressStatus(binding, reviewer.source, delegated ? "今回の一括許可に基づき、高リスク操作を進めています。内容と実行状況をカードに記録しました。" : "高リスクは検出されなかったため、操作を進めています。");
         } catch { job.questions.delete(question.id); }
         return;
       }
@@ -543,6 +622,7 @@ export class NativeOmpService {
   }
 
   async stop(threadId: string): Promise<boolean> {
+    this.consent.delete(threadId);
     const job = this.active.get(threadId); if (!job) return false;
     job.stopped = true; job.controller.abort();
     if (job.client) {
@@ -562,7 +642,7 @@ export class NativeOmpService {
     }
     for (const [threadId, job] of this.sharedQuestions) { job.stopped = true; job.controller.abort(); for (const id of job.cards.keys()) this.expire(threadId, job, id); }
     for (const client of this.clients.values()) client.close(); this.clients.clear(); this.sharedQuestions.clear();
-    this.progress.clear();
+    this.progress.clear(); this.consent.clear(); this.audits.clear();
     this.pool.close();
   }
 

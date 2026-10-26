@@ -57,8 +57,8 @@ lines.on("line", line => {
     if (frame.confirmed === true || frame.value === "Approve") {
       if (frame.id === "fixture-project") writeFileSync(join(root, `review-writes-${sessionId}.json`), JSON.stringify([{ path: "tests/test_fixture.py", content: testSource }, { path: "_smoke_fixture.py", content: "assert 1 == 1\n" }]));
       writeFileSync(join(root, "approved-marker"), "synthetic");
-      output({ type: "tool_execution_start", toolName: "write", toolCallId: "fixture-write" });
-      output({ type: "tool_execution_end", toolName: "write", toolCallId: "fixture-write", isError: false });
+      output({ type: "tool_execution_start", toolName: active.message.includes("SYNTHETIC_REVIEW_IMPORTANT") ? "bash" : "write", toolCallId: "fixture-write" });
+      output({ type: "tool_execution_end", toolName: active.message.includes("SYNTHETIC_REVIEW_IMPORTANT") ? "bash" : "write", toolCallId: "fixture-write", isError: false });
     }
     answer({ ...active, message: `${active.message}\nhuman:${JSON.stringify(frame)}` });
   }

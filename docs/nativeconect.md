@@ -112,6 +112,31 @@ limits on evidence collection, not a file/command permission allowlist.
 Automatic risk classification is a model judgment, not an OS sandbox or a
 proof of no harmful effects. Concurrent source changes remain possible.
 
+### Explicit permission for one request
+
+An authenticated owner can send the standalone chat message `すべて許可`
+(or `今回の作業はすべて許可します`) to delegate all tool approvals for the
+current OMB request to the mediator. It also releases a currently pending tool
+approval. If idle, the grant applies to the next request started within ten
+minutes. `すべて許可を取り消して` restores high-risk confirmation immediately;
+already-started operations are not undone. Completion, Stop, human TUI takeover,
+disconnection, restart and a 24-hour maximum lifetime revoke the grant.
+It does not cover other threads, subsequent requests, arbitrary native questions,
+or automatic developer reports. Quotes, tool output, guarded/relayed sends and
+client-only sessions cannot grant permission. No grant is persisted or inferred
+from earlier conversation text. A directive embedded in a longer message is not
+recognised as a permission control; send the standalone declaration.
+
+Native approval mode stays unchanged. The mediator still classifies each tool
+operation and responds with the one-operation `Approve`, never session-wide
+approval. With a grant, concrete high-risk findings create a settled Japanese
+operation card rather than another question. Cards persist after the final
+answer, omit file bodies, redact common credential literals, and distinguish
+permission granted, observed start, tool completion/error and unknown outcome.
+Exact native call IDs (or a matching bash command in execution arguments) link
+execution events to the receipt. Missing/ambiguous events do not prove execution
+or its effects; classification failure still retries without execution.
+
 ### In-progress display
 
 The connector mirrors public native assistant narration and observed tool

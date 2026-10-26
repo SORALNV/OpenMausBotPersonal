@@ -40,7 +40,7 @@ class DirectSendRefused extends Error {
 
 type AcceptInput = Parameters<BotMessageRouteDeps["acceptDirectSend"]>[0];
 
-async function fixture() {
+async function fixture(options: { nativeControl?: BotMessageRouteDeps["nativeApprovalControl"]; scopes?: RequestAuth["scopes"] } = {}) {
   const store = new Store(() => sonnet);
   const bot = store.createBot({ name: "Scout" });
   const threadId = bot.threadId;
@@ -94,6 +94,7 @@ async function fixture() {
     store,
     routines: () => null,
     desktopManaged: true,
+    nativeApprovalControl: options.nativeControl,
     cloudHome: false,
     DirectSendRefused,
     acceptDirectSend: accept,
@@ -119,7 +120,7 @@ async function fixture() {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      const auth = { kind: "loopback", scopes: ["admin"] } as RequestAuth;
+      const auth = { kind: "loopback", scopes: options.scopes ?? ["admin"] } as RequestAuth;
       const handled = await dispatchRoutes(routes, { req, res, url, path: url.pathname, method: req.method ?? "GET", auth, json, readBody });
       if (!handled) json(res, 404, { from: "inline routes" });
     } catch (error) {
@@ -449,5 +450,28 @@ describe("POST /api/bots/:id/messages/guarded with a reaction another app relaye
     expect((await post(relay(threadId, asked.id, leaf, { text: "👍" }), "/guarded")).status).toBe(400);
     expect(state.started).toEqual([]);
     expect(state.relayed).toEqual([]);
+  });
+});
+
+
+describe("native permission chat controls", () => {
+  it("handles an owner control before queueing while preserving destination and authentication checks", async () => {
+    const control = vi.fn((_bot: string, _thread: string, text: string) => ({ id: "control-one", role: "user" as const, kind: "text" as const, text, at: 1 }));
+    const f = await fixture({ nativeControl: control });
+    f.state.busy = true;
+    expect((await f.post({ threadId: f.threadId, text: "すべて許可", delivery: "queue" })).status).toBe(202);
+    expect(control).toHaveBeenCalledOnce(); expect(f.state.accepted).toHaveLength(0);
+    const other = f.store.createBot({ name: "Other" });
+    expect((await f.post({ threadId: other.threadId, text: "すべて許可" })).status).toBe(409);
+    expect(control).toHaveBeenCalledOnce();
+  });
+  it("never upgrades a client-only or relayed guarded send into owner consent", async () => {
+    const control = vi.fn();
+    const client = await fixture({ nativeControl: control, scopes: ["client"] });
+    await client.post({ threadId: client.threadId, text: "すべて許可" });
+    expect(control).not.toHaveBeenCalled();
+    const owner = await fixture({ nativeControl: control });
+    await owner.post({ threadId: owner.threadId, text: "すべて許可", sendId: SEND, expectedActiveLeafId: null }, "/guarded");
+    expect(control).not.toHaveBeenCalled();
   });
 });

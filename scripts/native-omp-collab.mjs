@@ -358,7 +358,7 @@ export class NativeOmpCollab extends EventEmitter {
       return wanted.length&&JSON.stringify(paths)===JSON.stringify(wanted);
     });
     if(matches.length!==1||JSON.stringify(matches[0].arguments).length>48000)return undefined;
-    return {name:tool,arguments:matches[0].arguments};
+    return {id:matches[0].id,name:tool,arguments:matches[0].arguments};
   }
   async reviewFiles(question, signal) {
     const cwd=this.binding.cwd, selected=nativeToolPaths(this.pendingOperation(question)?.arguments);

@@ -61,6 +61,7 @@ export interface BotMessageRouteDeps {
     },
     guardedStart?: (currentAtStart: BotRecord) => Promise<DirectSendReceipt>,
   ): Promise<DirectSendReceipt>;
+  nativeApprovalControl?(botId: string, threadId: string, text: string, sendId?: string, sender?: ResolvedSender): Message | undefined;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
     threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean;
@@ -190,6 +191,10 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // acceptDirectSend checks these again; nothing awaits between.
       const refused = directSendRefusal(bot.id, threadId);
       if (refused) return json(res, refused.status, refused.body);
+      if (!guarded && !pressed && !body.replyToId && !body.dataContext && auth.scopes.includes("admin") && (auth.kind === "session" || DESKTOP_MANAGED)) {
+        const control = deps.nativeApprovalControl?.(bot.id, threadId, typed, parseSendId(body.sendId), messageSender(auth));
+        if (control) return json(res, 202, { ok: true, threadId, message: control });
+      }
       const sendId = parseSendId(body.sendId);
       const press = pressed ? prepareWidgetPress(store, threadId, body.widgetAction, sendId) : null;
       if (press && !press.ok) return json(res, press.status, { error: press.error });

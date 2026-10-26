@@ -257,3 +257,14 @@ settings, Google Chat and registered-word settings. All 2,941 existing messages
 retained their IDs, text and JSON; the recovered answer was the only added message.
 The per-thread update time advanced. Evidence and rollback copies are under the
 Git-ignored `.privacy-dev/native-omp-recovery-20261025/` directory.
+
+## Request-scoped owner delegation
+
+The service, HTTP and renderer fixtures cover a standalone owner `すべて許可`
+while a high-risk operation waits, one-operation approval without a native
+session-wide grant, persistent settled execution cards, matched start/end/error
+events, revocation, completion/Stop/restart expiry, and send-ID idempotency.
+Owner controls use the same destination and auth checks as chat; guarded,
+quoted, client-only and tool-originated text cannot grant permission.
+Unmatched execution events leave the receipt unconfirmed. The fake disk-format
+operation is a protocol fixture and never runs a disk command.

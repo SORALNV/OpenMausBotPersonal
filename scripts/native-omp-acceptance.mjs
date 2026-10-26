@@ -20,7 +20,8 @@ const env = { ...verificationServerEnvironment({}, data, port), OMB_PERSONAL_BUI
 const child = spawn(process.execPath, ["--import", join(repo, "server/testing/native-omp-fixture.mjs"), join(repo, "server/index.ts")], { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
 let logs = ""; child.stdout.on("data", chunk => { logs += chunk; }); child.stderr.on("data", chunk => { logs += chunk; });
 const url = `http://127.0.0.1:${port}`;
-const api = (path, options) => request(path, options?.body && typeof options.body !== "string" ? { ...options, body: JSON.stringify(options.body) } : options, url);
+let ownerToken;
+const api = (path, options) => request(path, { ...options, ...(options?.body && typeof options.body !== "string" ? { body: JSON.stringify(options.body) } : {}), ...(ownerToken ? { headers: { ...options?.headers, authorization: `Bearer ${ownerToken}` } } : {}) }, url);
 const tool = (name, args) => handleToolCall(name, args, api);
 const calls = () => existsSync(join(native, "calls.jsonl")) ? readFileSync(join(native, "calls.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
 const until = async (read, accept) => {
@@ -141,6 +142,28 @@ try {
   }
   assert.equal((await messages()).messages.filter(m => m.card?.requestType === "permission").length, developmentCards);
   for (const id of ["fixture-project", "fixture-test", "fixture-lookup", "fixture-smoke", "fixture-edit", "fixture-config", "fixture-status", "fixture-diagnostic"]) assert.equal(calls().filter(call => call.type === "extension_ui_response" && call.id === id && call.value === "Approve").length, 1);
+  const openedPairing = await api("/api/auth/pairing", { method: "POST", body: {} });
+  const pairedOwner = await api("/api/auth/pair", { method: "POST", body: { code: openedPairing.code } });
+  ownerToken = pairedOwner.token;
+  assert.ok(ownerToken);
+  const consentBefore = (await messages()).messages.filter(m => m.nativeOmp?.formatted).length;
+  await send("SYNTHETIC_REVIEW_IMPORTANT");
+  await until(messages, value => value.messages.some(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired));
+  const promptsBeforeConsent = calls().filter(call => call.type === "prompt").length;
+  await send("すべて許可");
+  await settled(consentBefore + 1);
+  const auditState = await until(messages, value => value.messages.some(m => m.card?.requestId?.startsWith("native-omp-audit-") && m.card.subtitle.includes("正常終了を確認")));
+  const audit = auditState.messages.find(m => m.card?.requestId?.startsWith("native-omp-audit-"));
+  assert.equal(audit.card.answered, "allow");
+  assert.equal(audit.turnId, undefined);
+  assert.ok(audit.card.subtitle.includes("mkfs.ext4 /dev/sda"));
+  assert.equal(calls().filter(call => call.type === "prompt").length, promptsBeforeConsent);
+  assert.ok(!calls().some(call => call.value?.includes("for this session")));
+  await send("SYNTHETIC_REVIEW_IMPORTANT");
+  const afterConsent = await until(messages, value => value.messages.some(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired));
+  const pendingAgain = afterConsent.messages.find(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired);
+  await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: pendingAgain.card.requestId, behavior: "deny" } });
+  await settled(consentBefore + 2);
   const created = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   const duplicate = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   assert.equal(created.session.id, duplicate.session.id);
@@ -179,7 +202,7 @@ try {
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
     nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
     namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
-    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
+    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, explicitOwnerConsentWhileBusy: true, highRiskExecutionReceipt: true, consentExpiresAtCompletion: true, noSessionWideGrant: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
 } catch (error) {
   writeFileSync(join(reportDir, "fixture-error.log"), logs, { mode: 0o600 });

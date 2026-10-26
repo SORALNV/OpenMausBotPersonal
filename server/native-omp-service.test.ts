@@ -501,3 +501,61 @@ it("uses a new foldable progress turn for native work continuing after a complet
   f.native.emit("nativeEntry",{entryId:"continuation-final",role:"assistant",text:"追加の確認も完了です。",stopReason:"stop",sessionId:"native-one",own:false,activeOwn:false,snapshot:false});
   expect(f.store.messagesFor(f.bot.threadId).find(m=>m.nativeOmp?.entryId==="continuation-final")).toMatchObject({turnId:progress.turnId,turnTerminal:true});
 });
+
+it("explicit owner consent approves a high-risk tool once and records actual execution", async () => {
+  const f = reviewingFixture();
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
+  Object.assign(f.client, { pendingOperation: () => ({ id: "call-one", name: "bash", arguments: { command: "sudo systemctl restart fixture" } }) });
+  const q = { id: "consented-restart", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: sudo systemctl restart fixture", options: ["Approve", "Approve bash for this session", "Deny"] };
+  f.client.emit("question", q);
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "すべて許可", "consent-send-one");
+  await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith(q.id, { value: "Approve" }));
+  const audit = () => f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestId?.startsWith("native-omp-audit-"))!;
+  expect(audit().card?.answered).toBe("allow");
+  expect(audit().card?.subtitle).toContain("開始は未確認");
+  f.client.emit("nativeTool", { type: "tool_execution_end", toolName: "bash", toolCallId: "unrelated", isError: false });
+  expect(audit().card?.subtitle).toContain("開始は未確認");
+  f.client.emit("nativeTool", { type: "tool_execution_start", toolName: "bash", toolCallId: "call-one" });
+  expect(audit().card?.subtitle).toContain("実行開始を確認");
+  f.client.emit("nativeTool", { type: "tool_execution_end", toolName: "bash", toolCallId: "call-one", isError: true });
+  expect(audit().card?.subtitle).toContain("実行終了（エラー）");
+  expect(f.client.answerUi).toHaveBeenCalledTimes(1);
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "すべて許可", "consent-send-one");
+  expect(f.store.messagesFor(f.bot.threadId).filter(m => m.sendId === "consent-send-one")).toHaveLength(1);
+  expect(() => f.service.ownerConsent(f.bot.id, f.bot.threadId, "取り消し", "consent-send-one")).toThrow(/送信ID/);
+  f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+});
+
+it("revocation restores high-risk questions without revoking the native work", async () => {
+  const f = reviewingFixture(); await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "全部許可します");
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "すべて許可を取り消して");
+  f.client.emit("question", { id: "after-revoke", method: "select", title: "Allow tool: bash", message: "Command: sudo reboot", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission" && !m.card.answered)).toBe(true));
+  expect(f.client.answerUi).not.toHaveBeenCalled(); expect(f.client.stop).not.toHaveBeenCalled();
+  f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+});
+
+it("an idle grant covers only the next request, and cannot survive Stop or restart", async () => {
+  const f = reviewingFixture(); await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
+  f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "全て許可");
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の次の作業");
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledTimes(2));
+  f.client.emit("question", { id: "next-job", method: "select", title: "Allow tool: bash", message: "Command: sudo reboot", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledTimes(1));
+  f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledTimes(2));
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の三番目の作業");
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledTimes(3));
+  f.client.emit("question", { id: "third-job", method: "select", title: "Allow tool: bash", message: "Command: sudo reboot", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId && !m.card.answered && !m.card.expired)).toBe(true));
+  expect(f.client.answerUi).toHaveBeenCalledTimes(1);
+  await f.service.stop(f.bot.threadId); f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledTimes(3));
+  f.service.ownerConsent(f.bot.id, f.bot.threadId, "全て許可"); f.service.close();
+  const restarted = f.create(); restarted.dispatch(restarted.binding(f.bot.id, f.bot.threadId)!, "再起動後の架空作業");
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledTimes(4));
+  f.client.emit("question", { id: "after-restart", method: "select", title: "Allow tool: bash", message: "Command: sudo reboot", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId && !m.card.answered && !m.card.expired)).toBe(true));
+  expect(f.client.answerUi).toHaveBeenCalledTimes(1); f.complete();
+});

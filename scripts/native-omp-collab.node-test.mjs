@@ -205,7 +205,7 @@ test('matches native hashed multi-file edits and never borrows another pending o
  const args={input:'*** Begin Patch\n[requirements.txt#1234]\nPUT >1:\n+httpx==0.28.1\n[computers.toml#5678]\nREM\n*** End Patch'};
  c.frame({t:'entry',entry:{id:'pending-edit',type:'message',message:{role:'assistant',content:[{type:'toolCall',id:'edit-call',name:'edit',arguments:args}]}}});
  const q={title:'Allow tool: edit\nFile: requirements.txt\nFile: computers.toml'};
- assert.deepEqual(c.pendingOperation(q),{name:'edit',arguments:args});
+ assert.deepEqual(c.pendingOperation(q),{id:'edit-call',name:'edit',arguments:args});
  assert.equal(c.pendingOperation({title:'Allow tool: edit\nFile: unrelated.py'}),undefined);
  c.frame({t:'entry',entry:{id:'edit-done',type:'message',message:{role:'toolResult',toolCallId:'edit-call',isError:false,content:[]}}});
  assert.equal(c.pendingOperation(q),undefined);c.close();

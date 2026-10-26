@@ -790,3 +790,15 @@ describe("one approval, one card", () => {
     expect(panel).toContain("{&quot;text&quot;:&quot;hi&quot;}");
   });
 });
+
+
+it("renders a delegated high-risk execution receipt without asking again", () => {
+  const message: Message = { id: "native-audit", at: 1, role: "bot", kind: "options", card: {
+    title: "高リスク操作の実行記録", subtitle: "今回の一括許可によりLunaが許可しました。\n対象: 架空のサービス\n状態: 実行終了（エラー）", options: [],
+    requestId: "native-omp-audit-fixture", requestType: "permission", tool: "OhMyPi/bash", answered: "allow",
+  } };
+  const html = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+  expect(html).toContain("今回の一括許可によりLunaが許可しました");
+  expect(html).toContain("実行終了（エラー）"); expect(html).not.toMatch(/>Allow<|>Deny<|>許可<|>拒否</u);
+  expect(pendingApprovals([message])).toHaveLength(0);
+});

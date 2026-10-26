@@ -15,7 +15,7 @@ NativeOmpTransport.connect = binding => {
   const writes = join(process.env.FAKE_CLAUDE_OMP_ROOT, `review-writes-${createHash("sha256").update(plan.sessionDir).digest("hex")}.json`);
   client.recentFileWrites = () => existsSync(writes) ? JSON.parse(readFileSync(writes, "utf8")) : [];
   client.reviewFiles = async () => client.recentFileWrites();
-  client.pendingOperation = question => question.title === "Allow tool: edit\nFile: tests/test_fixture.py" ? { name: "edit", arguments: { input: "*** Begin Patch\n[tests/test_fixture.py#1234]\nPUT >1:\n+assert True\n*** End Patch" } } : undefined;
+  client.pendingOperation = question => question.message?.includes("Command: mkfs.ext4 /dev/sda") ? { id: "fixture-write", name: "bash", arguments: { command: "mkfs.ext4 /dev/sda" } } : question.title === "Allow tool: edit\nFile: tests/test_fixture.py" ? { name: "edit", arguments: { input: "*** Begin Patch\n[tests/test_fixture.py#1234]\nPUT >1:\n+assert True\n*** End Patch" } } : undefined;
   return client;
 };
 NativeOmpCollab.connect = NativeOmpTransport.connect;
