@@ -13,7 +13,7 @@ export interface NativeOmpBinding {
   model: string;
   /** shared-tui attaches to the standard native TUI; no second session writer is started. */
   connection?: "shared-tui";
-  /** mediator reviews bounded low-risk native requests; important, unknown or failed reviews still require the owner's Allow. */
+  /** mediator asks the owner only for concrete high-risk findings; classifier failures retry without creating approval cards. */
   approvalPolicy?: "human" | "mediator";
   /** Enable OhMyPi's native passive advisor for a managed standard TUI, using the configured worker model. */
   advisor?: boolean;

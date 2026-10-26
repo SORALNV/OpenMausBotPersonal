@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { NativeOmpTransport, nativeOmpCommand, type OmpQuestion, type OmpDestination } from "../scripts/native-omp-transport.mjs";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
 import { NativeOmpPool } from "../scripts/native-omp-pool.mjs";
@@ -11,13 +11,15 @@ import type { RelayTextGenerator } from "./codex-relay-mediator.ts";
 import { presentDirectReply, type ReplyFormatter } from "./direct-thread-bridge.ts";
 import type { Message, Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
-import { nativeReviewCandidate, reviewNativeQuestion } from "./native-omp-review.ts";
+import { classifyNativeRisk, type NativeRiskDecision } from "./native-omp-review.ts";
 import { automaticReportDecline, japaneseNativeQuestion, japanesePermissionDetail, nativeToolApproval } from "./native-omp-question.ts";
 import { questionAnswersByQuestion } from "../shared/ask-question.ts";
 
 type Binding = NativeOmpBinding & OmpDestination;
 type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string; admissionEntryId?: string; failure?: { phase: string; status?: string } };
 type Active = { controller: AbortController; source: Pick<Message, "id" | "text">; client?: NativeOmpTransport; questions: Set<string>; cards: Map<string, { nativeId: string; question: OmpQuestion; card: Message; allowValue?: string; choices?: Map<string, string> }>; stopped: boolean; onSettled?: () => void };
+type NativeProgress = { requestId: string; turnId: string; rowId?: string; completed: string[] };
+type NativeToolProgress = { type: string; toolName?: string; isError?: boolean; args?: unknown };
 const refuse = (message: string) => Object.assign(new Error(message), { status: 409 });
 const validId = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,100}$/u.test(value);
 
@@ -34,6 +36,7 @@ export class NativeOmpService {
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private reconnectAttempts = new Map<string, number>();
   private closing = false;
+  private progress = new Map<string, NativeProgress>();
   private configuring = new Set<string>();
   private readonly pool = new NativeOmpPool();
   private readonly management: NativeOmpSessions;
@@ -165,14 +168,17 @@ export class NativeOmpService {
       const reply = this.store.messagesFor(binding.threadId).find(message => message.nativeOmp?.entryId === recoveredFinal!.entryId);
       if (!reply) return;
       this.store.patchMessage(binding.threadId, reply.id, {
-        requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(),
+        requestMessageId: key, turnId: reply.turnId ?? `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(),
         nativeOmp: { sessionId: recoveredFinal.sessionId, requestId: key, entryId: recoveredFinal.entryId, originalText: recoveredFinal.text },
       });
       receipt.stage = "completed"; this.save(this.ledgerFile, this.ledger);
       this.store.patchMessage(binding.threadId, key, { requestPending: false });
-      recoveredFinal = undefined;
+      recoveredFinal = undefined; this.progress.delete(binding.threadId);
     };
     this.sharedQuestions.set(binding.threadId, approvals);
+    client.on("nativeTool", (event: NativeToolProgress) => {
+      if (!this.closing && this.clients.get(binding.threadId) === client) this.progressTool(binding, approvals.source, event);
+    });
     client.on("question", (question: OmpQuestion) => {
       const receipt = this.ledger[approvals.source.id];
       const recovered = approvals.source.text && receipt && ["submitted", "indeterminate", "completed"].includes(receipt.stage) && !this.store.messagesFor(binding.threadId).find(message => message.id === approvals.source.id)?.requestCancelled ? approvals : undefined;
@@ -198,18 +204,25 @@ export class NativeOmpService {
         const source = current ?? (candidates.length === 1 ? candidates[0] : undefined);
         if (source && !this.ledger[source.id]!.admissionEntryId) { this.ledger[source.id]!.admissionEntryId = event.entryId; this.save(this.ledgerFile, this.ledger); }
         approvals.source = source || { id: `native-host-${binding.threadId}`, text: "" };
+        if (source && !event.snapshot) this.progressStatus(binding, source, "OhMyPiが依頼を受け取り、処理を進めています。");
       }
       if (event.role === "assistant" && event.stopReason === "stop" && approvals.source.text && !this.active.has(binding.threadId)) recoveredFinal = event;
       const seen = this.observed[this.historyKey(binding.threadId, event.sessionId)] ??= [];
       if (seen.includes(event.entryId)) return;
+      if (event.role === "assistant" && event.stopReason !== "stop" && !event.snapshot && approvals.source.text) {
+        const progress = this.progressFor(binding, approvals.source);
+        this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: event.text, requestMessageId: approvals.source.id, turnId: progress.turnId,
+          nativeOmp: { sessionId: event.sessionId, requestId: approvals.source.id, entryId: event.entryId, originalText: event.text } });
+      }
       if (seen.length >= 10_000) { client.close(); this.states.set(binding.threadId, "history-review-required"); return; }
       seen.push(event.entryId);
       const existing = this.store.messagesFor(binding.threadId);
       const oldEnvelope = event.text.match(/"request_id":"([\w-]+)"/u)?.[1];
       const isExisting = existing.some(m => m.nativeOmp?.sessionId === event.sessionId && m.nativeOmp.entryId === event.entryId) || event.snapshot &&
         (existing.some(m => m.nativeOmp?.sessionId === event.sessionId && m.role === (event.role === "user" ? "user" : "bot") && (m.text === event.text || m.nativeOmp.originalText === event.text)) || Boolean(oldEnvelope && this.ledger[oldEnvelope]?.sessionId === event.sessionId));
-      if (!isExisting && !event.own && !(event.activeOwn && event.role === "assistant")) {
+      if (!isExisting && !event.own && !(event.activeOwn && event.role === "assistant") && !(event.role === "assistant" && event.stopReason !== "stop" && !event.snapshot && approvals.source.text)) {
         this.store.appendMessage(binding.threadId, { role: event.role === "user" ? "user" : "bot", kind: "text", text: event.text,
+          ...(event.role === "assistant" && event.stopReason === "stop" && approvals.source.text ? { requestMessageId: approvals.source.id, turnId: this.progress.get(binding.threadId)?.turnId ?? `omp-${approvals.source.id}`, turnTerminal: true } : {}),
           nativeOmp: { sessionId: event.sessionId, requestId: approvals.source.text ? approvals.source.id : `native-entry-${event.entryId}`, entryId: event.entryId, originalText: event.text, ...(approvals.source.text ? {} : { source: "human" as const }) } });
       }
       this.save(this.observedFile, this.observed);
@@ -217,7 +230,7 @@ export class NativeOmpService {
     client.on("nativeState", ({ busy, reconnecting }: { busy: boolean; reconnecting?: boolean }) => {
       if (this.closing || this.clients.get(binding.threadId) !== client) return;
       this.nativeBusy.set(binding.threadId, busy);
-      if (!busy) recoverFinal();
+      if (!busy) { recoverFinal(); this.progress.delete(binding.threadId); }
       if (!this.active.has(binding.threadId)) {
         this.states.set(binding.threadId, reconnecting ? "reconnecting" : busy ? "human-working" : "idle");
         this.store.setTaskActivity(binding.botId, binding.threadId, approvals.cards.size ? "waiting-on-you" : busy ? "working" : "idle");
@@ -331,10 +344,13 @@ export class NativeOmpService {
           for (const [requestId, pending] of job.cards) if (pending.nativeId === id) this.expire(binding.threadId, job, requestId);
         });
       }
-      client.on("nativeTool", (event: { type: string; toolName?: string; isError?: boolean }) => {
-        const name = typeof event.toolName === "string" ? event.toolName.slice(0, 100) : "tool";
-        this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: `Pi / OhMyPi: ${name} ${event.type === "tool_execution_start" ? "実行中" : event.isError ? "失敗" : "完了"}` });
-      });
+      if (binding.connection !== "shared-tui") {
+        client.on("nativeTool", (event: NativeToolProgress) => this.progressTool(binding, job.source, event));
+        client.on("nativeNarration", (event: { text: string }) => {
+          const progress = this.progressFor(binding, job.source);
+          this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: event.text, requestMessageId: key, turnId: progress.turnId });
+        });
+      }
       phase = "initialize";
       const session = await client.initialize();
       phase = "identity";
@@ -350,7 +366,8 @@ export class NativeOmpService {
       const displayText = result.sharedTurn ? "共有ターンの応答です。標準TUIからの入力も同じターンに含まれています。\n\n" + result.text : result.text;
       this.ledger[key].stage = "completed"; this.save(this.ledgerFile, this.ledger);
       const reply = this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: displayText, requestMessageId: key,
-        turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(), nativeOmp: metadata });
+        turnId: this.progress.get(binding.threadId)?.turnId ?? `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(), nativeOmp: metadata });
+      this.progress.delete(binding.threadId);
       this.states.set(binding.threadId, "idle");
       void presentDirectReply(text, displayText, this.formatter, binding.formatter).then(presentation => {
         if (this.store.taskByThread(binding.botId, binding.threadId)) this.store.patchMessage(binding.threadId, reply.id,
@@ -378,7 +395,7 @@ export class NativeOmpService {
       job.controller.abort();
       if (binding.connection !== "shared-tui") job.client?.close();
       if (binding.connection !== "shared-tui") { job.client?.removeAllListeners("question"); job.client?.removeAllListeners("questionCancelled"); }
-      job.client?.removeAllListeners("nativeTool");
+      if (binding.connection !== "shared-tui") { job.client?.removeAllListeners("nativeTool"); job.client?.removeAllListeners("nativeNarration"); }
       for (const id of job.cards.keys()) this.expire(binding.threadId, job, id);
       this.store.patchMessage(binding.threadId, key, { requestPending: false, ...(job.stopped ? { requestCancelled: true } : {}) });
       this.active.delete(binding.threadId);
@@ -386,6 +403,36 @@ export class NativeOmpService {
       if (activity !== "idle") this.states.set(binding.threadId, activity === "working" ? "human-working" : activity);
       this.store.setTaskActivity(binding.botId, binding.threadId, activity); job.onSettled?.(); this.settled();
     }
+  }
+
+  private progressFor(binding: Binding, source: Pick<Message, "id" | "text">): NativeProgress {
+    const current = this.progress.get(binding.threadId);
+    if (current?.requestId === source.id) return current;
+    const settled = this.store.messagesFor(binding.threadId).some(message => message.requestMessageId === source.id && message.turnTerminal);
+    const progress = { requestId: source.id, turnId: `omp-${source.id}${settled ? `-${randomUUID()}` : ""}`, completed: [] };
+    this.progress.set(binding.threadId, progress); return progress;
+  }
+
+  private progressStatus(binding: Binding, source: Pick<Message, "id" | "text">, text: string, completed = false): void {
+    if (!source.text) return;
+    const progress = this.progressFor(binding, source);
+    if (completed) { progress.completed.push(text); progress.completed = progress.completed.slice(-5); }
+    const body = ["Pi / OhMyPi の途中経過", text, ...progress.completed.filter(line => line !== text).map(line => `・${line}`)].join("\n");
+    if (progress.rowId && this.store.patchMessage(binding.threadId, progress.rowId, { text: body })) return;
+    progress.rowId = this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: body, requestMessageId: source.id, turnId: progress.turnId }).id;
+  }
+
+  private progressTool(binding: Binding, source: Pick<Message, "id" | "text">, event: NativeToolProgress): void {
+    const names: Record<string, string> = { read: "ファイル・情報の確認", grep: "内容の検索", glob: "ファイルの検索", bash: "コマンド・検証の実行", write: "ファイルの保存", edit: "ファイルの編集" };
+    const args = event.args && typeof event.args === "object" ? event.args as Record<string, unknown> : {};
+    const path = typeof args.path === "string" && !/^https?:/u.test(args.path) ? basename(args.path).slice(0, 100) : undefined;
+    const command = typeof args.command === "string" ? args.command : "";
+    let name = names[event.toolName ?? ""] ?? "ツールの実行";
+    if (event.toolName === "bash" && /unittest|pytest/u.test(command)) name = "単体テスト";
+    else if (event.toolName === "bash" && /smoke|verify/u.test(command)) name = "動作検証";
+    else if (event.toolName === "bash" && /^curl\s/u.test(command)) name = "APIの疎通確認";
+    if (path) name += `（${path}）`;
+    this.progressStatus(binding, source, `${name}${event.type === "tool_execution_start" ? "を進めています。" : event.isError ? "でエラーが出ました。" : "が終わりました。"}`, event.type === "tool_execution_end");
   }
 
   private async question(binding: Binding, job: Active, question: OmpQuestion, reviewJob?: Active): Promise<void> {
@@ -402,43 +449,58 @@ export class NativeOmpService {
       finally { job.questions.delete(question.id); }
       return;
     }
-    let reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
+    const reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
+    const toolApproval = nativeToolApproval(question);
     const ownerRequestId = job.source.id, reviewRequestId = reviewer?.source.id, reviewText = reviewer?.source.text ?? "";
-    const messages = this.store.messagesFor(binding.threadId);
-    const sourceIndex = reviewRequestId ? messages.findIndex(message => message.id === reviewRequestId) : -1;
-    const sessionId = reviewer && this.ledger[reviewer.source.id]?.sessionId;
-    const priorRequests = sourceIndex < 0 ? [] : messages.slice(0, sourceIndex).filter(message => message.role === "user" && !message.nativeOmp && this.ledger[message.id]?.sessionId === sessionId).slice(-6).map(message => message.text ?? "");
-    const native = job.client as NativeOmpCollab | undefined;
-    const candidate = nativeReviewCandidate(question, binding.cwd);
-    const operation = native?.pendingOperation?.(question);
-    const humanApprovals = sourceIndex < 0 ? [] : messages.slice(sourceIndex + 1).filter(message => message.card?.requestType === "permission" && message.card.answered === "allow" &&
-      (message.requestMessageId ? message.requestMessageId === reviewer!.source.id : !messages.some(next => next.role === "user" && !next.nativeOmp && next.at > messages[sourceIndex]!.at && next.at < message.at)))
-      .map(message => message.card!.subtitle ?? "");
-    const signal = reviewer ? AbortSignal.any([job.controller.signal, reviewer.controller.signal, AbortSignal.timeout(Math.min(binding.mediator.timeoutMs, 60_000))]) : job.controller.signal;
-    let files = native?.recentFileWrites?.();
-    if (reviewer && candidate && native?.reviewFiles && (candidate === "command" || candidate === "workspace-test" || operation?.name === "edit")) {
-      try { files = await native.reviewFiles(question, AbortSignal.any([signal, AbortSignal.timeout(12_000)])); }
-      catch { files = []; }
-    }
-    let allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewText, question, this.generate, signal, { priorRequests, files, operation, humanApprovals }) : false;
-    if (job.source.id !== ownerRequestId || reviewer?.source.id !== reviewRequestId) { allowed = false; reviewer = undefined; }
-    if (!owns() || job.stopped || reviewer?.stopped || !job.questions.has(question.id)) return;
-    if (allowed) {
-      try {
-        job.client!.answerUi(question.id, { value: "Approve" });
-        job.questions.delete(question.id);
-        this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi / OhMyPi: Lunaが低リスク操作を確認し、今回の操作を許可しました" });
+    const current = () => owns() && !job.stopped && !reviewer?.stopped && !job.controller.signal.aborted && !reviewer?.controller.signal.aborted && job.questions.has(question.id) && job.source.id === ownerRequestId && reviewer?.source.id === reviewRequestId;
+    let risk: NativeRiskDecision = { kind: "high-risk", reason: "この接続は本人が許可する設定です。" };
+    if (binding.approvalPolicy === "mediator" && toolApproval) {
+      if (!reviewer) return;
+      const messages = this.store.messagesFor(binding.threadId);
+      const sourceIndex = messages.findIndex(message => message.id === reviewRequestId);
+      const sessionId = this.ledger[reviewer.source.id]?.sessionId;
+      const priorRequests = sourceIndex < 0 ? [] : messages.slice(0, sourceIndex).filter(message => message.role === "user" && !message.nativeOmp && this.ledger[message.id]?.sessionId === sessionId).slice(-8).map(message => message.text ?? "");
+      const humanApprovals = sourceIndex < 0 ? [] : messages.slice(sourceIndex + 1).filter(message => message.card?.requestType === "permission" && message.card.answered === "allow" &&
+        (message.requestMessageId ? message.requestMessageId === reviewRequestId : !messages.some(next => next.role === "user" && !next.nativeOmp && next.at > messages[sourceIndex]!.at && next.at < message.at)))
+        .map(message => message.card!.subtitle ?? "");
+      const native = job.client as NativeOmpCollab | undefined;
+      const signal = AbortSignal.any([job.controller.signal, reviewer.controller.signal]);
+      let attempts = 0;
+      while (current()) {
+        const operation = native?.pendingOperation?.(question);
+        let files = native?.recentFileWrites?.();
+        if (native?.reviewFiles) {
+          try { files = await native.reviewFiles(question, AbortSignal.any([signal, AbortSignal.timeout(12_000)])); }
+          catch { files = []; }
+        }
+        if (!current()) return;
+        risk = await classifyNativeRisk(binding, reviewText, question, this.generate, signal, { priorRequests, files, operation, humanApprovals });
+        if (!current()) return;
+        if (risk.kind !== "retry") break;
+        this.progressStatus(binding, reviewer.source, "高リスク判定を再試行しています。操作はまだ実行していません。");
+        this.states.set(binding.threadId, "working"); this.store.setTaskActivity(binding.botId, binding.threadId, "working");
+        await new Promise<void>(resolve => {
+          const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+          const timer = setTimeout(finish, Math.min(30_000, 1000 * 2 ** Math.min(attempts++, 5))); timer.unref();
+          signal.addEventListener("abort", finish, { once: true }); if (signal.aborted) finish();
+        });
+      }
+      if (!current()) return;
+      if (risk.kind === "proceed") {
+        try {
+          job.client!.answerUi(question.id, { value: "Approve" }); job.questions.delete(question.id);
+          this.progressStatus(binding, reviewer.source, "高リスクは検出されなかったため、操作を進めています。");
+        } catch { job.questions.delete(question.id); }
         return;
-      } catch { job.questions.delete(question.id); return; }
+      }
     }
+    if (!owns() || job.stopped || !job.questions.has(question.id)) return;
+    if (toolApproval && reviewer && risk.kind === "high-risk") this.progressStatus(binding, reviewer.source, `本人の確認を待っています。${risk.reason}`);
     const id = `native-omp-${randomUUID()}`;
     // OhMyPi 18.12.5 emits native tool approvals as select dialogs; never expose its session-wide approval option.
     const allowValue = nativeToolApproval(question) ? "Approve" : undefined;
     const permission = question.method === "confirm" || allowValue !== undefined;
-    const reason = binding.approvalPolicy !== "mediator" ? "この接続は人間が許可する設定です。"
-      : !reviewer ? "今回の依頼との対応を確認できないため、人間への確認が必要です。"
-      : !nativeReviewCandidate(question, binding.cwd) ? "この操作は自動判定の対象外のため、人間への確認が必要です。"
-      : "Lunaが低リスクと確認できなかったため、人間への確認が必要です。";
+    const reason = risk.kind === "high-risk" ? `高リスクのため確認します。${risk.reason}` : "";
     const presentation = allowValue ? { text: `${reason}\n\n${japanesePermissionDetail(question)}`, labels: [], translated: true }
       : await japaneseNativeQuestion(binding, question, this.generate, job.controller.signal);
     if (!owns() || job.stopped || !job.questions.has(question.id)) return;
@@ -500,6 +562,7 @@ export class NativeOmpService {
     }
     for (const [threadId, job] of this.sharedQuestions) { job.stopped = true; job.controller.abort(); for (const id of job.cards.keys()) this.expire(threadId, job, id); }
     for (const client of this.clients.values()) client.close(); this.clients.clear(); this.sharedQuestions.clear();
+    this.progress.clear();
     this.pool.close();
   }
 

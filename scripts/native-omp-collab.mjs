@@ -472,6 +472,7 @@ export class NativeOmpCollab extends EventEmitter {
     if (turn?.admitted && msg?.role==='assistant') {
       if (['error','aborted'].includes(msg.stopReason)) { this.fail('Native shared turn failed; do not replay'); return; }
       if(text)turn.texts.push(text);
+      if(text && msg.stopReason==='stop')turn.finalText=text;
       if (snapshot && msg.stopReason === 'stop') turn.ended=true;
     }
     this.emit('nativeEntry',{entryId:entry.id,role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted,stopReason:msg?.stopReason});
@@ -481,7 +482,7 @@ export class NativeOmpCollab extends EventEmitter {
     if (this.reconnecting || !turn?.admitted || !turn.ended || !this.idle() || !turn.texts.length) return;
     clearTimeout(turn.timer); this.turn=null;
     this.receipts.get(turn.id).stage='completed';
-    turn.resolve({requestId:turn.id,sessionId:this.session.sessionId,sessionFile:this.session.sessionFile,text:turn.texts.join('\n\n'),sharedTurn:turn.contended});
+    turn.resolve({requestId:turn.id,sessionId:this.session.sessionId,sessionFile:this.session.sessionFile,text:turn.finalText??turn.texts.join('\n\n'),sharedTurn:turn.contended});
   }
   answerUi(id,answer) {
     const r=this.ui.get(id); if(!r)throw Error('Native question already answered');

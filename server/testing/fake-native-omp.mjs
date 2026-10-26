@@ -15,7 +15,7 @@ const output = frame => process.stdout.write(JSON.stringify(frame) + "\n");
 const answer = frame => {
   const history = existsSync(historyFile) ? JSON.parse(readFileSync(historyFile, "utf8")) : [];
   history.push(frame.message); writeFileSync(historyFile, JSON.stringify(history));
-  output({ type: "message_end", messageId: frame.id, message: { role: "assistant", content: [{ type: "text", text: "架空の元回答: " + frame.message }] } });
+  output({ type: "message_end", messageId: frame.id, message: { role: "assistant", content: [{ type: "text", text: "架空の元回答: " + frame.message }], stopReason: "stop" } });
   output({ type: "prompt_result", id: frame.id, status: "completed", sessionSettled: true });
 };
 let active;
@@ -43,6 +43,12 @@ lines.on("line", line => {
     else if (frame.message.includes("SYNTHETIC_APPROVAL")) output({ type: "extension_ui_request", id: "fixture-permission", method: "confirm", title: "Synthetic permission", message: "Create a fixture-only marker?" });
     else if (frame.message.includes("SYNTHETIC_QUESTION")) output({ type: "extension_ui_request", id: "fixture-question", method: "select", title: "Choose a fixture", options: ["Alpha", "Beta"] });
     else if (frame.message.includes("SYNTHETIC_REPORT")) output({ type: "extension_ui_request", id: "fixture-report", method: "select", title: "👻 Your agent swears one of its tools is haunted.\nCall in the devs for an exorcism? Tool name + the spooky bit, nothing personal.", options: ["Yes", "No"] });
+    else if (frame.message.includes("SYNTHETIC_PROGRESS")) {
+      output({ type: "tool_execution_start", toolName: "read", toolCallId: "progress-read" });
+      output({ type: "message_end", messageId: "progress-commentary", message: { role: "assistant", content: [{ type: "thinking", thinking: "SYNTHETIC_PRIVATE_REASONING" }, { type: "text", text: "架空の設定を確認しました。続いてテストします。" }], stopReason: "toolUse" } });
+      setTimeout(() => output({ type: "tool_execution_end", toolName: "read", toolCallId: "progress-read", isError: false }), 200);
+      setTimeout(() => answer(frame), 500);
+    }
     else if (frame.message.includes("SYNTHETIC_HOLD")) { /* Abort is the only synthetic completion. */ }
     else if (frame.message.includes("SYNTHETIC_FAILURE")) output({ type: "prompt_result", id: frame.id, status: "error", sessionSettled: true });
     else answer(frame);

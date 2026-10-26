@@ -233,3 +233,12 @@ test('remote review source reader refuses symlinks, private files, escapes, over
   assert.deepEqual(result,[{path:join(cwd,'test_good.py'),content:'assert True'}]);
  } finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('public native narration is observable but the final answer excludes intermediate narration and hidden thinking',async()=>{
+ const {client:c}=peer();const entries=[];c.on('nativeEntry',e=>entries.push(e));
+ const result=c.submit('progress-turn','Inspect and test');await pause(270);c.frame(own('progress-admitted','Inspect and test'));
+ c.frame({t:'entry',entry:{id:'progress-comment',type:'message',message:{role:'assistant',content:[{type:'thinking',thinking:'PRIVATE_REASONING_NOT_FOR_DISPLAY'},{type:'text',text:'接続を確認し、次にテストします。'}],stopReason:'toolUse'}}});
+ assert.equal(entries.at(-1).text,'接続を確認し、次にテストします。');
+ c.frame(answer('progress-final','検証完了です。'));end(c);
+ assert.equal((await result).text,'検証完了です。');assert.ok(!JSON.stringify(entries).includes('PRIVATE_REASONING_NOT_FOR_DISPLAY'));c.close();
+});

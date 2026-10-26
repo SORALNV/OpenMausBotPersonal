@@ -93,17 +93,22 @@ confirmation/select approvals, questions, Stop, provider failure and an
 unrelated ordinary Bot. No real account or Raspberry Pi is contacted by it.
 The service tests additionally prove restart receipts prevent replay and that
 Stop settles a preparation model even if it ignores its AbortSignal.
-Development approval fixtures cover source/config saves, native hashed
-multi-file edits, `.mcp.json`, local API checks, Python diagnostics, unittest and
-smoke scripts without new human cards. The native patch must match the edit
-dialog exactly; a missing or ambiguous operation retains confirmation. Source
-is refreshed after edits, bounded to the destination workspace. Reader tests
-cover symlink/escape/private-file/oversize/FIFO rejection. Service tests prove
-same-request human approval context is retained and a human takeover during
-review prevents automatic authorization. Native safety reasons, privilege and
-service changes, unknown execution effects and failed reviews retain cards.
-The tool-free live Luna regression uses fictional NAS code and executes no
-tools; it separates saving network code from actually invoking a device.
+The risk fixtures prove that unlisted commands, outside-workspace edits,
+incomplete evidence and unknown file formats do not generate owner cards
+without a concrete high-risk finding. Positive high-risk findings include a
+specific Japanese reason. Privilege, destructive effects and credential
+exposure cannot be suppressed by a no-risk model reply. Failed/invalid/late
+classifications retry the existing operation without execution or a permission
+card. Shared human takeover revokes pending model decisions without lending
+BOT authorization to that new input.
+
+Progress fixtures cover tool start/end status before the final answer, public
+assistant narration, reconnection after an interrupted job and native work
+continuing after a completed request. Intermediate messages and the final
+answer share a display turn and the existing renderer folds the intermediate
+messages on completion. The transport excludes hidden thinking and keeps the
+explicit final answer separate from interim narration. No live user prompt is
+created by these fixtures.
 
 Shared approval checks also cover questions arriving outside an OMB turn,
 startup replay of native pending questions, and approvals after a failed turn.

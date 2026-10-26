@@ -7,7 +7,7 @@ if (!home?.includes("omb-omp-fixture-") || process.argv[2] !== "exec") throw new
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
 appendFileSync(join(home, "mediator.jsonl"), JSON.stringify({ prompt }) + "\n");
-const text = prompt.includes("承認判定器") ? '{"decision":"allow","importance":"low"}'
+const text = prompt.includes("高リスク検出器") ? '{"highRisk":false}'
   : prompt.includes("日本語翻訳器") ? JSON.stringify({ question: "架空の項目を選んでください", options: prompt.includes("Choose a fixture") ? ["アルファ", "ベータ"] : [] })
   : prompt.includes("セッション管理ルーター") ? (() => {
     const input = JSON.parse(prompt.slice(prompt.lastIndexOf('\n') + 1));

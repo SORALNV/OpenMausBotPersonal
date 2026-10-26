@@ -85,37 +85,45 @@ masking when that setting is OFF.
 
 ## Mediated approvals and native review
 
-The owner can set `approvalPolicy: "mediator"` on a Pi binding. OhMyPi keeps
-its per-operation approval gate. OMB's tool-free mediator reviews the actual
-operation against the current request, earlier requests from the same native
-session, and approvals already given for that request. Routine source/config
-saves, native hashed multi-file edits, local API status checks, tests, shell
-pipelines and quoted Python diagnostics are review candidates. Saving code is
-reviewed separately from executing it. Registering a known workspace program
-in `.mcp.json` is eligible; changing credentials or registering unknown code is
-not treated as routine just because it uses that filename.
+The owner can set `approvalPolicy: "mediator"` on a Pi binding. OMB detects
+high-risk operations, rather than proving each operation belongs to a low-risk
+allowlist. A valid `highRisk: false` verdict proceeds through the native
+one-operation Approve. A concrete `highRisk: true` finding creates a Japanese
+owner card identifying the affected target and significant effect. Native
+safety reasons, privilege/disk changes, service/network changes, major deletion
+and credential exposure have explicit high-risk checks. Default bindings still
+use `human`; the high-risk-only mode is the owner's opt-in mediator policy.
 
-For native `File:` edit dialogs, OMB requires a unique matching unresolved
-native tool call and includes its full bounded patch. Before reviewing an
-execution or edit it reads the recent workspace source paths over SSH, rather
-than relying on the last complete write before an edit. The reader is bounded
-to twelve regular UTF-8 files, 32 KB per file and 96 KB total. It rejects path
-escapes, symlinks, private credential paths, oversized files and nonregular
-files. Reading this evidence neither executes the project nor submits a
-native prompt. Concurrent filesystem changes remain part of the destination's
-trust boundary; this is not an OS sandbox or a proof of no side effects.
+Unlisted commands, unfamiliar file extensions, paths outside the workspace,
+missing complete source and incomplete patches are not themselves high-risk
+findings. The tool-free classifier uses the actual native request, matching
+operation metadata when available, fresh bounded source evidence, the user's
+purpose and earlier approvals for the same request. Its only supported verdicts
+are `{"highRisk":false}` or `{"highRisk":true,"reason":"具体的な危険の説明"}`.
+Legacy allow/low replies, invalid replies, model failure and timeout produce no
+approval and no owner permission card. The same pending operation is retried
+with backoff; cancellation, native answers, human takeover and shutdown stop
+that review. This does not grant session-wide approval or replay a prompt.
 
-Only a valid `allow/low` result approves the current native operation once.
-Privileged operations, installation, service/network changes, broad deletion,
-credential exposure and native safety reasons retain human confirmation.
-Unknown effects, missing required source and failed or late reviews also retain
-confirmation. A device action is eligible only within the user's requested or
-already-approved target and effect; permission does not expand to another
-machine or secret transfer. Review calls have no tools, use the configured
-mediator, and allow up to 45 seconds within its configured timeout. The same
-request's human approvals are context, not a blanket session permission.
-Human takeover during an in-flight review revokes the automatic decision.
-Defaults remain `human` for bindings that have not opted in.
+Before review, recent workspace source can be read over SSH, bounded to twelve
+regular UTF-8 files, 32 KB each and 96 KB total. The reader rejects symlinks,
+private credential paths, escapes, oversized and nonregular files. These are
+limits on evidence collection, not a file/command permission allowlist.
+Automatic risk classification is a model judgment, not an OS sandbox or a
+proof of no harmful effects. Concurrent source changes remain possible.
+
+### In-progress display
+
+The connector mirrors public native assistant narration and observed tool
+start/end activity into ordinary OMB turn narration. One rolling status row
+shows the current operation and recent completed steps. Shared listeners stay
+attached after a local job timeout/reconnect so native continuation is visible.
+The final native answer is the turn's terminal message; standard chat rendering
+folds the intermediate narration on completion. Native thinking content is
+excluded. Native background continuation after an already completed request
+gets a separate display turn without creating a new OMB thread or native
+session. Phone clients receive the same existing message/turn fields; a
+physical iPhone rendering check is separate from protocol verification.
 
 Native `attribution: agent` background results do not replace the current
 user's review context or impersonate human input. A matching admitted receipt

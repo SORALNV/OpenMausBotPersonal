@@ -242,12 +242,14 @@ export class NativeOmpTransport extends EventEmitter {
       return;
     }
     if (["host_tool_call", "host_uri_request"].includes(frame.type)) throw new Error("Mac host tools are unavailable to remote OhMyPi");
-    if (["tool_execution_start", "tool_execution_end"].includes(frame.type)) this.emit("nativeTool", { type: frame.type, toolName: frame.toolName, toolCallId: frame.toolCallId, isError: frame.isError });
+    if (["tool_execution_start", "tool_execution_end"].includes(frame.type)) this.emit("nativeTool", { type: frame.type, toolName: frame.toolName, toolCallId: frame.toolCallId, isError: frame.isError, args: frame.args });
     const turn = this.turn;
     if (!turn) return;
     if (frame.type === "message_end" && frame.message?.role === "assistant") {
       const text = (frame.message.content ?? []).filter(item => item.type === "text").map(item => item.text).join("");
       if (text && !turn.messages.has(frame.messageId ?? text)) { turn.texts.push(text); turn.messages.add(frame.messageId ?? text); }
+      if (text && frame.message.stopReason === "toolUse") this.emit("nativeNarration", { text });
+      if (text && frame.message.stopReason === "stop") turn.finalText = text;
     }
     if (frame.type === "prompt_result" && frame.id === turn.id) {
       if (frame.status === "aborted") turn.aborted = true;
@@ -259,7 +261,7 @@ export class NativeOmpTransport extends EventEmitter {
     if (turn.result && turn.settled) {
       if (!turn.texts.length) { this.fail(new Error("Native turn returned no assistant text")); return; }
       this.turn = null;
-      turn.pending.resolve({ requestId: turn.id, sessionId: this.session.sessionId, sessionFile: this.session.sessionFile, text: turn.texts.join("\n\n") });
+      turn.pending.resolve({ requestId: turn.id, sessionId: this.session.sessionId, sessionFile: this.session.sessionFile, text: turn.finalText ?? turn.texts.join("\n\n") });
     }
   }
 }

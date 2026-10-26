@@ -122,7 +122,9 @@ try {
   const cardsBefore = (await messages()).messages.filter(m => m.card?.requestType === "permission").length;
   await send("SYNTHETIC_REVIEW_INSPECTION"); await settled(beforeReview + 1);
   assert.equal((await messages()).messages.filter(m => m.card?.requestType === "permission").length, cardsBefore);
-  assert.ok((await messages()).messages.some(m => m.kind === "activity" && m.text?.includes("Lunaが低リスク操作")));
+  const inspected = (await messages()).messages;
+  const inspectionRequest = inspected.find(m => m.role === "user" && m.text?.includes("SYNTHETIC_REVIEW_INSPECTION"));
+  assert.ok(inspected.some(m => m.requestMessageId === inspectionRequest.id && m.kind === "text" && m.text?.includes("途中経過")));
   const responseCount = calls().filter(c => c.type === "extension_ui_response").length;
   await send("SYNTHETIC_REVIEW_IMPORTANT");
   const importantState = await until(messages, value => value.messages.some(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired));
@@ -164,10 +166,20 @@ try {
   await until(messages, value => value.messages.some(m => m.role === "user" && m.text?.includes("FIXTURE_BAD_SESSION_PLAN") && !m.requestPending));
   assert.equal(calls().filter(call => call.type === "prompt").length, beforeMalformed);
   assert.ok(!calls().some(call => call.type === "prompt" && call.message?.includes("FIXTURE_CREATE_AND_LINK")));
+  await send("SYNTHETIC_PROGRESS");
+  const liveProgress = await until(messages, value => value.messages.some(message => message.text?.includes("架空の設定を確認しました。続いてテストします。") && message.turnId && !message.turnTerminal));
+  const progressLine = liveProgress.messages.find(message => message.text?.includes("架空の設定を確認しました。続いてテストします。"));
+  assert.ok(liveProgress.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.text?.includes("途中経過")));
+  assert.ok(!liveProgress.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal));
+  const progressDone = await until(messages, value => value.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal));
+  const terminal = progressDone.messages.find(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal);
+  assert.equal(terminal.turnId, progressLine.turnId);
+  assert.ok(!terminal.nativeOmp.originalText.includes("架空の設定を確認しました"));
+  assert.ok(!JSON.stringify(progressDone).includes("SYNTHETIC_PRIVATE_REASONING"));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
     nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
     namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
-    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, testedAt: new Date().toISOString() };
+    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
 } catch (error) {
   writeFileSync(join(reportDir, "fixture-error.log"), logs, { mode: 0o600 });

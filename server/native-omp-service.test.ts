@@ -174,10 +174,10 @@ function reviewingFixture() {
   return { ...f, service, client, complete: () => finish({ requestId: "fixture", sessionId: "native-one", sessionFile: "/fixture/session", text: "架空の完了" }) };
 }
 
-it("mediator allows a low-risk native inspection once without an owner card", async () => {
+it("mediator proceeds when no high risk is detected without an owner card", async () => {
   const f = reviewingFixture();
   await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.client.emit("question", { id: "inspection", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: lsblk -o NAME,SIZE", options: ["Approve", "Approve bash for this session", "Deny"] });
   await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("inspection", { value: "Approve" }));
   expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.requestType === "permission")).toHaveLength(0);
@@ -189,7 +189,7 @@ it("mediator allows a low-risk native inspection once without an owner card", as
 it("disk formatting still needs a human even with an always-allow model", async () => {
   const f = reviewingFixture();
   await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.client.emit("question", { id: "format", method: "select", title: "Allow tool: bash", message: "Allow tool: bash\nCommand: mkfs.ext4 /dev/sda", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
   expect(f.client.answerUi).not.toHaveBeenCalled();
@@ -207,7 +207,7 @@ it("a late review cannot answer a question already settled by the human TUI", as
   f.generate.mockImplementation(() => new Promise<string>(resolve => { finishReview = resolve; }));
   f.client.emit("question", { id: "cancelled", method: "select", title: "Allow tool: bash", message: "Command: lsblk", options: ["Approve", "Deny"] });
   f.client.emit("questionCancelled", "cancelled");
-  finishReview('{"decision":"allow","importance":"low"}');
+  finishReview('{"highRisk":false}');
   await new Promise(resolve => setTimeout(resolve, 10));
   expect(f.client.answerUi).not.toHaveBeenCalled();
   expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false);
@@ -326,12 +326,13 @@ it("recovers the review context from admitted history after a failed BOT turn, b
   service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "ディスクの容量を調べて");
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry", { entryId: "admission", role: "user", text: "ディスクの容量を調べて", sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.native.emit("question", { id: "inspection-after-failure", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("inspection-after-failure", { value: "Approve" }));
   f.native.emit("nativeEntry", { entryId: "human", role: "user", text: "人間から別の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
   f.native.emit("question", { id: "human-inspection", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
-  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  await new Promise(resolve => setImmediate(resolve));
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false);
   expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
 });
 
@@ -373,12 +374,13 @@ it("restores completed BOT authorization for native background work after restar
   const restart = f.create(); restart.start();
   f.native.emit("nativeEntry", { entryId: "completed-own", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: false, snapshot: true });
   f.native.emit("nativeEntry", { entryId: "native-background", role: "system", text: "Background completed", sessionId: "native-one", own: false, activeOwn: false, snapshot: true });
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.native.emit("question", { id: "background-test", method: "select", title: "Allow tool: bash\nCommand: .venv/bin/python -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("background-test", { value: "Approve" }));
   f.native.emit("nativeEntry", { entryId: "next-human", role: "user", text: "別の人間の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
   f.native.emit("question", { id: "human-next", method: "select", title: "Allow tool: bash\nCommand: command -v python3", options: ["Approve", "Deny"] });
-  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.subtitle?.includes("依頼との対応を確認できない"))).toBe(true));
+  await new Promise(resolve => setImmediate(resolve));
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false);
   expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
 });
 
@@ -397,9 +399,9 @@ it("an active OMB request never authorizes a new human native turn", async () =>
   await vi.waitFor(() => expect(f.native.submit).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry", { entryId: "active-admission", role: "user", text: source.text, sessionId: "native-one", own: true, activeOwn: true, snapshot: false });
   f.native.emit("nativeEntry", { entryId: "active-human", role: "user", text: "新しい人間の依頼", sessionId: "native-one", own: false, activeOwn: true, snapshot: false });
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.native.emit("question", { id: "human-during-bot", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
-  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true)); expect(f.native.answerUi).not.toHaveBeenCalled();
+  await new Promise(resolve => setImmediate(resolve)); expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false); expect(f.native.answerUi).not.toHaveBeenCalled();
 });
 
 it("reads fresh edited source before reviewing execution and carries same-request human approvals", async () => {
@@ -409,13 +411,13 @@ it("reads fresh edited source before reviewing execution and carries same-reques
     recentFileWrites: vi.fn(() => [{ path: "tests/test_fixture.py", content: "stale before edit" }]),
     reviewFiles: vi.fn(async () => [{ path: "tests/test_fixture.py", content: "fresh after native edit" }]),
   });
-  f.generate.mockResolvedValue('{"decision":"ask","importance":"high"}');
+  f.generate.mockResolvedValue('{"highRisk":true,"reason":"重要な対象の変更が含まれます。"}');
   f.client.emit("question", { id: "first", method: "select", title: "Allow tool: bash\nCommand: lsblk -o NAME,SIZE", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId)).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestId)!;
   expect(card.requestMessageId).toBeTruthy();
   expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
-  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.generate.mockResolvedValue('{"highRisk":false}');
   f.client.emit("question", { id: "tests", method: "select", title: "Allow tool: bash\nCommand: python3 -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("tests", { value: "Approve" }));
   expect(f.generate).toHaveBeenLastCalledWith("fixture", "fixture-small", expect.stringContaining("fresh after native edit"), expect.any(AbortSignal));
@@ -436,7 +438,66 @@ it("revokes an in-flight model approval when a human takes over the shared TUI",
   f.native.emit("question",{id:"in-flight",method:"select",title:"Allow tool: bash\nCommand: lsblk",options:["Approve","Deny"]});
   await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
   f.native.emit("nativeEntry",{entryId:"takeover",role:"user",text:"人間による別作業",sessionId:"native-one",own:false,snapshot:false});
-  finish('{"decision":"allow","importance":"low"}');
-  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.subtitle?.includes("依頼との対応を確認できない"))).toBe(true));
+  finish('{"highRisk":false}');
+  await new Promise(resolve => setImmediate(resolve));
+  expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType === "permission")).toBe(false);
   expect(f.native.answerUi).not.toHaveBeenCalled();
+});
+
+it("does not require positive low-risk proof for an unfamiliar command or outside-workspace edit", async () => {
+  const f=reviewingFixture();await vi.waitFor(()=>expect(f.client.submit).toHaveBeenCalledOnce());
+  f.generate.mockResolvedValue('{"highRisk":false}');
+  for(const [id,title]of [["unfamiliar","Allow tool: bash\nCommand: arbitrary-project-tool verify --format custom"],["outside-edit","Allow tool: edit\nFile: /home/rasp/agent-home/docs/guide.md"]]) {
+    f.client.emit("question",{id,method:"select",title,options:["Approve","Deny"]});
+    await vi.waitFor(()=>expect(f.client.answerUi).toHaveBeenCalledWith(id,{value:"Approve"}));
+  }
+  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.card?.requestType==="permission")).toHaveLength(0);f.complete();
+});
+
+it("retries classifier failures without turning them into owner approval requests or executing the action", async () => {
+  const f=reviewingFixture();await vi.waitFor(()=>expect(f.client.submit).toHaveBeenCalledOnce());
+  f.generate.mockRejectedValueOnce(new Error("temporary outage")).mockResolvedValue('{"highRisk":false}');
+  f.client.emit("question",{id:"retry-then-proceed",method:"select",title:"Allow tool: bash\nCommand: make verify",options:["Approve","Deny"]});
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.text?.includes("高リスク判定を再試行"))).toBe(true));
+  expect(f.client.answerUi).not.toHaveBeenCalled();expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType==="permission")).toBe(false);
+  await vi.waitFor(()=>expect(f.client.answerUi).toHaveBeenCalledWith("retry-then-proceed",{value:"Approve"}),{timeout:3500});
+  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.text?.includes("途中経過"))).toHaveLength(1);f.complete();
+});
+
+it("shows an approval card only for a concrete high-risk finding and includes its reason", async () => {
+  const f=reviewingFixture();await vi.waitFor(()=>expect(f.client.submit).toHaveBeenCalledOnce());
+  f.generate.mockResolvedValue('{"highRisk":true,"reason":"この操作はNASの重要なバックアップを削除します。"}');
+  f.client.emit("question",{id:"concrete-risk",method:"select",title:"Allow tool: bash\nCommand: project-storage-tool apply",options:["Approve","Deny"]});
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.subtitle?.includes("NASの重要なバックアップを削除"))).toBe(true));
+  expect(f.client.answerUi).not.toHaveBeenCalled();f.complete();
+});
+
+it("keeps native progress after a shared job disconnect and folds it into the recovered final turn", async () => {
+  const f=sharedFixture();vi.mocked(f.native.submit).mockRejectedValue(new Error("synthetic disconnect"));
+  const source=f.service.dispatch(f.service.binding(f.bot.id,f.bot.threadId)!,"接続を確認してテストして");
+  await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry",{entryId:"progress-own",role:"user",text:source.text,sessionId:"native-one",own:true,activeOwn:false,snapshot:true});
+  f.native.emit("nativeTool",{type:"tool_execution_start",toolName:"read"});
+  const progress=f.store.messagesFor(f.bot.threadId).find(m=>m.text?.includes("途中経過"))!;
+  expect(progress.text).toContain("ファイル・情報の確認を進めています");expect(progress.turnTerminal).not.toBe(true);
+  f.native.emit("nativeTool",{type:"tool_execution_end",toolName:"read",isError:false});
+  expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===progress.id)?.text).toContain("が終わりました");
+  f.native.emit("nativeEntry",{entryId:"native-narration",role:"assistant",text:"疎通を確認しました。次にテストします。",stopReason:"toolUse",sessionId:"native-one",own:false,activeOwn:false,snapshot:false});
+  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.nativeOmp?.entryId==="native-narration")).toHaveLength(1);
+  f.native.emit("nativeEntry",{entryId:"native-final",role:"assistant",text:"検証が完了しました。",stopReason:"stop",sessionId:"native-one",own:false,activeOwn:false,snapshot:false});
+  f.native.emit("nativeState",{busy:false});
+  const final=f.store.messagesFor(f.bot.threadId).find(m=>m.nativeOmp?.entryId==="native-final")!;
+  expect(final).toMatchObject({turnId:progress.turnId,turnTerminal:true,turnSucceeded:true,requestMessageId:source.id});
+  expect(f.native.submit).toHaveBeenCalledOnce();
+});
+
+it("uses a new foldable progress turn for native work continuing after a completed request", async () => {
+  const f=sharedFixture();const source=f.service.dispatch(f.service.binding(f.bot.id,f.bot.threadId)!,"確認して");
+  await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry",{entryId:"continuation-own",role:"user",text:source.text,sessionId:"native-one",own:true,activeOwn:false,snapshot:true});
+  f.native.emit("nativeTool",{type:"tool_execution_start",toolName:"bash"});
+  const progress=f.store.messagesFor(f.bot.threadId).find(m=>m.text?.includes("途中経過"))!;
+  expect(progress.turnId).not.toBe(`omp-${source.id}`);
+  f.native.emit("nativeEntry",{entryId:"continuation-final",role:"assistant",text:"追加の確認も完了です。",stopReason:"stop",sessionId:"native-one",own:false,activeOwn:false,snapshot:false});
+  expect(f.store.messagesFor(f.bot.threadId).find(m=>m.nativeOmp?.entryId==="continuation-final")).toMatchObject({turnId:progress.turnId,turnTerminal:true});
 });
