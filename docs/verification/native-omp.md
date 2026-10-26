@@ -97,6 +97,10 @@ Development approval fixtures cover relative source/test/configuration saves,
 `command -v` and a Python unittest run with saved-source evidence without new
 human cards. Unsupported commands, filesystem escapes, URI targets, native
 risk reasons, missing test source and important operations retain human cards.
+Python `test_*.py`, `smoke_*.py` and `_smoke_*.py` scripts inside the workspace
+also require the exact saved script body before model review. Extra arguments,
+unknown application scripts and code with external or important effects retain
+human confirmation; a test-like filename alone never grants execution.
 Transport/service cases cover successful-write evidence, its invalidation after
 edit/failure, native agent background attribution, restored authorization after
 restart, refusal to lend that authorization to human input, and detach without

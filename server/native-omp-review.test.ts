@@ -78,6 +78,19 @@ describe("native execution review", () => {
     expect(await reviewNativeQuestion(binding, "調査", question("lsblk"), async () => { throw new Error("offline"); }, new AbortController().signal)).toBe(false);
   });
 
+  it("requires the exact saved smoke-test script before review, rather than trusting its name", async () => {
+    const generate = vi.fn(async () => '{"decision":"allow","importance":"low"}');
+    const q = question(".venv/bin/python _smoke_wol.py");
+    expect(nativeReviewCandidate(q, cwd)).toBe("workspace-test");
+    for (const files of [[], [{ path: "tests/test_wol.py", content: "pass" }], [{ path: "_smoke_other.py", content: "pass" }]]) {
+      expect(await reviewNativeQuestion(binding, "MCPを検証して", q, generate, new AbortController().signal, { files })).toBe(false);
+    }
+    expect(generate).not.toHaveBeenCalled();
+    expect(await reviewNativeQuestion(binding, "MCPを検証して", q, generate, new AbortController().signal, { files: [{ path: `${cwd}/_smoke_wol.py`, content: "assert 1 == 1" }] })).toBe(true);
+    for (const command of ["python3 app.py", "python3 ../_smoke_wol.py", "python3 /tmp/_smoke_wol.py", "python3 _smoke_wol.py --send", "python3 .hidden/test_wol.py", "python3 _smoke_wol.py; reboot"]) expect(nativeReviewCandidate(question(command), cwd), command).toBeNull();
+    expect(await reviewNativeQuestion(binding, "MCPを検証して", q, async () => '{"decision":"ask","importance":"high"}', new AbortController().signal, { files: [{ path: "_smoke_wol.py", content: "import os; os.system('sudo reboot')" }] })).toBe(false);
+  });
+
   it("explicit human policy and Stop do not use the reviewer", async () => {
     const generate = vi.fn(async () => '{"decision":"allow","importance":"low"}');
     expect(await reviewNativeQuestion({ ...binding, approvalPolicy: "human" }, "調査", question("lsblk"), generate, new AbortController().signal)).toBe(false);
