@@ -85,32 +85,37 @@ masking when that setting is OFF.
 
 ## Mediated approvals and native review
 
-The owner can set `approvalPolicy: "mediator"` on a Pi binding. The native
-session keeps its approval gate; OMB asks the binding's tool-free mediator
-model to judge eligible inspection commands, ordinary project source/configuration
-saves and supported local Python unittest runs inside its workspace. Relative
-project paths and `command -v` lookups are candidates. A test run additionally
-requires recent successful native writes containing test source; failed writes
-and subsequent edits invalidate that source evidence. The reviewer receives
-bounded earlier user requests from the same native session to interpret short
-follow-ups. Only a valid low-importance allow verdict answers the
-current native question once. A native safety reason, an important or unknown
-command, a sensitive/executable/configuration target, a failed/late review, or
-a high-importance verdict retains the owner's Allow/Deny card. Defaults remain
-`human` for bindings that have not opted in.
+The owner can set `approvalPolicy: "mediator"` on a Pi binding. OhMyPi keeps
+its per-operation approval gate. OMB's tool-free mediator reviews the actual
+operation against the current request, earlier requests from the same native
+session, and approvals already given for that request. Routine source/config
+saves, native hashed multi-file edits, local API status checks, tests, shell
+pipelines and quoted Python diagnostics are review candidates. Saving code is
+reviewed separately from executing it. Registering a known workspace program
+in `.mcp.json` is eligible; changing credentials or registering unknown code is
+not treated as routine just because it uses that filename.
 
-The deterministic checks limit automatic shell review to supported literal
-inspection commands and a limited Python unittest invocation. Arbitrary Python
-scripts, shell syntax, dependency installation, service changes and operations
-outside the workspace retain human confirmation. They are approval checks, not an operating-system sandbox
-or a complete proof of a command's effects. Existing PATH, native tool behavior
-and filesystem links remain part of the destination's trust boundary. The model
-cannot grant session-wide permission or approve a native question already
-answered in the human TUI. Review requests use the same authenticated mediator
-model as the binding, in a tool-free independent call, bounded to 20 seconds.
-Recent write evidence is native history, not a fresh filesystem attestation;
-the model's judgment does not prove that a test has no side effects. Unknown
-test code, unsafe contents or an unsuccessful review retain human confirmation.
+For native `File:` edit dialogs, OMB requires a unique matching unresolved
+native tool call and includes its full bounded patch. Before reviewing an
+execution or edit it reads the recent workspace source paths over SSH, rather
+than relying on the last complete write before an edit. The reader is bounded
+to twelve regular UTF-8 files, 32 KB per file and 96 KB total. It rejects path
+escapes, symlinks, private credential paths, oversized files and nonregular
+files. Reading this evidence neither executes the project nor submits a
+native prompt. Concurrent filesystem changes remain part of the destination's
+trust boundary; this is not an OS sandbox or a proof of no side effects.
+
+Only a valid `allow/low` result approves the current native operation once.
+Privileged operations, installation, service/network changes, broad deletion,
+credential exposure and native safety reasons retain human confirmation.
+Unknown effects, missing required source and failed or late reviews also retain
+confirmation. A device action is eligible only within the user's requested or
+already-approved target and effect; permission does not expand to another
+machine or secret transfer. Review calls have no tools, use the configured
+mediator, and allow up to 45 seconds within its configured timeout. The same
+request's human approvals are context, not a blanket session permission.
+Human takeover during an in-flight review revokes the automatic decision.
+Defaults remain `human` for bindings that have not opted in.
 
 Native `attribution: agent` background results do not replace the current
 user's review context or impersonate human input. A matching admitted receipt

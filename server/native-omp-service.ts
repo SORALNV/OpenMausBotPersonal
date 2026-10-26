@@ -402,13 +402,26 @@ export class NativeOmpService {
       finally { job.questions.delete(question.id); }
       return;
     }
-    const reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
+    let reviewer = reviewJob ?? (this.active.get(binding.threadId) === job ? job : undefined);
+    const ownerRequestId = job.source.id, reviewRequestId = reviewer?.source.id, reviewText = reviewer?.source.text ?? "";
     const messages = this.store.messagesFor(binding.threadId);
-    const sourceIndex = reviewer ? messages.findIndex(message => message.id === reviewer.source.id) : -1;
+    const sourceIndex = reviewRequestId ? messages.findIndex(message => message.id === reviewRequestId) : -1;
     const sessionId = reviewer && this.ledger[reviewer.source.id]?.sessionId;
     const priorRequests = sourceIndex < 0 ? [] : messages.slice(0, sourceIndex).filter(message => message.role === "user" && !message.nativeOmp && this.ledger[message.id]?.sessionId === sessionId).slice(-6).map(message => message.text ?? "");
     const native = job.client as NativeOmpCollab | undefined;
-    const allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewer.source.text ?? "", question, this.generate, AbortSignal.any([job.controller.signal, reviewer.controller.signal]), { priorRequests, files: native?.recentFileWrites?.() }) : false;
+    const candidate = nativeReviewCandidate(question, binding.cwd);
+    const operation = native?.pendingOperation?.(question);
+    const humanApprovals = sourceIndex < 0 ? [] : messages.slice(sourceIndex + 1).filter(message => message.card?.requestType === "permission" && message.card.answered === "allow" &&
+      (message.requestMessageId ? message.requestMessageId === reviewer!.source.id : !messages.some(next => next.role === "user" && !next.nativeOmp && next.at > messages[sourceIndex]!.at && next.at < message.at)))
+      .map(message => message.card!.subtitle ?? "");
+    const signal = reviewer ? AbortSignal.any([job.controller.signal, reviewer.controller.signal, AbortSignal.timeout(Math.min(binding.mediator.timeoutMs, 60_000))]) : job.controller.signal;
+    let files = native?.recentFileWrites?.();
+    if (reviewer && candidate && native?.reviewFiles && (candidate === "command" || candidate === "workspace-test" || operation?.name === "edit")) {
+      try { files = await native.reviewFiles(question, AbortSignal.any([signal, AbortSignal.timeout(12_000)])); }
+      catch { files = []; }
+    }
+    let allowed = reviewer && !reviewer.stopped ? await reviewNativeQuestion(binding, reviewText, question, this.generate, signal, { priorRequests, files, operation, humanApprovals }) : false;
+    if (job.source.id !== ownerRequestId || reviewer?.source.id !== reviewRequestId) { allowed = false; reviewer = undefined; }
     if (!owns() || job.stopped || reviewer?.stopped || !job.questions.has(question.id)) return;
     if (allowed) {
       try {
@@ -430,7 +443,7 @@ export class NativeOmpService {
       : await japaneseNativeQuestion(binding, question, this.generate, job.controller.signal);
     if (!owns() || job.stopped || !job.questions.has(question.id)) return;
     const choices = new Map(presentation.labels.map((label, index) => [label, question.options![index]!]));
-    const card = this.store.appendMessage(binding.threadId, { role: "bot", kind: "options", card: {
+    const card = this.store.appendMessage(binding.threadId, { role: "bot", kind: "options", ...(reviewer ? { requestMessageId: reviewer.source.id } : {}), card: {
       title: permission ? "Pi / OhMyPiの操作許可" : "Pi / OhMyPiからの確認",
       subtitle: presentation.text,
       options: permission ? ["許可", "拒否"] : presentation.labels, requestId: id, requestType: permission ? "permission" : "question",

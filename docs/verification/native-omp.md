@@ -93,25 +93,18 @@ confirmation/select approvals, questions, Stop, provider failure and an
 unrelated ordinary Bot. No real account or Raspberry Pi is contacted by it.
 The service tests additionally prove restart receipts prevent replay and that
 Stop settles a preparation model even if it ignores its AbortSignal.
-Development approval fixtures cover relative source/test/configuration saves,
-`command -v` and a Python unittest run with saved-source evidence without new
-human cards. Unsupported commands, filesystem escapes, URI targets, native
-risk reasons, missing test source and important operations retain human cards.
-Python `test_*.py`, `smoke_*.py` and `_smoke_*.py` scripts inside the workspace
-also require the exact saved script body before model review. Extra arguments,
-unknown application scripts and code with external or important effects retain
-human confirmation; a test-like filename alone never grants execution.
-Transport/service cases cover successful-write evidence, its invalidation after
-edit/failure, native agent background attribution, restored authorization after
-restart, refusal to lend that authorization to human input, and detach without
-native Abort on application shutdown. A tool-free live Luna check with synthetic
-code allowed ordinary saves/lookup/local tests and retained confirmation for a
-test that restarts SSH and an explicit service restart.
-Mediator review checks cover read-only inspection, independent low-risk verdicts,
-native full-title Collab requests, owner-only destructive actions, failed reviews
-and a human answering during an in-flight model review. HTTP acceptance also
-checks automatic inspection approval and refusal to auto-answer a formatting
-request; the destructive command is only fixture text and never executes.
+Development approval fixtures cover source/config saves, native hashed
+multi-file edits, `.mcp.json`, local API checks, Python diagnostics, unittest and
+smoke scripts without new human cards. The native patch must match the edit
+dialog exactly; a missing or ambiguous operation retains confirmation. Source
+is refreshed after edits, bounded to the destination workspace. Reader tests
+cover symlink/escape/private-file/oversize/FIFO rejection. Service tests prove
+same-request human approval context is retained and a human takeover during
+review prevents automatic authorization. Native safety reasons, privilege and
+service changes, unknown execution effects and failed reviews retain cards.
+The tool-free live Luna regression uses fictional NAS code and executes no
+tools; it separates saving network code from actually invoking a device.
+
 Shared approval checks also cover questions arriving outside an OMB turn,
 startup replay of native pending questions, and approvals after a failed turn.
 Waiting for a native human turn or an Allow/Deny response does not consume the

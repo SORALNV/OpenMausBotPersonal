@@ -401,3 +401,42 @@ it("an active OMB request never authorizes a new human native turn", async () =>
   f.native.emit("question", { id: "human-during-bot", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true)); expect(f.native.answerUi).not.toHaveBeenCalled();
 });
+
+it("reads fresh edited source before reviewing execution and carries same-request human approvals", async () => {
+  const f = reviewingFixture();
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
+  Object.assign(f.client, {
+    recentFileWrites: vi.fn(() => [{ path: "tests/test_fixture.py", content: "stale before edit" }]),
+    reviewFiles: vi.fn(async () => [{ path: "tests/test_fixture.py", content: "fresh after native edit" }]),
+  });
+  f.generate.mockResolvedValue('{"decision":"ask","importance":"high"}');
+  f.client.emit("question", { id: "first", method: "select", title: "Allow tool: bash\nCommand: lsblk -o NAME,SIZE", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId)).toBe(true));
+  const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestId)!;
+  expect(card.requestMessageId).toBeTruthy();
+  expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
+  f.generate.mockResolvedValue('{"decision":"allow","importance":"low"}');
+  f.client.emit("question", { id: "tests", method: "select", title: "Allow tool: bash\nCommand: python3 -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("tests", { value: "Approve" }));
+  expect(f.generate).toHaveBeenLastCalledWith("fixture", "fixture-small", expect.stringContaining("fresh after native edit"), expect.any(AbortSignal));
+  expect(f.generate).toHaveBeenLastCalledWith("fixture", "fixture-small", expect.stringContaining('human_approved_operations'), expect.any(AbortSignal));
+  expect(f.generate).toHaveBeenLastCalledWith("fixture", "fixture-small", expect.stringContaining('lsblk -o NAME,SIZE'), expect.any(AbortSignal));
+  expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.requestType === "permission")).toHaveLength(1);
+  f.complete();
+});
+
+it("revokes an in-flight model approval when a human takes over the shared TUI", async () => {
+  const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() }); f.service.close();
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  const service=f.create();const source=service.dispatch(service.binding(f.bot.id,f.bot.threadId)!,"接続状態を確認して");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry",{entryId:"owned",role:"user",text:source.text,sessionId:"native-one",own:true,snapshot:true});
+  let finish!: (text:string)=>void;
+  f.generate.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  f.native.emit("question",{id:"in-flight",method:"select",title:"Allow tool: bash\nCommand: lsblk",options:["Approve","Deny"]});
+  await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+  f.native.emit("nativeEntry",{entryId:"takeover",role:"user",text:"人間による別作業",sessionId:"native-one",own:false,snapshot:false});
+  finish('{"decision":"allow","importance":"low"}');
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.subtitle?.includes("依頼との対応を確認できない"))).toBe(true));
+  expect(f.native.answerUi).not.toHaveBeenCalled();
+});

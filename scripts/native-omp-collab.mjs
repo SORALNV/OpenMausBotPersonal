@@ -150,6 +150,38 @@ export function openOmpFrame(key, data) {
 }
 const textOf = message => typeof message?.content === 'string' ? message.content : Array.isArray(message?.content) ? message.content.filter(v => v.type === 'text').map(v => v.text).join('\n') : '';
 
+export function nativeToolPaths(args) {
+  const paths=typeof args?.path==='string'?[args.path]:[];
+  if(typeof args?.input==='string')for(const match of args.input.matchAll(/^\[([^\]\n]+)#[A-Fa-f0-9]+\]$|^\*\*\* (?:Update|Add|Delete) File: ([^\n]+)$/gmu))paths.push(match[1]??match[2]);
+  return [...new Set(paths)];
+}
+const reviewFilePath=(cwd,path)=>{
+  if(typeof path!=='string'||!posix.isAbsolute(cwd)||cwd==='/'||!/[\w]/u.test(path)||!/^[\p{L}\p{N}_./ -]+$/u.test(path)||path.split('/').includes('..'))return null;
+  const full=posix.resolve(cwd,path),relative=posix.relative(cwd,full);
+  if(!relative||relative.startsWith('../')||posix.isAbsolute(relative)||/(?:\.ssh|\.gnupg|\.aws|\.env\b|auth\.json|credentials?|password|shadow|secret|token|keychain)/iu.test(relative))return null;
+  if(relative.split('/').some(part=>part.startsWith('.')&&!['.gitignore','.mcp.json','.editorconfig'].includes(part)))return null;
+  return full;
+};
+export const READ_REVIEW_FILES=String.raw`
+import sys,json,pathlib,os,stat,re
+b=json.load(sys.stdin); root=pathlib.Path(b['cwd']); result=[]; total=0
+if not root.is_absolute() or str(root.resolve())!=str(root) or str(root)=='/':raise RuntimeError('invalid workspace')
+for name in b['paths'][:12]:
+ try:
+  p=pathlib.Path(name); rel=p.relative_to(root)
+  if str(p.resolve())!=str(p) or '..' in rel.parts or any(x.startswith('.') and x not in ['.gitignore','.mcp.json','.editorconfig'] for x in rel.parts):continue
+  if re.search(r'\.ssh|\.gnupg|\.aws|\.env\b|auth\.json|credentials?|password|shadow|secret|token|keychain',str(rel),re.I):continue
+  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+  with os.fdopen(fd,'rb') as f:
+   info=os.fstat(f.fileno())
+   if not stat.S_ISREG(info.st_mode) or info.st_size>32000:continue
+   data=f.read(32001)
+  if len(data)>32000 or total+len(data)>96000:continue
+  content=data.decode('utf8');total+=len(data);result.append({'path':str(p),'content':content})
+ except (OSError,ValueError,UnicodeError):pass
+print(json.dumps(result))
+`;
+
 /** Attaches as a standard OhMyPi 18.12.5 Collab guest. The native TUI alone owns the session writer. */
 export class NativeOmpCollab extends EventEmitter {
   constructor(binding, options = {}) {
@@ -310,6 +342,44 @@ export class NativeOmpCollab extends EventEmitter {
     this.pumpTimer=setTimeout(() => { if (this.turn!==turn || !this.idle()) return; turn.sent=true; this.receipts.get(turn.id).stage='sent'; this.send({t:'prompt',text:turn.text}); this.armTurnDeadline(); },Math.max(250,(turn.notBefore??0)-Date.now()));
   }
   requestStatus(id) { return this.receipts.get(id)?.stage; }
+  pendingOperation(question) {
+    const raw=question.message??question.title??'', tool=question.title?.split('\n')[0]?.match(/^Allow tool: (bash|write|edit)$/u)?.[1];
+    const pending=new Map(), cwd=this.binding.cwd??'/';
+    for(const entry of [...this.entries.values()].slice(-160)) {
+      const message=entry.message;
+      if(message?.role==='assistant'&&Array.isArray(message.content))for(const item of message.content)if(item.type==='toolCall'&&item.name===tool)pending.set(item.id,item);
+      if(message?.role==='toolResult')pending.delete(message.toolCallId);
+    }
+    const wanted=[...raw.matchAll(/^(?:Path|File): ([^\n]+)$/gmu)].map(m=>posix.resolve(cwd,m[1])).sort();
+    const command=raw.match(/(?:^|\n)Command: ([\s\S]+)$/u)?.[1];
+    const matches=[...pending.values()].filter(item=>{
+      if(tool==='bash')return item.arguments?.command===command;
+      const paths=nativeToolPaths(item.arguments).map(p=>posix.resolve(cwd,p)).sort();
+      return wanted.length&&JSON.stringify(paths)===JSON.stringify(wanted);
+    });
+    if(matches.length!==1||JSON.stringify(matches[0].arguments).length>48000)return undefined;
+    return {name:tool,arguments:matches[0].arguments};
+  }
+  async reviewFiles(question, signal) {
+    const cwd=this.binding.cwd, selected=nativeToolPaths(this.pendingOperation(question)?.arguments);
+    const paths=[...selected];
+    for(const entry of [...this.entries.values()].slice(-160).reverse()) {
+      const message=entry.message;
+      if(message?.role==='assistant'&&Array.isArray(message.content))for(const item of message.content)if(item.type==='toolCall'&&['write','edit'].includes(item.name))paths.push(...nativeToolPaths(item.arguments));
+    }
+    const approved=[...new Set(paths.map(path=>reviewFilePath(cwd,path)).filter(Boolean))].slice(0,12);
+    if(!approved.length)return [];
+    if(this.options.readReviewFiles)return this.options.readReviewFiles(approved,signal);
+    const plan=nativeOmpCommand(this.binding), args=plan.args.slice(0,-1);
+    args.push(`exec python3 -c '${READ_REVIEW_FILES.replaceAll("'", "'\\''")}'`);
+    return new Promise((resolve,reject)=>{
+      const child=spawn(plan.command,args,{stdio:['pipe','pipe','pipe'],signal,env:Object.fromEntries(['HOME','PATH','SSH_AUTH_SOCK','TMPDIR'].flatMap(k=>process.env[k]?[[k,process.env[k]]]:[]))});
+      let output='',oversized=false;child.stdout.on('data',part=>{output+=part;if(output.length>600000){oversized=true;child.kill();}});child.stderr.on('data',()=>{});child.stdin.on('error',()=>{});
+      child.on('error',()=>reject(Error('Review source unavailable')));
+      child.on('close',code=>{try{if(code!==0||oversized)throw Error();const files=JSON.parse(output);if(!Array.isArray(files)||files.length>12||files.some(file=>!approved.includes(file.path)||typeof file.content!=='string'||file.content.length>32000))throw Error();resolve(files);}catch{reject(Error('Review source unavailable'));}});
+      child.stdin.end(JSON.stringify({cwd,paths:approved}));
+    });
+  }
   recentFileWrites() {
     const writes=new Map(),complete=[];
     const samePath=(left,right)=>posix.resolve(this.binding.cwd??'/',left)===posix.resolve(this.binding.cwd??'/',right);

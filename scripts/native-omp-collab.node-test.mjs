@@ -199,3 +199,37 @@ test('a silent relay host is retired so the native host can reclaim its room',as
   await pause(65);assert.equal(replacement.readyState,WebSocket.OPEN);
  }finally{host.terminate();replacement?.terminate();await relay.close();}
 });
+
+test('matches native hashed multi-file edits and never borrows another pending operation',async()=>{
+ const {client:c}=peer();c.binding.cwd='/fixture/project';
+ const args={input:'*** Begin Patch\n[requirements.txt#1234]\nPUT >1:\n+httpx==0.28.1\n[computers.toml#5678]\nREM\n*** End Patch'};
+ c.frame({t:'entry',entry:{id:'pending-edit',type:'message',message:{role:'assistant',content:[{type:'toolCall',id:'edit-call',name:'edit',arguments:args}]}}});
+ const q={title:'Allow tool: edit\nFile: requirements.txt\nFile: computers.toml'};
+ assert.deepEqual(c.pendingOperation(q),{name:'edit',arguments:args});
+ assert.equal(c.pendingOperation({title:'Allow tool: edit\nFile: unrelated.py'}),undefined);
+ c.frame({t:'entry',entry:{id:'edit-done',type:'message',message:{role:'toolResult',toolCallId:'edit-call',isError:false,content:[]}}});
+ assert.equal(c.pendingOperation(q),undefined);c.close();
+});
+
+test('refreshes source paths after hashed edits and excludes private paths and escapes',async()=>{
+ const {client:c}=peer();c.binding.cwd='/fixture/project';
+ const paths=[];c.options.readReviewFiles=async requested=>{paths.push(...requested);return requested.map(path=>({path,content:'fresh edited source'}));};
+ c.frame({t:'entry',entry:{id:'edited',type:'message',message:{role:'assistant',content:[{type:'toolCall',id:'c',name:'edit',arguments:{input:'*** Begin Patch\n[tests/test_nas.py#ABCD]\nPUT >1:\n+pass\n[../outside.py#1234]\nREM\n[.env#1234]\nREM\n[.git/config#1234]\nREM\n*** End Patch'}}]}}});
+ const result=await c.reviewFiles({title:'Allow tool: bash\nCommand: python3 -m unittest'},new AbortController().signal);
+ assert.deepEqual(paths,['/fixture/project/tests/test_nas.py']);assert.equal(result[0].content,'fresh edited source');c.close();
+});
+
+test('remote review source reader refuses symlinks, private files, escapes, oversize files and FIFOs',async()=>{
+ const {READ_REVIEW_FILES}=await import('./native-omp-collab.mjs');
+ const {mkdtempSync,writeFileSync,symlinkSync,mkdirSync,rmSync,realpathSync}=await import('node:fs');
+ const {execFileSync}=await import('node:child_process');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const root=mkdtempSync(join(tmpdir(),'omb-review-source-'));
+ try {
+  mkdirSync(join(root,'project'));const cwd=realpathSync(join(root,'project'));
+  writeFileSync(join(cwd,'test_good.py'),'assert True');writeFileSync(join(cwd,'.env'),'FICTIONAL_SECRET');writeFileSync(join(root,'outside.py'),'outside');
+  symlinkSync(join(root,'outside.py'),join(cwd,'link.py'));writeFileSync(join(cwd,'huge.py'),'x'.repeat(32001));execFileSync('mkfifo',[join(cwd,'pipe.py')]);
+  const paths=['test_good.py','.env','../outside.py','link.py','huge.py','pipe.py'].map(name=>join(cwd,name));
+  const result=JSON.parse(execFileSync('python3',['-c',READ_REVIEW_FILES],{input:JSON.stringify({cwd,paths}),encoding:'utf8',timeout:3000}));
+  assert.deepEqual(result,[{path:join(cwd,'test_good.py'),content:'assert True'}]);
+ } finally{rmSync(root,{recursive:true,force:true});}
+});
