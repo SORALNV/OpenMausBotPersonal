@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, Group } from "@/state/store";
 import { Select } from "./Select";
 
@@ -26,7 +26,26 @@ const bot: Bot = {
 };
 beforeEach(() => { fixture.showThreads = true; fixture.queued = {}; fixture.bots = []; fixture.dispatch.mockClear(); });
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("optional bot thread picker", () => {
+  it("exposes every explicitly created Personal thread when the global tree is hidden", () => {
+    vi.stubEnv("VITE_OMB_PERSONAL", "1");
+    fixture.showThreads = false;
+    const picker = TaskPicker({ bot });
+    expect(picker?.props.tasks.map((task: { threadId: string }) => task.threadId)).toContain("idle");
+    picker?.props.onSwitch("idle");
+    expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "switchTask", botId: "pepper", threadId: "idle" });
+    expect(renderToStaticMarkup(createElement(TaskPicker, { bot }))).toContain('aria-label="All threads"');
+  });
+
+  it("keeps idle background work out of the Personal picker", () => {
+    vi.stubEnv("VITE_OMB_PERSONAL", "1");
+    fixture.showThreads = false;
+    const candidate = { ...bot, tasks: [bot.tasks![0]!, { ...bot.tasks![1]!, background: true }] };
+    expect(TaskPicker({ bot: candidate })).toBeNull();
+  });
+
   it("keeps the usual picker when threads are shown", () => {
     expect(renderToStaticMarkup(createElement(TaskPicker, { bot }))).toContain('aria-label="All threads"');
   });

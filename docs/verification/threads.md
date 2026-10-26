@@ -187,3 +187,18 @@ print retained JSON evidence paths next to the server logs.
 
 Stop the foreground launcher with Ctrl-C. It closes only its own UI/server
 and deletes its disposable home; the printed server log remains available.
+
+## Personal: explicit conversations remain reachable
+
+Personal builds keep the header **All threads** picker and the per-bot sidebar
+thread controls available when that bot has two or more unarchived foreground
+conversations, including in Simple mode and with Show threads disabled.
+Background routine executions and delegated work do not enable these controls.
+Selecting another explicit thread and reloading must retain that selection.
+The manual **仮名化して入力** composer button is removed; registered-word settings
+and existing conversation restoration are retained.
+
+Run `pnpm exec vitest run src/lib/bot-thread-visibility.test.ts src/components/TaskPicker.visibility.test.ts`.
+The disposable Personal UI fixture additionally checks selection, reload, narrow
+layout, and the absence of the removed composer button without touching real
+Bot conversations or sending commands to Pi.

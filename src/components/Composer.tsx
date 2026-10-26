@@ -2,7 +2,6 @@ import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { BookOpen, Mic, Paperclip, Sparkles, Square, Target, X } from "lucide-react";
-import { PrivacyWorkbench } from "./PrivacyWorkbench";
 import { ComposerSpeechError } from "./ComposerSpeechError";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -710,7 +709,6 @@ export function Composer({
     <div className="pointer-events-none relative px-5 pb-3">
       <ComposerSpeechError message={speechError} />
       <div className="pointer-events-auto relative w-full">
-        {import.meta.env.VITE_OMB_PERSONAL === "1" && <PrivacyWorkbench key={threadId} threadId={threadId} onApply={masked => editText(text ? `${text}\n\n${masked}` : masked)} />}
         {failedSends.map((failed) => (
           <div
             key={failed.id}

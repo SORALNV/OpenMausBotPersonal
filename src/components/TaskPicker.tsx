@@ -1,3 +1,4 @@
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Check, ChevronDown, FolderInput, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, type Bot, type BotProject, type Group, type Task } from "@/state/store";
@@ -418,7 +419,7 @@ function ConversationTaskPicker({
 
 export function BotActivityPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   if (showThreads) return null;
   const activity = threadsWhenTreeHidden(bot, state.pendingQueued).filter((task) => task.threadId !== bot.threadId);
   if (!activity.length) return null;
@@ -441,7 +442,7 @@ export function BotActivityPicker({ bot }: { bot: Bot }) {
 
 export function TaskPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   if (!showThreads) return null;
   return (
     <ConversationTaskPicker

@@ -1,3 +1,4 @@
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
 import { track } from "@/lib/analytics";
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch } from "react";
@@ -1134,7 +1135,7 @@ function useVisibleMessages(bot: Bot): Message[] {
 export const BotListItem = memo(function BotListItem(props: BotRowProps) {
   const advanced = useAdvancedMode();
   const { bot, selected, deleting, mascotMotion, reveal, pendingQueued, instances, liveCall, density, quiet, query, dispatch, onMenu } = props;
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   const liveMedia = useLiveMedia();
   const remoteClient = typeof window !== "undefined" && window.ogb?.remoteClient?.active === true;
   const [renaming, setRenaming] = useState(false);

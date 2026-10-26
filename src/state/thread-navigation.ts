@@ -1,3 +1,4 @@
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
 import type { NotificationTarget } from "@/lib/notify";
 import type { Action, AppState } from "./store";
 
@@ -58,7 +59,7 @@ export function openNotificationTarget(
 }
 
 export function botOpensTo(bot: Pick<NotificationThreadOwner, "threadId" | "mainThreadId" | "tasks">, threadsShown: boolean): string {
-  return !threadsShown && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
+  return !botThreadsShown(bot, threadsShown) && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
     ? bot.mainThreadId : bot.threadId;
 }
 
