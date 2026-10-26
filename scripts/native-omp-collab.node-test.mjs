@@ -242,3 +242,11 @@ test('public native narration is observable but the final answer excludes interm
  c.frame(answer('progress-final','検証完了です。'));end(c);
  assert.equal((await result).text,'検証完了です。');assert.ok(!JSON.stringify(entries).includes('PRIVATE_REASONING_NOT_FOR_DISPLAY'));c.close();
 });
+
+test('shared native prompt carries real image content instead of Mac path markers',async()=>{
+ const {client:c,sent}=peer();const images=[{type:'image',mimeType:'image/png',data:'aW1hZ2U='}];
+ const pending=c.submit('image-request','Describe this',images);await pause(300);
+ assert.deepEqual(sent.find(f=>f.t==='prompt'),{t:'prompt',text:'Describe this',images});
+ c.frame({t:'entry',entry:{type:'custom_message',id:'image-input',details:{from:'OMB-synthetic'},content:[{type:'text',text:'Describe this'},...images]}});
+ c.frame(answer('image-answer','Image described'));end(c);assert.equal((await pending).text,'Image described');c.close();
+});

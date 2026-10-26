@@ -325,13 +325,13 @@ export class NativeOmpCollab extends EventEmitter {
     this.ws.send(sealOmpFrame(this.key,frame));
   }
   idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0 && !this.resyncUi?.size; }
-  async submit(id, text) {
+  async submit(id, text, images = []) {
     if (!this.session || this.closed || this.turn) throw Error('Native shared session unavailable');
     if (!id || typeof text !== 'string' || !text.trim() || text.length > 100000) throw Error('Invalid native prompt');
     if (this.receipts.has(id)) throw Error('Native request already submitted');
     this.receipts.set(id,{stage:'queued'});
     return await new Promise((resolve,reject) => {
-      this.turn = { id,text,resolve,reject,admitted:false,ended:false,texts:[],contended:false };
+      this.turn = { id,text,images,resolve,reject,admitted:false,ended:false,texts:[],contended:false };
       this.pump();
     });
   }
@@ -339,7 +339,7 @@ export class NativeOmpCollab extends EventEmitter {
     const turn=this.turn;
     if (this.reconnecting || !turn || turn.sent || !this.idle()) return;
     clearTimeout(this.pumpTimer);
-    this.pumpTimer=setTimeout(() => { if (this.turn!==turn || !this.idle()) return; turn.sent=true; this.receipts.get(turn.id).stage='sent'; this.send({t:'prompt',text:turn.text}); this.armTurnDeadline(); },Math.max(250,(turn.notBefore??0)-Date.now()));
+    this.pumpTimer=setTimeout(() => { if (this.turn!==turn || !this.idle()) return; turn.sent=true; this.receipts.get(turn.id).stage='sent'; this.send({t:'prompt',text:turn.text,...(turn.images.length?{images:turn.images}:{})}); this.armTurnDeadline(); },Math.max(250,(turn.notBefore??0)-Date.now()));
   }
   requestStatus(id) { return this.receipts.get(id)?.stage; }
   pendingOperation(question) {

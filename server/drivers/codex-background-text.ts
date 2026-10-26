@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ModelCatalog, TextGenerationOptions, TextGenerationUsage } from "../contracts.ts";
+import type { ModelCatalog, TextGenerationOptions, TextGenerationUsage, TurnImageInput } from "../contracts.ts";
 import type { killCliTree, spawnCli } from "../procs.ts";
 import { decodeCodexSelection, OFFICIAL_CODEX_PROVIDER } from "./codex-catalog.ts";
 import { codexToolSurfaceArgs } from "./codex-tool-surface.ts";
@@ -43,6 +43,7 @@ export interface CodexBackgroundArgsInput {
   modelProvider?: string | null;
   providerArgs: readonly string[];
   cwd: string;
+  images?: readonly TurnImageInput[];
 }
 
 export function codexBackgroundArgs(input: CodexBackgroundArgsInput): string[] {
@@ -62,6 +63,7 @@ export function codexBackgroundArgs(input: CodexBackgroundArgsInput): string[] {
     ...input.providerArgs,
     ...codexToolSurfaceArgs(),
     ...BACKGROUND_FEATURES_OFF.flatMap((feature) => ["-c", `features.${feature}=false`]),
+    ...(input.images ?? []).flatMap(image => ["--image", image.path]),
     "-",
   ];
 }
@@ -74,6 +76,7 @@ export interface CodexOneShotInput {
   cli: string;
   env: Record<string, string | undefined>;
   prompt: string;
+  images?: readonly TurnImageInput[];
   model: string;
   modelProvider?: string | null;
   providerArgs: readonly string[];
@@ -88,7 +91,7 @@ export async function runCodexOneShot(input: CodexOneShotInput): Promise<string>
   const cwd = mkdtempSync(join(tmpdir(), "omb-codex-background-"));
   try {
     return await new Promise<string>((resolve, reject) => {
-      const argv = codexBackgroundArgs({ model: input.model, modelProvider: input.modelProvider, providerArgs: input.providerArgs, cwd });
+      const argv = codexBackgroundArgs({ model: input.model, modelProvider: input.modelProvider, providerArgs: input.providerArgs, cwd, images: input.images });
       const child = input.spawn(input.cli, argv, { cwd, env: input.env, stdio: ["pipe", "pipe", "pipe"] });
       const describe = input.describeError ?? ((message: string) => message.slice(0, 400));
       let settled = false;

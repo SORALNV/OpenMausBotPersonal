@@ -209,3 +209,11 @@ describe("Codex generateMemoryText (fake CLI)", () => {
     expect(spawned).toHaveLength(2);
   }, 30_000);
 });
+
+
+it("passes explicit input images while keeping background tools disabled", () => {
+  const args = codexBackgroundArgs({ model: "gpt-6-luna", providerArgs: [], cwd: "/fixture", images: [{ path: "/fixture/upload.png", mime: "image/png", bytes: 12 }] });
+  expect(args.slice(-3)).toEqual(["--image", "/fixture/upload.png", "-"]);
+  expect(args).toContain("features.shell_tool=false"); expect(args).toContain("features.view_image=false");
+  expect(args).toContain("--ignore-user-config");
+});

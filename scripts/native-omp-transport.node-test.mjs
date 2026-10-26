@@ -192,3 +192,11 @@ test("Stop sends native abort without starting another prompt", async t => {
   f.output({ type: "prompt_result", id: "req-a", status: "aborted" });
   await assert.rejects(answer, /aborted/u);
 });
+
+test('RPC input includes image bytes and a reused request cannot change images',async t=>{
+ const f=fixture(t);await f.initialize();const images=[{type:'image',mimeType:'image/png',data:'aW1hZ2U='}];
+ const pending=f.client.submit('image-request','Describe',images);
+ assert.deepEqual(f.child.sent.find(frame=>frame.type==='prompt').images,images);
+ await assert.rejects(f.client.submit('image-request','Describe',[{...images[0],data:'b3RoZXI='}]),/different/);
+ f.message('Image described');f.finish('image-request');assert.equal((await pending).text,'Image described');
+});

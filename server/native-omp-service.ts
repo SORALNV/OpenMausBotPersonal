@@ -14,10 +14,13 @@ import { PASS, type RouteHandler } from "./routes/table.ts";
 import { classifyNativeRisk, type NativeRiskDecision } from "./native-omp-review.ts";
 import { automaticReportDecline, japaneseNativeQuestion, japanesePermissionDetail, nativeToolApproval } from "./native-omp-question.ts";
 import { nativeAuditText, nativeConsentCommand } from "./native-omp-consent.ts";
+import { nativeAttachmentInput, nativeImageContents } from "./native-attachments.ts";
+import type { TurnImageInput } from "./contracts.ts";
 import { questionAnswersByQuestion } from "../shared/ask-question.ts";
 
 type Binding = NativeOmpBinding & OmpDestination;
-type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string; admissionEntryId?: string; failure?: { phase: string; status?: string } };
+type LocalTurn = (input: { botId: string; threadId: string; text: string; source: Message; signal: AbortSignal; images?: readonly TurnImageInput[]; }) => Promise<string>;
+type Receipt = { digest: string; stage: "prepared" | "submitted" | "completed" | "not-sent" | "indeterminate"; sessionId?: string; admissionEntryId?: string; nativeText?: string; sourceDigest?: string; failure?: { phase: string; status?: string } };
 type Active = { controller: AbortController; source: Pick<Message, "id" | "text">; client?: NativeOmpTransport; questions: Set<string>; cards: Map<string, { nativeId: string; question: OmpQuestion; card: Message; allowValue?: string; choices?: Map<string, string> }>; stopped: boolean; onSettled?: () => void };
 type NativeProgress = { requestId: string; turnId: string; rowId?: string; completed: string[] };
 type NativeToolProgress = { type: string; toolName?: string; isError?: boolean; args?: unknown; toolCallId?: string };
@@ -55,10 +58,11 @@ export class NativeOmpService {
   private readonly generate: RelayTextGenerator;
   private readonly formatter: ReplyFormatter;
   private readonly settled: () => void;
+  private readonly localTurn?: LocalTurn;
 
-  constructor(input: { dir: string; store: Store; open?: (binding: OmpDestination) => NativeOmpTransport; sharedOpen?: (binding: OmpDestination) => NativeOmpTransport; catalog?: ConstructorParameters<typeof NativeOmpSessions>[0]["catalog"]; generate: RelayTextGenerator; formatter: ReplyFormatter; settled: () => void }) {
+  constructor(input: { dir: string; store: Store; open?: (binding: OmpDestination) => NativeOmpTransport; sharedOpen?: (binding: OmpDestination) => NativeOmpTransport; catalog?: ConstructorParameters<typeof NativeOmpSessions>[0]["catalog"]; generate: RelayTextGenerator; formatter: ReplyFormatter; settled: () => void; localTurn?: LocalTurn }) {
     this.dir = input.dir; this.store = input.store; this.open = input.open ?? (binding => NativeOmpTransport.connect(binding, { timeoutMs: 90_000 }));
-    this.generate = input.generate; this.formatter = input.formatter; this.settled = input.settled;
+    this.generate = input.generate; this.formatter = input.formatter; this.settled = input.settled; this.localTurn = input.localTurn;
     this.sharedOpen = input.sharedOpen ?? (binding => this.pool.acquire(binding));
     this.file = join(input.dir, "native-omp.json");
     this.ledgerFile = join(input.dir, "native-omp-ledger.json");
@@ -200,16 +204,16 @@ export class NativeOmpService {
         recoverFinal(); recoveredFinal = undefined;
         const candidates = event.own ? this.store.messagesFor(binding.threadId).filter(message => {
           const receipt = this.ledger[message.id];
-          return message.role === "user" && message.text === event.text && receipt?.sessionId === event.sessionId &&
+          return message.role === "user" && (receipt?.nativeText ?? message.text) === event.text && receipt?.sessionId === event.sessionId &&
             !message.requestCancelled && ["submitted", "indeterminate", "completed"].includes(receipt.stage) && (!receipt.admissionEntryId || receipt.admissionEntryId === event.entryId) &&
-            receipt.digest === createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, event.text])).digest("hex");
+            (receipt.sourceDigest ?? receipt.digest) === createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, message.text])).digest("hex");
         }) : [];
         const current = candidates.find(message => message.id === this.active.get(binding.threadId)?.source.id);
         const source = current ?? (candidates.length === 1 ? candidates[0] : undefined);
         if (source && !this.ledger[source.id]!.admissionEntryId) { this.ledger[source.id]!.admissionEntryId = event.entryId; this.save(this.ledgerFile, this.ledger); }
         if (!source || this.consent.get(binding.threadId)?.requestId && this.consent.get(binding.threadId)?.requestId !== source.id) this.consent.delete(binding.threadId);
         approvals.source = source || { id: `native-host-${binding.threadId}`, text: "" };
-        if (source && !event.snapshot) this.progressStatus(binding, source, "OhMyPiが依頼を受け取り、処理を進めています。");
+        if (source && !event.snapshot) this.progressStatus(binding, source, "Pi / OhMyPi に依頼中");
       }
       if (event.role === "assistant" && event.stopReason === "stop" && approvals.source.text && !this.active.has(binding.threadId)) recoveredFinal = event;
       const seen = this.observed[this.historyKey(binding.threadId, event.sessionId)] ??= [];
@@ -371,7 +375,8 @@ export class NativeOmpService {
   dispatch(binding: Binding, text: string, fields: Pick<Message, "sendId" | "sender" | "via" | "callId"> = {}, existingSource?: Message, onSettled?: () => void): Message {
     if (!this.binding(binding.botId, binding.threadId) || this.active.has(binding.threadId)) throw refuse("Native OhMyPi session is unavailable or busy");
     if (this.store.taskByThread(binding.botId, binding.threadId)?.busy) throw refuse("Native OhMyPi session is busy");
-    if (!text.trim() || text.length > 100_000 || /<attached-(?:image|file|audio)\b|\[.*?\]\((?:attachment:|\/?api\/attachments\/)|data:(?:image|audio)\//iu.test(text)) throw refuse("Native OhMyPi currently accepts plain text only");
+    if (text.length > 100_000) throw refuse("メッセージが長すぎます。");
+    nativeAttachmentInput(text);
     if (Object.keys(this.ledger).length >= 5000) throw refuse("Native request ledger needs owner review before further submissions");
     const source = existingSource ?? this.store.appendMessage(binding.threadId, { role: "user", kind: "text", text, ...fields, requestPending: true });
     if (existingSource) this.store.patchMessage(binding.threadId, source.id, { requestPending: true });
@@ -393,16 +398,33 @@ export class NativeOmpService {
     const key = job.source.id;
     const timeout = binding.connection === "shared-tui" ? undefined : setTimeout(() => { job.controller.abort(); job.client?.close(); }, 15 * 60_000); timeout?.unref();
     try {
-      const digest = createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, text])).digest("hex");
+      const input = nativeAttachmentInput(text);
+      const sourceDigest = createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId, text])).digest("hex");
+      let digest = sourceDigest;
       if (this.ledger[key]) throw refuse("This native request already has a receipt; do not resend automatically");
       this.ledger[key] = { digest, stage: "prepared" }; this.save(this.ledgerFile, this.ledger);
       ownsReceipt = true;
       const signal = AbortSignal.any([job.controller.signal, AbortSignal.timeout(binding.mediator.timeoutMs)]);
-      const preparation = await this.management.prepare(binding, text, signal);
+      const preparation = await this.management.prepare(binding, input.text, signal, input.images);
       const note = preparation.note;
       signal.throwIfAborted();
       if (typeof note !== "string" || !note.trim() || note.length > 4000) throw refuse("Invalid mediator output");
       job.controller.signal.throwIfAborted();
+      if (preparation.plan.action === "reply") {
+        this.ledger[key].stage = "completed"; this.save(this.ledgerFile, this.ledger);
+        this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: preparation.plan.answer!, requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now() });
+        this.states.set(binding.threadId, "idle"); return;
+      }
+      if (preparation.plan.action === "omb") {
+        phase = "local";
+        if (!this.localTurn) throw refuse("OMB側の操作ハンドラーが利用できません。");
+        const answer = await this.localTurn({ botId: binding.botId, threadId: binding.threadId, text: input.text, images: input.images, source: this.store.messagesFor(binding.threadId).find(message => message.id === key)!, signal: job.controller.signal });
+        job.controller.signal.throwIfAborted();
+        if (!answer.trim() || answer.length > 6000) throw refuse("OMBの回答が不正です。");
+        this.ledger[key].stage = "completed"; this.save(this.ledgerFile, this.ledger);
+        this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: answer, requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now() });
+        this.states.set(binding.threadId, "idle"); return;
+      }
       if (preparation.plan.action !== "chat") {
         phase = "management";
         const result = await this.management.execute(binding, key, preparation.plan, job.controller.signal);
@@ -410,6 +432,10 @@ export class NativeOmpService {
         this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: result, requestMessageId: key, turnId: `omp-${key}`, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now() });
         this.states.set(binding.threadId, "idle"); return;
       }
+      phase = "attachments";
+      const images = nativeImageContents(input.images);
+      if (binding.connection !== "shared-tui" && Buffer.byteLength(JSON.stringify({ images, text: input.text }), "utf8") > 900_000) throw refuse("このRPC接続では画像が大きすぎます。共有TUI接続を使用するか、画像を小さくしてください。");
+      if (images.length) digest = createHash("sha256").update(JSON.stringify([sourceDigest, images])).digest("hex");
       phase = "connect";
       const client = job.client = binding.connection === "shared-tui" ? this.sharedClient(binding) : this.open(binding);
       if (binding.connection !== "shared-tui") {
@@ -432,11 +458,12 @@ export class NativeOmpService {
       if (this.sessions[binding.threadId] && this.sessions[binding.threadId] !== session.sessionId) throw refuse("Native conversation identity changed; owner review required");
       this.sessions[binding.threadId] = session.sessionId; this.save(this.sessionsFile, this.sessions);
       job.controller.signal.throwIfAborted();
-      this.ledger[key] = { digest, stage: "submitted", sessionId: session.sessionId }; this.save(this.ledgerFile, this.ledger);
+      this.ledger[key] = { digest, sourceDigest, nativeText: input.text, stage: "submitted", sessionId: session.sessionId }; this.save(this.ledgerFile, this.ledger);
       submitted = true; this.states.set(binding.threadId, "working");
       phase = "submit";
-      const nativeText = binding.connection === "shared-tui" ? text : "OpenMausBot経由のユーザー依頼です。user_requestが原文で、mediator_noteは補助メモです。原文にない権限を追加せず、ネイティブの承認を維持してください。\n" + JSON.stringify({ request_id: key, user_request: text, mediator_note: note.trim() });
-      const result = await client.submit(key, nativeText);
+      const nativeText = binding.connection === "shared-tui" ? input.text : "OpenMausBot経由のユーザー依頼です。user_requestが原文で、mediator_noteは補助メモです。原文にない権限を追加せず、ネイティブの承認を維持してください。\n" + JSON.stringify({ request_id: key, user_request: input.text, mediator_note: note.trim() });
+      this.progressStatus(binding, job.source, "Pi / OhMyPi に依頼中");
+      const result = await (images.length ? client.submit(key, nativeText, images) : client.submit(key, nativeText));
       const metadata = { sessionId: result.sessionId, requestId: key, originalText: result.text, ...(result.sharedTurn ? { sharedTurn: true } : {}) };
       const displayText = result.sharedTurn ? "共有ターンの応答です。標準TUIからの入力も同じターンに含まれています。\n\n" + result.text : result.text;
       this.ledger[key].stage = "completed"; this.save(this.ledgerFile, this.ledger);
@@ -457,7 +484,7 @@ export class NativeOmpService {
         this.save(this.ledgerFile, this.ledger);
       }
       this.states.set(binding.threadId, job.stopped ? "stopped" : submitted ? "indeterminate" : `not-sent:${phase}`);
-      this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: phase === "management"
+      this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: phase === "attachments" ? `画像を送信できませんでした。${nativeAuditText(error instanceof Error ? error.message : "画像を確認してください。")} OhMyPiには送信していません。` : phase === "local" ? `OMB側の処理を完了できませんでした。${nativeAuditText(error instanceof Error ? error.message : "処理を確認してください。")} OhMyPiには送信していません。` : phase === "management"
         ? `OMPのセッション管理を完了できませんでした。${error instanceof Error ? error.message.slice(0, 500) : "接続状態を確認しています。"} 元の会話は削除していません。自動で別セッションを作り直していません。`
         : submitted
         ? "Piへの依頼は送信済みですが、中継で完了を確認できませんでした。同じ会話への接続と履歴の照合を続けています。依頼は再送していません。停止した場合も、停止完了を確認するまでは未確認として扱います。"
@@ -493,7 +520,7 @@ export class NativeOmpService {
     if (!source.text) return;
     const progress = this.progressFor(binding, source);
     if (completed) { progress.completed.push(text); progress.completed = progress.completed.slice(-5); }
-    const body = ["Pi / OhMyPi の途中経過", text, ...progress.completed.filter(line => line !== text).map(line => `・${line}`)].join("\n");
+    const body = ["Pi / OhMyPi に依頼中", ...(text === "Pi / OhMyPi に依頼中" ? [] : [text]), ...progress.completed.filter(line => line !== text).map(line => `・${line}`)].join("\n");
     if (progress.rowId && this.store.patchMessage(binding.threadId, progress.rowId, { text: body })) return;
     progress.rowId = this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: body, requestMessageId: source.id, turnId: progress.turnId }).id;
   }
@@ -568,7 +595,7 @@ export class NativeOmpService {
         try {
           if (delegated && risk.kind === "high-risk") this.auditPermission(binding, question, risk.reason, job.client!);
           job.client!.answerUi(question.id, { value: "Approve" }); job.questions.delete(question.id);
-          this.progressStatus(binding, reviewer.source, delegated ? "今回の一括許可に基づき、高リスク操作を進めています。内容と実行状況をカードに記録しました。" : "高リスクは検出されなかったため、操作を進めています。");
+          this.progressStatus(binding, reviewer.source, "Pi / OhMyPi に依頼中");
         } catch { job.questions.delete(question.id); }
         return;
       }

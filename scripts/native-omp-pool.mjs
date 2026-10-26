@@ -33,7 +33,7 @@ export class NativeOmpPool {
       return original.emit(event,...args);
     };
     lease.requestStatus=id=>queued.has(id)?'queued':original.status(id)??statuses.get(id);
-    lease.submit=(id,text)=>{
+    lease.submit=(id,text,images)=>{
       if(lease.closed||queued.has(id)||statuses.has(id))return Promise.reject(Error('Native request unavailable or already queued'));
       let rejectQueued;
       const cancelled=new Promise((_,reject)=>{rejectQueued=reject;});
@@ -42,7 +42,7 @@ export class NativeOmpPool {
         queued.delete(id);
         if(slot.cancelled||lease.closed)throw Error('Queued native input cancelled');
         record.active=lease;record.lastActive=lease;
-        try{return await original.submit(id,text);}finally{if(record.active===lease)record.active=undefined;}
+        try{return await (images?.length?original.submit(id,text,images):original.submit(id,text));}finally{if(record.active===lease)record.active=undefined;}
       });
       record.tail=operation.catch(()=>{});
       return Promise.race([operation,cancelled]);

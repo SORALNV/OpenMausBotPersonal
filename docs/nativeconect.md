@@ -169,3 +169,47 @@ Sources: [native approvals](https://github.com/can1357/oh-my-pi/blob/main/docs/a
 
 Protocol sources: [Collab](https://github.com/can1357/oh-my-pi/blob/v18.12.5/docs/collab.md)
 and [wire grammar](https://github.com/can1357/oh-my-pi/blob/v18.12.5/packages/wire/src/index.ts).
+
+### Local consultation and OMB management
+
+The mediator now chooses before submitting a native prompt. `reply` answers
+consultation, explanation and design questions directly with no Pi inspection;
+`omb` runs a bounded tool-only management loop against fixed OMB APIs. Only an
+actual Pi execution/read request uses the native `chat` route. Native session
+list/create/connect requests retain their explicit management routes. A bounded
+recent OMB conversation helps interpret short follow-ups. Reference text cannot
+provide authority, and malformed routing output does not fall back to forwarding.
+
+The OMB management loop uses the configured mediator model, at most six API
+steps and a two-minute deadline. Its catalog is intersected with the owner's
+existing tool selection. It exposes no shell, engine-native tools, remote MCP,
+computer control, executable registration, skills installation or Bot delegation.
+It reuses OMB's per-turn capability authentication and existing confirmation
+cards; a proposal is not reported as an applied change. Repeated identical API
+calls are deduplicated. Stop revokes the scoped capability and does not replay
+an operation whose outcome is unknown. Unsupported settings are explained rather
+than changed via a shell fallback.
+
+Only actual native requests show `Pi / OhMyPi に依頼中`. The rolling row can
+include meaningful observed tool steps; the verbose generic receipt message is
+not added. Existing shared connections still keep native history synchronised.
+A local conversation creates no native prompt or native session and does not
+claim a fresh check of the Pi.
+
+### Attached images
+
+NativeConnect accepts uploaded PNG/JPEG/GIF/WebP images using the existing
+attachment store and its four-image limit. Original OMB messages keep their
+attachment tags; native prompts receive structured image content, never a Mac
+path masquerading as a Pi file. Shared OhMyPi TUI sends `images` in its official
+Collab prompt, including through the shared connection pool. Fixed Codex turns
+use `localImage` input. A tool-free Codex mediator receives explicit `--image`
+inputs while shell, MCP and image-view tools remain disabled. Consultation on
+an image can therefore stay with the mediator without submitting a Pi prompt.
+
+OhMyPi shared transport currently allows up to 5 MB total raw image data. RPC
+connections have the native protocol's smaller one-frame limit and refuse an
+oversized payload before connecting; use shared TUI or a smaller image. Original
+files are never resized or overwritten. Non-Codex mediator providers whose text
+generator has no image contract report that limitation, rather than discarding
+the images. Files/audio remain unsupported by NativeConnect.

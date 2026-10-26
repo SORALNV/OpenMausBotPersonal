@@ -8,6 +8,7 @@ import type { NativeOmpTransport, OmpDestination } from "../scripts/native-omp-t
 import { DATA_DIR } from "./config.ts";
 import { NativeOmpService } from "./native-omp-service.ts";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
+import { saveImage } from "./attachments.ts";
 import { Store } from "./store.ts";
 import type { RouteContext } from "./routes/table.ts";
 import { formatQuestionAnswers } from "../shared/ask-question.ts";
@@ -23,7 +24,7 @@ function fixture() {
   const selection = { providerId: "fixture", modelId: "fixture-small", timeoutMs: 1000 };
   const binding = { botId: bot.id, enabled: true, host: "fixture.test", user: "fixture", binary: "/fixture/omp", stateRoot: "/fixture/threads", profile: "fixture", cwd: "/fixture/workspace", model: "fixture/model", mediator: selection };
   writeFileSync(join(dir, "native-omp.json"), JSON.stringify({ bindings: [binding] }), { mode: 0o600 });
-  const generate = vi.fn(async () => "架空の整理メモ");
+  const generate = vi.fn(async (_provider: string, _model: string, _prompt: string, _signal: AbortSignal, _images?: readonly import("./contracts.ts").TurnImageInput[]) => JSON.stringify({ action: "chat", note: "架空の整理メモ" }));
   const open = vi.fn((_binding: OmpDestination) => {
     const client = new EventEmitter();
     return Object.assign(client, { initialize: vi.fn(async () => ({ sessionId: "native-one", sessionFile: "/fixture/session", resumed: true })),
@@ -31,12 +32,13 @@ function fixture() {
       stop: vi.fn(async () => true), close: vi.fn() }) as unknown as NativeOmpTransport;
   });
   const settled = vi.fn();
+  const localTurn = vi.fn(async (_input: { botId: string; threadId: string; text: string; source: import("./store.ts").Message; signal: AbortSignal }) => "OMB管理の結果です。");
   const create = () => {
-    const service = new NativeOmpService({ dir, store, generate, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: async () => "短い回答" }, settled });
+    const service = new NativeOmpService({ dir, store, generate, localTurn, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: async () => "短い回答" }, settled });
     services.push(service); return service;
   };
   const service = create();
-  return { dir, bot, store, generate, open, settled, create, service, binding };
+  return { dir, bot, store, generate, localTurn, open, settled, create, service, binding };
 }
 
 it("automatically pins each Bot thread while refusing another Bot's thread", () => {
@@ -100,7 +102,7 @@ it("a non-owner cannot inspect or change the native destination", async () => {
 
 it("attachments cannot reach the native conversation as text markers", () => {
   const f = fixture();
-  expect(() => f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, '<attached-file path="/private/file" />')).toThrow(/plain text/);
+  expect(() => f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, '<attached-file path="/private/file" />')).toThrow(/未対応/);
   expect(f.generate).not.toHaveBeenCalled(); expect(f.open).not.toHaveBeenCalled();
 });
 
@@ -461,7 +463,7 @@ it("retries classifier failures without turning them into owner approval request
   await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.text?.includes("高リスク判定を再試行"))).toBe(true));
   expect(f.client.answerUi).not.toHaveBeenCalled();expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType==="permission")).toBe(false);
   await vi.waitFor(()=>expect(f.client.answerUi).toHaveBeenCalledWith("retry-then-proceed",{value:"Approve"}),{timeout:3500});
-  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.text?.includes("途中経過"))).toHaveLength(1);f.complete();
+  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.text?.includes("Pi / OhMyPi に依頼中"))).toHaveLength(1);f.complete();
 });
 
 it("shows an approval card only for a concrete high-risk finding and includes its reason", async () => {
@@ -478,7 +480,7 @@ it("keeps native progress after a shared job disconnect and folds it into the re
   await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry",{entryId:"progress-own",role:"user",text:source.text,sessionId:"native-one",own:true,activeOwn:false,snapshot:true});
   f.native.emit("nativeTool",{type:"tool_execution_start",toolName:"read"});
-  const progress=f.store.messagesFor(f.bot.threadId).find(m=>m.text?.includes("途中経過"))!;
+  const progress=f.store.messagesFor(f.bot.threadId).findLast(m=>m.text?.includes("Pi / OhMyPi に依頼中"))!;
   expect(progress.text).toContain("ファイル・情報の確認を進めています");expect(progress.turnTerminal).not.toBe(true);
   f.native.emit("nativeTool",{type:"tool_execution_end",toolName:"read",isError:false});
   expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===progress.id)?.text).toContain("が終わりました");
@@ -496,7 +498,7 @@ it("uses a new foldable progress turn for native work continuing after a complet
   await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry",{entryId:"continuation-own",role:"user",text:source.text,sessionId:"native-one",own:true,activeOwn:false,snapshot:true});
   f.native.emit("nativeTool",{type:"tool_execution_start",toolName:"bash"});
-  const progress=f.store.messagesFor(f.bot.threadId).find(m=>m.text?.includes("途中経過"))!;
+  const progress=f.store.messagesFor(f.bot.threadId).findLast(m=>m.text?.includes("Pi / OhMyPi に依頼中"))!;
   expect(progress.turnId).not.toBe(`omp-${source.id}`);
   f.native.emit("nativeEntry",{entryId:"continuation-final",role:"assistant",text:"追加の確認も完了です。",stopReason:"stop",sessionId:"native-one",own:false,activeOwn:false,snapshot:false});
   expect(f.store.messagesFor(f.bot.threadId).find(m=>m.nativeOmp?.entryId==="continuation-final")).toMatchObject({turnId:progress.turnId,turnTerminal:true});
@@ -566,7 +568,7 @@ it("idle shared-state refresh does not consume a grant for the next request", as
   writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
   const service = f.create();
   Object.assign(f.native, { answerUi: vi.fn() });
-  let finish!: (value: unknown) => void;
+  let finish!: (value: Awaited<ReturnType<NativeOmpTransport["submit"]>>) => void;
   vi.mocked(f.native.submit).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   service.start();
   service.ownerConsent(f.bot.id, f.bot.threadId, "全て許可");
@@ -578,4 +580,64 @@ it("idle shared-state refresh does not consume a grant for the next request", as
   await vi.waitFor(() => expect(f.native.answerUi).toHaveBeenCalledWith("idle-grant-tool", { value: "Approve" }));
   finish({ requestId: "fixture", sessionId: "native-one", sessionFile: "/fixture/session", text: "完了" });
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+});
+
+
+it("answers consultation through the mediator without opening or submitting to OhMyPi", async () => {
+  const f = fixture();
+  f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: "実行せず相談したい" });
+  f.generate.mockResolvedValue(JSON.stringify({ action: "reply", answer: "設計の相談として答えます。実機は未確認です。" }));
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "WOLとMCPの使い分けは？");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  expect(f.open).not.toHaveBeenCalled(); expect(f.localTurn).not.toHaveBeenCalled();
+  const reply = f.store.messagesFor(f.bot.threadId).find(m => m.turnTerminal);
+  expect(reply?.text).toContain("実機は未確認"); expect(reply?.nativeOmp).toBeUndefined();
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === source.id)?.requestPending).toBe(false);
+  expect(f.generate.mock.calls[0]![2]).toContain("実行せず相談したい");
+});
+
+it("runs OMB management with the same input and settles only after the bounded handler returns", async () => {
+  const f = fixture(); f.generate.mockResolvedValue(JSON.stringify({ action: "omb", note: "OMBの通知設定" }));
+  let finish!: (value: string) => void;
+  f.localTurn.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const done = vi.fn();
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "OMBの定期実行を一覧で見せて", {}, undefined, done);
+  await vi.waitFor(() => expect(f.localTurn).toHaveBeenCalledOnce());
+  expect(f.open).not.toHaveBeenCalled(); expect(f.settled).not.toHaveBeenCalled(); expect(done).not.toHaveBeenCalled();
+  const local = f.localTurn.mock.calls[0]![0];
+  expect(local.source.id).toBe(source.id); expect(local.text).toBe(source.text);
+  expect(f.store.messagesFor(f.bot.threadId).filter(m => m.role === "user")).toHaveLength(1);
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.turnTerminal)).toBe(false);
+  finish("OMB側の確認結果です。");
+  await vi.waitFor(() => expect(done).toHaveBeenCalledOnce());
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.turnTerminal)?.text).toBe("OMB側の確認結果です。");
+});
+
+it("invalid route output never falls back to forwarding consultation", async () => {
+  const f = fixture(); f.generate.mockResolvedValue("これは普通の相談です");
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "この構成について相談したい");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  expect(f.open).not.toHaveBeenCalled(); expect(f.localTurn).not.toHaveBeenCalled();
+});
+
+
+it("submits uploaded image bytes to the existing native session and retains the original OMB attachment", async () => {
+  const f = sharedFixture();
+  const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6T1IAAAAASUVORK5CYII=", "base64");
+  const image = saveImage(bytes, "image/png");
+  const text = `この画像をPiの作業に使って\n\n<attached-image path="${image.path}" />`;
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, text);
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  expect(f.native.submit).toHaveBeenCalledWith(source.id, "この画像をPiの作業に使って\n\n", [{ type: "image", mimeType: "image/png", data: bytes.toString("base64") }]);
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === source.id)?.text).toBe(text);
+  expect(f.generate.mock.calls[0]?.[4]?.[0]?.path).toBe(image.path);
+});
+
+it("image-only consultation can be answered without a native submission", async () => {
+  const f = fixture();
+  const image = saveImage(Buffer.from("fixture-image"), "image/png");
+  f.generate.mockResolvedValue(JSON.stringify({ action: "reply", answer: "添付画面の意味を説明します。Piにはアクセスしていません。" }));
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, `<attached-image path="${image.path}" />`);
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  expect(f.open).not.toHaveBeenCalled(); expect(f.generate.mock.calls[0]?.[4]?.[0]?.path).toBe(image.path);
 });

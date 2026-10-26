@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { saveImage } from "./attachments.ts";
 import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
 import { DirectCodexService } from "./direct-codex-service.ts";
@@ -185,4 +186,17 @@ it("reports an empty final answer instead of promoting commentary into a success
   expect(f.store.messagesFor(f.bot.threadId).filter(m => m.turnId === "empty-app" && m.turnSucceeded === false)).toHaveLength(1);
   expect(f.store.messagesFor(f.bot.threadId).some(m => m.nativeCodex?.originalText === "これから操作します")).toBe(false);
   expect(f.format).not.toHaveBeenCalled();
+});
+
+
+it("sends attached images to a fixed native Codex thread without losing them in the mediator", async () => {
+  const f = fixture(true); const selection = { providerId: "fixture", modelId: "small", timeoutMs: 1000 };
+  await f.route("PUT", { bindings: [{ ...f.binding, mediator: selection }] });
+  const image = saveImage(Buffer.from("synthetic-image"), "image/png");
+  const text = `<attached-image path="${image.path}" />`;
+  const source = f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, text);
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  const turn = f.calls.find(call => call.method === "turn/start");
+  expect(turn.params.input).toContainEqual({ type: "localImage", path: image.path });
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === source.id)?.text).toBe(text);
 });

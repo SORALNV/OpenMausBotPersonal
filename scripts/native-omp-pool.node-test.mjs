@@ -63,3 +63,11 @@ test('different saved sessions in one directory have distinct owners and an unpi
  assert.equal(clients.filter(c=>!c.options.host).length,2);
  first.close();alias.close();assert.equal(second.options.host.closed,false);
 });
+
+test('queued shared views preserve the image payload while serializing native inputs',async t=>{
+ const f=fixture();t.after(()=>f.pool.close());const images=[{type:'image',mimeType:'image/png',data:'aW1hZ2U='}];
+ const first=f.one.submit('plain-first','A'),second=f.two.submit('image-second','B',images);
+ await pause(300);f.complete(f.one,'plain','A','First');await first;await pause(300);
+ const sent=f.sent.find(e=>e.threadId==='two'&&e.frame.t==='prompt');assert.deepEqual(sent.frame.images,images);
+ f.complete(f.two,'image','B','Second');await second;
+});

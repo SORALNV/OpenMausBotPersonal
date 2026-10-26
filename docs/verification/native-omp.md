@@ -268,3 +268,23 @@ Owner controls use the same destination and auth checks as chat; guarded,
 quoted, client-only and tool-originated text cannot grant permission.
 Unmatched execution events leave the receipt unconfirmed. The fake disk-format
 operation is a protocol fixture and never runs a disk command.
+
+## Local routing and concise progress
+
+The isolated HTTP fixture verifies mediator-only consultation, fixed OMB API
+calls, the existing profile-change application policy and zero additional native prompts
+for those requests. Service fixtures verify a single original input, settlement,
+no native fallback on malformed routing and native progress continuity. Local
+manager tests reject shells, executable registration and delegation even when
+present in the catalog, intersect owner restrictions and deduplicate calls.
+A live tool-free Luna check uses synthetic requests and no Pi access; it covers
+consultation, OMB settings, Pi operations, session creation, ambiguity, follow-up
+context and quoted malicious instructions. Physical iPhone rendering is untested.
+
+Image checks upload synthetic bytes through the real attachment API, verify the
+native `images` payload and original OMB attachment, exercise image-only local
+consultation, shared queue preservation, direct Codex `localImage`, reused IDs
+with different image bytes, symlink replacement and size limits. A synthetic red
+PNG was recognised by a live tool-free Luna call; no real photograph was used.
+The standard host protocol was checked at OhMyPi v18.12.5 (`collab/protocol.ts`,
+`host.ts`, `guest.ts`); OhMyPi itself is not patched.

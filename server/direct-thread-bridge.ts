@@ -1,9 +1,11 @@
+import type { TurnImageInput } from "./contracts.ts";
 import type { DirectThreadBinding, ReplyFormatterSelection } from "../shared/direct-codex.ts";
 export type { DirectThreadBinding, ReplyFormatterSelection } from "../shared/direct-codex.ts";
 
 export interface DirectTurnInput {
   requestId: string;
   text: string;
+  images?: readonly TurnImageInput[];
 }
 
 export interface DirectTurnReply {

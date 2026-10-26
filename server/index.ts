@@ -114,6 +114,9 @@ import { DataFailure } from "./data/types.ts";
 import { TeamComputers, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
 import { isEffortLevel, type CardAnswerer, type ResolvedSender, type SignInRequestCardData, type SteerQueueReason, type WireBot, type WireGroup, type WireTask } from "../shared/wire.ts";
 import { isPersistentQuestionCard, shouldSettleRequestCard } from "../shared/ask-question.ts";
+import { runNativeOmpLocal } from "./native-omp-local.ts";
+import { availableTools, catalogProfileFromEnv } from "./drivers/agents-catalog.ts";
+import { callTool as callNativeOmpLocalTool, toolCallContextFromEnv } from "./drivers/agents-call.ts";
 import { parseToolScope } from "../shared/tool-scope.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
 import { boatCreateRecoverySnapshot } from "./boat-create-idempotency.ts";
@@ -13582,7 +13585,25 @@ const toolResults = new ToolResults();
 const { personalPrivacy, personalPrivacyRoute } = createPersonalPrivacyRoutes(DATA_DIR, id => Boolean(store.botByThread(id) || store.groupByThread(id)), id => routines?.runForThread(id) ?? null);
 if (process.env.OMB_PERSONAL_BUILD === "1") {
   nativeOmp = new NativeOmpService({ dir: join(DATA_DIR, "private"), store,
-    generate: (...args) => generateIndependentCodexText(registry, ...args), formatter: directReplyFormatter(registry), settled: drainQueuedSends });
+    generate: (...args) => generateIndependentCodexText(registry, ...args), formatter: directReplyFormatter(registry), settled: drainQueuedSends,
+    localTurn: async ({ botId, threadId, text, source, signal, images }) => {
+      const binding = nativeOmp!.binding(botId, threadId);
+      if (!binding) throw Error("有効なOMB接続がありません。");
+      signal.throwIfAborted();
+      const generation = beginInternalCapabilityGeneration(threadId);
+      const env = agentsIntegration(botId, threadId, 0, false, generation).env;
+      const context = toolCallContextFromEnv(env);
+      const client = context.client;
+      context.client = { api: (path, init) => client.api(path, { ...init, signal }), apiResponse: (path, init) => client.apiResponse(path, { ...init, signal }) };
+      const revoke = () => revokeInternalCapabilityGeneration(threadId, generation);
+      signal.addEventListener("abort", revoke, { once: true });
+      try {
+        return await runNativeOmpLocal({ binding, request: text, images, signal, scope: toolScopeForTurn(botId), tools: availableTools(catalogProfileFromEnv(env)),
+          generate: (...args) => generateIndependentCodexText(registry, ...args),
+          call: (name, args) => callNativeOmpLocalTool(name, args, context),
+          record: (name, ok) => { store.appendMessage(threadId, { role: "bot", kind: "activity", requestMessageId: source.id, turnId: `omp-${source.id}`, tool: { name: `OMB/${name}`, ok } }); } });
+      } finally { signal.removeEventListener("abort", revoke); revoke(); }
+    } });
   ROUTES.push(nativeOmp.route);
   nativeOmp.start();
   process.once("exit", () => nativeOmp?.close());

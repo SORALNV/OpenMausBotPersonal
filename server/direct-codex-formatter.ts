@@ -1,3 +1,4 @@
+import type { TurnImageInput } from "./contracts.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
@@ -29,13 +30,14 @@ export async function openNativeCodex(): Promise<NativeClient> {
   catch (error) { await client.close(); throw error; }
 }
 
-export async function generateIndependentCodexText(registry: Pick<ProviderRegistry, "get">, providerId: string, modelId: string, prompt: string, signal: AbortSignal): Promise<string> {
+export async function generateIndependentCodexText(registry: Pick<ProviderRegistry, "get">, providerId: string, modelId: string, prompt: string, signal: AbortSignal, images?: readonly TurnImageInput[]): Promise<string> {
   if (providerId === "codex-native") {
     const { cli, home } = nativeCodexLocation();
     const env = Object.fromEntries(["PATH", "HOME", "USERPROFILE", "TMPDIR", "LANG", "SYSTEMROOT"].flatMap(key => process.env[key] ? [[key, process.env[key]]] : []));
     return runCodexOneShot({ spawn: spawnCli, kill: killCliTree, cli, env: { ...env, CODEX_HOME: home, CODEX_SQLITE_HOME: home },
-      prompt, model: modelId, providerArgs: [], options: { signal, timeoutMs: 60000 } });
+      prompt, images, model: modelId, providerArgs: [], options: { signal, timeoutMs: 60000 } });
   }
+  if (images?.length) throw new Error("この仲介モデルの接続は画像に未対応です。画像対応のCodex仲介を選んでください。");
   const provider = registry.get(providerId);
   if (!provider?.generateText) throw new Error("The selected provider has no independent text generator");
   return provider.generateText(prompt, { model: modelId, signal, timeoutMs: 60000 });

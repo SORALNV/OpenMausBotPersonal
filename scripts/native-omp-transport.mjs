@@ -111,11 +111,11 @@ export class NativeOmpTransport extends EventEmitter {
     return session;
   }
 
-  async submit(requestId, text) {
+  async submit(requestId, text, images = []) {
     if (!this.session) throw new Error("Initialize the pinned session first");
     if (this.failure) throw this.failure;
     if (typeof requestId !== "string" || !requestId.trim() || requestId.length > 200 || typeof text !== "string" || !text.trim() || text.length > 100_000) throw new Error("Invalid native request");
-    const digest = createHash("sha256").update(text).digest("hex");
+    const digest = createHash("sha256").update(JSON.stringify([text, images])).digest("hex");
     const previous = this.receipts.get(requestId);
     if (previous) {
       if (previous.digest !== digest) throw new Error("Request ID reused with different text");
@@ -127,7 +127,7 @@ export class NativeOmpTransport extends EventEmitter {
     void promise.catch(() => {});
     this.turn = { id: requestId, pending, texts: [], result: null, settled: false, messages: new Set() };
     this.receipts.set(requestId, { digest, promise });
-    try { this.send({ id: requestId, type: "prompt", message: text }); }
+    try { this.send({ id: requestId, type: "prompt", message: text, ...(images.length ? { images } : {}) }); }
     catch (error) { this.fail(error); }
     return promise;
   }

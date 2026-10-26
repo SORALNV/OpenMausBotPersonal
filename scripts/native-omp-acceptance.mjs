@@ -40,7 +40,7 @@ try {
   const selection = { providerId: "codex-native", modelId: "gpt-6-luna", timeoutMs: 10_000 };
   const binding = { botId: bot.id, enabled: true, host: "fixture.tailnet.test", user: "fixture", binary: "/fixture/omp", stateRoot: "/fixture/threads", profile: "omb-native", cwd: "/fixture/workspace", model: "openai-codex/fixture", mediator: selection, formatter: selection };
   await api("/api/native-omp", { method: "PUT", body: { bindings: [binding] } });
-  const messages = (thread = threadId) => api(`/api/threads/${thread}/messages?limit=150`);
+  const messages = (thread = threadId) => api(`/api/threads/${thread}/messages?limit=500`);
   const send = text => tool("send_bot_message", { bot_id: bot.id, task_id: threadId, text });
   const terminalCount = async () => (await messages()).messages.filter(message => message.turnTerminal).length;
   const settled = count => until(messages, value => value.messages.filter(message => message.nativeOmp?.formatted).length >= count);
@@ -125,7 +125,7 @@ try {
   assert.equal((await messages()).messages.filter(m => m.card?.requestType === "permission").length, cardsBefore);
   const inspected = (await messages()).messages;
   const inspectionRequest = inspected.find(m => m.role === "user" && m.text?.includes("SYNTHETIC_REVIEW_INSPECTION"));
-  assert.ok(inspected.some(m => m.requestMessageId === inspectionRequest.id && m.kind === "text" && m.text?.includes("途中経過")));
+  assert.ok(inspected.some(m => m.requestMessageId === inspectionRequest.id && m.kind === "text" && m.text?.includes("Pi / OhMyPi に依頼中")));
   const responseCount = calls().filter(c => c.type === "extension_ui_response").length;
   await send("SYNTHETIC_REVIEW_IMPORTANT");
   const importantState = await until(messages, value => value.messages.some(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired));
@@ -164,6 +164,44 @@ try {
   const pendingAgain = afterConsent.messages.find(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.expired);
   await api(`/api/bots/${bot.id}/respond`, { method: "POST", body: { threadId, requestId: pendingAgain.card.requestId, behavior: "deny" } });
   await settled(consentBefore + 2);
+  const beforeLocal = calls().filter(call => call.type === "prompt").length;
+  await send("実行せず設計を相談したい。FIXTURE_LOCAL_ADVICE");
+  const localAdvice = await until(messages, value => value.messages.some(m => m.text === "相談として説明します。実機は確認していません。" && m.turnTerminal));
+  assert.ok(localAdvice.messages.some(m => m.text === "相談として説明します。実機は確認していません。" && !m.nativeOmp));
+  assert.equal(calls().filter(call => call.type === "prompt").length, beforeLocal);
+  await send("OMBの定期実行設定を確認して。FIXTURE_OMB_LOCAL");
+  const localSettings = await until(messages, value => {
+    const source = value.messages.find(m => m.role === "user" && m.text?.includes("FIXTURE_OMB_LOCAL"));
+    return source && value.messages.some(m => m.requestMessageId === source.id && m.turnTerminal);
+  });
+  const localSource = localSettings.messages.find(m => m.role === "user" && m.text?.includes("FIXTURE_OMB_LOCAL"));
+  const localFinal = localSettings.messages.find(m => m.requestMessageId === localSource.id && m.turnTerminal);
+  assert.equal(localFinal.turnSucceeded, true, localFinal.text);
+  assert.equal(calls().filter(call => call.type === "prompt").length, beforeLocal);
+  assert.equal(localSettings.messages.filter(m => m.role === "user" && m.text?.includes("FIXTURE_OMB_LOCAL")).length, 1);
+  assert.ok(localSettings.messages.some(m => m.tool?.name === "OMB/list_triggers" && m.tool.ok));
+  await until(() => api("/api/bots?messages=0"), value => !value.bots.find(b => b.id === bot.id).tasks.find(t => t.threadId === threadId).busy);
+  await send("OMB側のこのBotの説明を架空のNAS管理担当へ変えて。FIXTURE_OMB_PROFILE");
+  const profileState = await until(messages, value => value.messages.some(m => m.card?.profileRequest && m.card.answered === "allow"));
+  assert.ok(profileState.messages.some(m => m.card?.profileRequest && m.card.autoApplied));
+  assert.equal((await api("/api/bots?messages=0")).bots.find(b => b.id === bot.id).description, "架空のNAS管理担当");
+  await until(messages, value => value.messages.some(m => m.role === "user" && m.text?.includes("FIXTURE_OMB_PROFILE") && !m.requestPending));
+  assert.equal(calls().filter(call => call.type === "prompt").length, beforeLocal);
+  const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6T1IAAAAASUVORK5CYII=", "base64");
+  const uploadResponse = await fetch(url + "/api/attachments", { method: "POST", headers: { "content-type": "image/png", authorization: `Bearer ${ownerToken}` }, body: imageBytes });
+  assert.equal(uploadResponse.status, 201); const upload = await uploadResponse.json();
+  const imagePrompt = `添付画像をPiの作業に使って。SYNTHETIC_IMAGE\n\n<attached-image path="${upload.path}" />`;
+  await send(imagePrompt);
+  await until(messages, value => value.messages.some(m => m.nativeOmp?.originalText?.includes("SYNTHETIC_IMAGE") && m.nativeOmp.formatted));
+  const imageCall = calls().find(call => call.type === "prompt" && call.message?.includes("SYNTHETIC_IMAGE"));
+  assert.deepEqual(imageCall.images, [{ type: "image", mimeType: "image/png", data: imageBytes.toString("base64") }]);
+  assert.ok(!imageCall.message.includes(upload.path));
+  assert.ok((await messages()).messages.some(m => m.role === "user" && m.text === imagePrompt));
+  const promptsBeforeImageAdvice = calls().filter(call => call.type === "prompt").length;
+  const imageAdvice = `画像の相談だけです。FIXTURE_LOCAL_ADVICE\n\n<attached-image path="${upload.path}" />`;
+  await send(imageAdvice);
+  await until(messages, value => value.messages.some(m => m.role === "user" && m.text === imageAdvice && !m.requestPending));
+  assert.equal(calls().filter(call => call.type === "prompt").length, promptsBeforeImageAdvice);
   const created = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   const duplicate = await api("/api/native-omp/sessions", { method: "POST", body: { botId: bot.id, threadId, name: "架空のUIプロジェクト", requestId: "fixture-ui-project" } });
   assert.equal(created.session.id, duplicate.session.id);
@@ -192,7 +230,7 @@ try {
   await send("SYNTHETIC_PROGRESS");
   const liveProgress = await until(messages, value => value.messages.some(message => message.text?.includes("架空の設定を確認しました。続いてテストします。") && message.turnId && !message.turnTerminal));
   const progressLine = liveProgress.messages.find(message => message.text?.includes("架空の設定を確認しました。続いてテストします。"));
-  assert.ok(liveProgress.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.text?.includes("途中経過")));
+  assert.ok(liveProgress.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.text?.includes("Pi / OhMyPi に依頼中")));
   assert.ok(!liveProgress.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal));
   const progressDone = await until(messages, value => value.messages.some(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal));
   const terminal = progressDone.messages.find(message => message.requestMessageId === progressLine.requestMessageId && message.turnTerminal);
@@ -202,7 +240,7 @@ try {
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
     nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
     namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
-    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, explicitOwnerConsentWhileBusy: true, highRiskExecutionReceipt: true, consentExpiresAtCompletion: true, noSessionWideGrant: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
+    mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, nativeUploadedImageBytesVerified: true, imageConsultationWithoutNative: true, consultationAnsweredWithoutNative: true, ombSettingsUseLocalHarness: true, ombProfileUsesExistingApplyPolicy: true, localNativeExecutionExcluded: true, explicitOwnerConsentWhileBusy: true, highRiskExecutionReceipt: true, consentExpiresAtCompletion: true, noSessionWideGrant: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
 } catch (error) {
   writeFileSync(join(reportDir, "fixture-error.log"), logs, { mode: 0o600 });

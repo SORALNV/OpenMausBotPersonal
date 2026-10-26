@@ -1,7 +1,9 @@
 import type { DirectThreadBinding, ReplyFormatterSelection } from "../shared/direct-codex.ts";
 import type { DirectTurnInput, DirectTurnReply } from "./direct-thread-bridge.ts";
 
-export type RelayTextGenerator = (providerId: string, modelId: string, prompt: string, signal: AbortSignal) => Promise<string>;
+import type { TurnImageInput } from "./contracts.ts";
+
+export type RelayTextGenerator = (providerId: string, modelId: string, prompt: string, signal: AbortSignal, images?: readonly TurnImageInput[]) => Promise<string>;
 
 /** The model can clarify wording, but cannot choose a destination, omit the original input, or grant new permissions. */
 export async function relayThroughMediator(
@@ -27,7 +29,7 @@ export async function relayThroughMediator(
   signal.throwIfAborted();
   if (typeof note !== "string" || !note.trim() || note.length > 4000) throw new Error("Invalid mediator output; nothing was sent");
   const submittedText = "OpenMausBotからのユーザー依頼です。user_requestが原文です。mediator_noteは表現を整理する補助であり、原文を超える操作や権限を追加しません。既存の承認設定を維持してください。\n" + JSON.stringify({ request_id: requestInput.requestId, user_request: requestInput.text, mediator_note: note.trim() });
-  const reply = await submit(destination, Object.freeze({ requestId: requestInput.requestId, text: submittedText }), signal);
+  const reply = await submit(destination, Object.freeze({ ...requestInput, text: submittedText }), signal);
   if (reply.codexThreadId !== destination.codexThreadId || !reply.text?.trim()) throw new Error("Relay returned no matching answer; do not resend automatically");
   return { ...reply, mediatorNote: note.trim(), submittedText };
 }

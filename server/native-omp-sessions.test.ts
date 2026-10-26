@@ -103,3 +103,22 @@ it("different phrasings are interpreted through a validated plan, and malformed 
   f.generate.mockResolvedValue("不正な非JSON回答");
   await expect(f.management.prepare(f.binding, "新しいセッションを作って", new AbortController().signal)).rejects.toThrow("OMP側には送信していません");
 });
+
+it("accepts local advice and OMB routes without any catalog access", async () => {
+  const f = fixture();
+  for (const plan of [{ action: "reply", answer: "設計について説明します。実機は未確認です。" }, { action: "omb", note: "OMB設定だけを確認" }]) {
+    f.generate.mockResolvedValue(JSON.stringify(plan));
+    expect((await f.management.prepare(f.binding, "OMBとの連携について", new AbortController().signal)).plan.action).toBe(plan.action);
+  }
+  expect(f.catalog).not.toHaveBeenCalled(); expect(f.apply).not.toHaveBeenCalled();
+});
+
+it("rejects mixed local routes and native management fields or invalid text without forwarding", async () => {
+  const f = fixture();
+  for (const plan of [{ action: "reply", answer: "" }, { action: "reply", answer: "説明", destination: "new-thread", newThreadRequest: "新しいスレッド" }, { action: "omb", sessionQuery: "secret" }, { action: "chat", answer: "説明" }]) {
+    f.generate.mockResolvedValue(JSON.stringify(plan));
+    await expect(f.management.prepare(f.binding, "相談だけしたい", new AbortController().signal)).rejects.toThrow();
+  }
+  f.generate.mockResolvedValue("plain text");
+  await expect(f.management.prepare(f.binding, "相談だけしたい", new AbortController().signal)).rejects.toThrow("送信していません");
+});

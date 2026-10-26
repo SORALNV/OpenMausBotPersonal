@@ -1,3 +1,4 @@
+import { nativeAttachmentInput } from "./native-attachments.ts";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -189,7 +190,8 @@ export class DirectCodexService {
   }
   dispatch(binding: Binding, text: string, fields: Pick<Message, "sendId" | "sender" | "via" | "callId"> = {}, existingSource?: Message, onSettled?: () => void): Message {
     if (this.changing || this.syncing.has(binding.threadId) || this.active.has(binding.threadId) || this.store.taskByThread(binding.botId, binding.threadId)?.busy) throw error("Native thread is already working");
-    if (!text.trim() || text.length > 100_000 || /<attached-(?:image|file|audio)\b|\[.*?\]\((?:attachment:|\/?api\/attachments\/)|data:(?:image|audio)\//i.test(text)) throw error("Direct Codex accepts plain text only");
+    if (text.length > 100_000) throw error("メッセージが長すぎます。");
+    nativeAttachmentInput(text);
     const source = existingSource ?? this.store.appendMessage(binding.threadId, { role: "user", kind: "text", text, ...fields, requestPending: true });
     if (existingSource) this.store.patchMessage(binding.threadId, source.id, { requestPending: true });
     this.store.setTaskActivity(binding.botId, binding.threadId, "working");
@@ -214,7 +216,8 @@ export class DirectCodexService {
       const bridge = new DirectThreadBridge([binding], { submit: (_b, input) => binding.mediator
         ? relayThroughMediator(binding, input, binding.mediator, this.generate!, submit, active.controller.signal)
         : submit(binding, input) }, this.formatter);
-      const result = await bridge.send(binding.botId, binding.threadId, { requestId: active.source.id, text }, binding.formatter);
+      const input = nativeAttachmentInput(text);
+      const result = await bridge.send(binding.botId, binding.threadId, { requestId: active.source.id, text: input.text, ...(input.images.length ? { images: input.images } : {}) }, binding.formatter);
       resolved();
       const reply = this.store.appendMessage(binding.threadId, { role: "bot", kind: "text", text: result.rawText, turnId: result.turnId,
         requestMessageId: active.source.id, turnSucceeded: true, turnTerminal: true, turnCompletedAt: Date.now(),
