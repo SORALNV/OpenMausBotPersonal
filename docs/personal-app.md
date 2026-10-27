@@ -108,3 +108,12 @@ node scripts/personal-install-runtime.mjs
 関連単体・回帰302件、使い捨てHOMEの標準fixtureとdoctor、設定UIの架空データプレビュー、実MCPプロキシと模擬AIによる定期実行検証が通過した。配布用にコンパイルしたサーバーでも同じ置換・復元・未登録メールの非検出・画像拒否・設定破損時の送信停止を再確認し、独立したパッケージ起動検証も成功。UI・サーバー型検査、lint、ソース制約も通過した。全リポジトリのテスト完走や実大学チャット・実AI・Piへの操作検証ではない。
 
 導入前の全データ・Electronプロファイルと旧ランタイムへのポインターをローカルへ保存してから、ランタイムだけを更新した。既存2436メッセージは欠落・本文・JSON変更0件。置換ルールと対応表、Google Chat・M1/Pi接続設定、Botとグループ設定を保持した。固定ランチャーのCDHashとASARは不変で、今回の起動時に追加のキーチェーン確認は出なかった。8897で起動し、スマホ用中継のreadyと実アプリの新設定画面を確認した。証拠はGit対象外の `.privacy-dev/opf-removal/report.json`。
+
+## Bot内でビルドする場合のログイン元
+
+ビルド時の共有ログイン元は既定で `~/.codex` を使う。Botに継承された
+`CODEX_HOME` は専用履歴の保存先であり、共有ログイン元として埋め込まない。
+別の共有ログイン元が必要な場合だけ `OMB_PERSONAL_CODEX_LOGIN_HOME` に絶対パスを指定する。
+専用履歴との重複と、そのシンボリックリンクによる別名指定はビルド・インストール時に拒否する。
+`node --test scripts/personal-login-home.node-test.mjs electron/personal-codex-home.node-test.mjs`
+で架空の保存先と使い捨てHOMEを検証する。認証ファイルのコピー・差し替えはしない。

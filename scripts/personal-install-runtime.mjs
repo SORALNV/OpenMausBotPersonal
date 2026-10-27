@@ -1,3 +1,4 @@
+import { personalLoginHome } from "./personal-login-home.mjs";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -41,6 +42,9 @@ if (existsSync(active)) writeFileSync(join(backup, "active.json"), readFileSync(
 const pnpm = join(repo, "node_modules/.pnpm");
 const { readdirSync } = await import("node:fs");
 const asar = createRequire(import.meta.url)(join(pnpm, readdirSync(pnpm).find(name => name.startsWith("@electron+asar@")), "node_modules/@electron/asar/lib/asar.js"));
+const stagedMetadata = JSON.parse(asar.extractFile(join(version, "OpenMausBot Runtime.app/Contents/Resources/app.asar"), "personal-build.json").toString());
+if (typeof stagedMetadata.codexHome !== "string") throw new Error("Runtime shared Codex login home is missing");
+personalLoginHome({ home: homedir(), env: { OMB_PERSONAL_CODEX_LOGIN_HOME: stagedMetadata.codexHome } });
 let current;
 try { current = JSON.parse(asar.extractFile(join(destination, "Contents/Resources/app.asar"), "personal-launcher.json").toString()); } catch { current = null; }
 const migrate = !current || process.argv.includes("--migrate-launcher");
