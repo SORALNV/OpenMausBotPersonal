@@ -197,7 +197,7 @@ it("disk formatting still needs a human even with an always-allow model", async 
   expect(f.client.answerUi).not.toHaveBeenCalled();
   expect(f.generate).toHaveBeenCalledTimes(1);
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
-  expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
+  expect(await f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
   expect(f.client.answerUi).toHaveBeenCalledWith("format", { value: "Deny" });
   f.complete(); await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
 });
@@ -223,7 +223,7 @@ it("shared native approval listeners survive completed BOT turns", async () => {
   f.native.emit("question", { id: "after-turn", method: "select", title: "Allow tool: write\nPath: proc://fixture", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
-  expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
+  expect(await f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
   expect(f.native.answerUi).toHaveBeenCalledWith("after-turn", { value: "Deny" });
   expect(f.native.listenerCount("question")).toBe(1);
 });
@@ -236,7 +236,7 @@ it("shared pending approvals remain reachable after a BOT request fails", async 
   f.native.emit("question", { id: "orphan", method: "select", title: "Allow tool: bash\nCommand: systemctl restart fixture", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
-  expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
+  expect(await f.service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
   expect(f.native.answerUi).toHaveBeenCalledWith("orphan", { value: "Deny" });
   expect(f.generate).toHaveBeenCalledTimes(1);
 });
@@ -252,7 +252,7 @@ it("a replayed shared approval is surfaced immediately on startup without a new 
   const service = f.create(); service.start();
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
-  expect(service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
+  expect(await service.answer(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
   expect(f.native.answerUi).toHaveBeenCalledWith("replayed", { value: "Deny" });
   expect(f.native.submit).not.toHaveBeenCalled();
 });
@@ -314,8 +314,8 @@ it("renders ordinary native questions as questions and maps Japanese choices to 
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.questionRequest)).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.questionRequest)!.card!;
   expect(card.tool).toBeUndefined(); expect(card.requestType).toBe("question");
-  expect(f.service.answer(f.bot.threadId, card.requestId!, "allow")).toBe("unavailable");
-  expect(f.service.answer(f.bot.threadId, card.requestId!, "answer", formatQuestionAnswers(card.questionRequest!.questions, [["次"]]))).toBe("answered");
+  expect(await f.service.answer(f.bot.threadId, card.requestId!, "allow")).toBe("unavailable");
+  expect(await f.service.answer(f.bot.threadId, card.requestId!, "answer", formatQuestionAnswers(card.questionRequest!.questions, [["次"]]))).toBe("answered");
   expect(f.native.answerUi).toHaveBeenCalledWith("which", { value: "Next" });
 });
 
@@ -334,7 +334,7 @@ it("recovers the review context from admitted history after a failed BOT turn, b
   f.native.emit("nativeEntry", { entryId: "human", role: "user", text: "人間から別の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
   f.native.emit("question", { id: "human-inspection", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
   await new Promise(resolve => setImmediate(resolve));
-  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false);
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true);
   expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
 });
 
@@ -382,7 +382,7 @@ it("restores completed BOT authorization for native background work after restar
   f.native.emit("nativeEntry", { entryId: "next-human", role: "user", text: "別の人間の作業", sessionId: "native-one", own: false, activeOwn: false, snapshot: false });
   f.native.emit("question", { id: "human-next", method: "select", title: "Allow tool: bash\nCommand: command -v python3", options: ["Approve", "Deny"] });
   await new Promise(resolve => setImmediate(resolve));
-  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false);
+  expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true);
   expect(f.native.answerUi).toHaveBeenCalledTimes(1); expect(f.native.submit).toHaveBeenCalledOnce();
 });
 
@@ -403,7 +403,7 @@ it("an active OMB request never authorizes a new human native turn", async () =>
   f.native.emit("nativeEntry", { entryId: "active-human", role: "user", text: "新しい人間の依頼", sessionId: "native-one", own: false, activeOwn: true, snapshot: false });
   f.generate.mockResolvedValue('{"highRisk":false}');
   f.native.emit("question", { id: "human-during-bot", method: "select", title: "Allow tool: bash\nCommand: lsblk", options: ["Approve", "Deny"] });
-  await new Promise(resolve => setImmediate(resolve)); expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(false); expect(f.native.answerUi).not.toHaveBeenCalled();
+  await new Promise(resolve => setImmediate(resolve)); expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true); expect(f.native.answerUi).not.toHaveBeenCalled();
 });
 
 it("reads fresh edited source before reviewing execution and carries same-request human approvals", async () => {
@@ -418,7 +418,7 @@ it("reads fresh edited source before reviewing execution and carries same-reques
   await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestId)).toBe(true));
   const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestId)!;
   expect(card.requestMessageId).toBeTruthy();
-  expect(f.service.answer(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
+  expect(await f.service.answer(f.bot.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
   f.generate.mockResolvedValue('{"highRisk":false}');
   f.client.emit("question", { id: "tests", method: "select", title: "Allow tool: bash\nCommand: python3 -m unittest discover -s tests -v", options: ["Approve", "Deny"] });
   await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("tests", { value: "Approve" }));
@@ -442,7 +442,7 @@ it("revokes an in-flight model approval when a human takes over the shared TUI",
   f.native.emit("nativeEntry",{entryId:"takeover",role:"user",text:"人間による別作業",sessionId:"native-one",own:false,snapshot:false});
   finish('{"highRisk":false}');
   await new Promise(resolve => setImmediate(resolve));
-  expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType === "permission")).toBe(false);
+  expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType === "permission")).toBe(true);
   expect(f.native.answerUi).not.toHaveBeenCalled();
 });
 
@@ -640,4 +640,101 @@ it("image-only consultation can be answered without a native submission", async 
   f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, `<attached-image path="${image.path}" />`);
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
   expect(f.open).not.toHaveBeenCalled(); expect(f.generate.mock.calls[0]?.[4]?.[0]?.path).toBe(image.path);
+});
+
+it("does not mark a human decision answered until the native host acknowledges it", async () => {
+  const f = sharedFixture();
+  let acknowledge!: () => void;
+  Object.assign(f.native, { answerUi: vi.fn(() => new Promise<void>(resolve => { acknowledge = resolve; })) });
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の受領確認テスト");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("question", { id: "receipt", method: "select", title: "Allow tool: bash", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
+  const response = f.service.answer(f.bot.threadId, card.card!.requestId!, "deny");
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)?.card?.answered).toBeUndefined();
+  acknowledge();
+  expect(await response).toBe("rejected");
+  expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)?.card?.answered).toBe("deny");
+});
+
+it("keeps a decision pending and explains a lost native receipt in Japanese", async () => {
+  const f = sharedFixture();
+  Object.assign(f.native, { answerUi: vi.fn(async () => { throw Error("synthetic receipt lost"); }) });
+  f.service.dispatch(f.service.binding(f.bot.id, f.bot.threadId)!, "架空の回答通信障害テスト");
+  await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("question", { id: "lost-receipt", method: "select", title: "Allow tool: bash", options: ["Approve", "Deny"] });
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  const card = f.store.messagesFor(f.bot.threadId).find(m => m.card?.requestType === "permission")!;
+  expect(await f.service.answer(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
+  const messages = f.store.messagesFor(f.bot.threadId);
+  expect(messages.find(m => m.id === card.id)?.card?.answered).toBeUndefined();
+  expect(messages.find(m => m.id === card.id)?.card?.expired).not.toBe(true);
+  expect(messages.some(m => m.text?.includes("Piへの回答の受領を確認できませんでした"))).toBe(true);
+});
+
+it("steers through the shared input, records admission once and retains the original turn", async () => {
+  const f=sharedFixture();Object.assign(f.native,{canSteer:()=>true,requestStatus:()=>"accepted",steer:vi.fn(async()=>"steered")});
+  vi.mocked(f.native.submit).mockImplementation(()=>new Promise(()=>{}));
+  const binding=f.service.binding(f.bot.id,f.bot.threadId)!;
+  const original=f.service.dispatch(binding,"元の処理");await vi.waitFor(()=>expect(f.native.submit).toHaveBeenCalledOnce());
+  f.native.emit("nativeState",{busy:true,streaming:true});
+  const source=await f.service.steer(binding,"追加指示",{sendId:"synthetic-steer-send-0001"});
+  expect(source.steered).toBe(true);expect((f.native as any).steer).toHaveBeenCalledWith(source.id,"追加指示",[]);
+  expect(f.native.submit).toHaveBeenCalledOnce();expect(f.native.stop).not.toHaveBeenCalled();
+  f.native.emit("nativeEntry",{entryId:"steer-native",role:"user",text:"追加指示",own:true,activeOwn:true,snapshot:false,sessionId:"native-one"});
+  const ledger=JSON.parse(readFileSync(join(f.dir,"native-omp-ledger.json"),"utf8"));
+  expect(ledger[source.id]).toMatchObject({parentRequestId:original.id,admissionEntryId:"steer-native"});
+  expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.text==="追加指示")).toHaveLength(1);
+});
+
+it("refuses disconnected or idle native steer without adding an input or a native call", async () => {
+  const f=sharedFixture(),binding=f.service.binding(f.bot.id,f.bot.threadId)!;
+  const before=f.store.messagesFor(f.bot.threadId).length;
+  await expect(f.service.steer(binding,"送らない")).rejects.toThrow("本文は送信していません");
+  expect(f.store.messagesFor(f.bot.threadId)).toHaveLength(before);expect(f.native.submit).not.toHaveBeenCalled();
+});
+
+it("separates reconnecting and queued state from actual working without draining uncertain work", async () => {
+  const f=sharedFixture();f.service.dispatch(f.service.binding(f.bot.id,f.bot.threadId)!,"元の処理");
+  await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());f.settled.mockClear();
+  f.native.emit("nativeState",{busy:true,reconnecting:true});
+  expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.activity).toBe("no-signal");
+  expect(f.service.status(f.bot.threadId)?.state).toBe("reconnecting");
+  f.native.emit("nativeState",{busy:true,streaming:false,queued:2,waiting:false});
+  expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.activity).toBe("no-signal");
+  expect(f.service.status(f.bot.threadId)?.state).toBe("native-queued");expect(f.settled).not.toHaveBeenCalled();
+  f.native.emit("nativeState",{busy:false,streaming:false,queued:0,waiting:false});
+  expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.busy).toBe(false);expect(f.settled).toHaveBeenCalledOnce();
+});
+
+it("surfaces a recovered approval without request context instead of silently deadlocking mediator mode", async () => {
+  const f=sharedFixture();f.service.close();Object.assign(f.native,{answerUi:vi.fn()});
+  writeFileSync(join(f.dir,"native-omp.json"),JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}),{mode:0o600});
+  writeFileSync(join(f.dir,"native-omp-sessions.json"),JSON.stringify({[f.bot.threadId]:"native-one"}),{mode:0o600});
+  vi.mocked(f.native.initialize).mockImplementation(async()=>{
+    f.native.emit("nativeState",{busy:true,streaming:true,waiting:true});
+    f.native.emit("question",{id:"unowned-recovered",method:"select",title:"Allow tool: bash\nCommand: mkfs.ext4 /dev/sda",options:["Approve","Deny"]});
+    return {sessionId:"native-one",sessionFile:"/fixture/session",resumed:true,cancelled:false};
+  });
+  const service=f.create();service.start();
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.requestType==="permission")).toBe(true));
+  expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.activity).toBe("waiting-on-you");
+  expect(f.native.answerUi).not.toHaveBeenCalled();expect(f.native.submit).not.toHaveBeenCalled();
+  const card=f.store.messagesFor(f.bot.threadId).find(m=>m.card?.requestType==="permission")!;
+  expect(card.card?.subtitle).toContain("元の依頼と操作の対応を確認できない");
+  expect(await service.answer(f.bot.threadId,card.card!.requestId!,"deny")).toBe("rejected");
+});
+
+it("keeps an automatic approval with missing receipt visible rather than silently abandoning native input", async () => {
+  const f=sharedFixture();f.service.close();Object.assign(f.native,{answerUi:vi.fn(async()=>{throw Error("missing receipt");})});
+  writeFileSync(join(f.dir,"native-omp.json"),JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}),{mode:0o600});
+  const service=f.create(),source=service.dispatch(service.binding(f.bot.id,f.bot.threadId)!,"状態を調べて");
+  await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
+  f.native.emit("nativeEntry",{entryId:"approval-owner",role:"user",text:source.text,sessionId:"native-one",own:true,snapshot:false});
+  f.generate.mockResolvedValue('{"highRisk":false}');
+  f.native.emit("question",{id:"receipt-missing",method:"select",title:"Allow tool: bash\nCommand: lsblk",options:["Approve","Deny"]});
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.subtitle?.includes("受領を確認できません"))).toBe(true));
+  expect(f.native.answerUi).toHaveBeenCalledTimes(1);
+  expect(f.store.messagesFor(f.bot.threadId).find(m=>m.card?.requestType==="permission")?.card?.answered).toBeUndefined();
 });

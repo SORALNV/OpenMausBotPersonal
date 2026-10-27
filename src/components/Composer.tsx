@@ -133,7 +133,8 @@ export function Composer({
   const steerInstanceId = group
     ? members?.find((member) => member.id === groupBusyBotId)?.modelSelection.instanceId
     : bot?.modelSelection.instanceId;
-  const canSteer =
+  const nativeOmpStatus = bot?.tasks?.find(task => task.threadId === threadId)?.nativeOmpStatus;
+  const canSteer = nativeOmpStatus ? nativeOmpStatus.canSteer :
     state.instances.find((i) => i.instanceId === steerInstanceId)?.capabilities?.queueing === true;
   const composerTask = profile?.tasks?.find((task) => task.threadId === threadId);
   // Visible branch only: an approval left on an abandoned branch must not block the composer.

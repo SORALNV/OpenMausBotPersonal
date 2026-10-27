@@ -185,10 +185,34 @@ print(json.dumps(result))
 /** Attaches as a standard OhMyPi 18.12.5 Collab guest. The native TUI alone owns the session writer. */
 export class NativeOmpCollab extends EventEmitter {
   constructor(binding, options = {}) {
-    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.receipts = new Map(); this.closed = false; this.lifetime = new AbortController();
+    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.uiAnswers = new Map(); this.receipts = new Map(); this.steerWaiters = new Map(); this.closed = false; this.lifetime = new AbortController();
   }
   static connect(binding, options) { return new NativeOmpCollab(binding, options); }
-  initialize() { return this.initializing ??= this.boot(); }
+  initialize() { return this.initializing ??= this.boot().then(session=>{this.watchState();return session;}); }
+  watchState() {
+    if(this.stateTimer || this.closed)return;
+    this.stateTimer=setInterval(()=>{if(!this.idle() && !this.reconnecting)void this.checkState();},this.options.stateCheckMs??30000);
+    this.stateTimer.unref();
+    if(this.resyncUi?.size)void this.checkState();
+  }
+  async checkState() {
+    if(this.checkingState || this.closed || this.reconnecting)return;
+    this.checkingState=true;
+    try {
+      const meta=await this.refreshMetadata(30000),host=meta.host;
+      if(!host || host.sessionId!==this.session?.sessionId) {this.reconnect();return;}
+      if(host.busy===false && host.inputRequired===false) {
+        if(this.state?.isStreaming || this.state?.queuedMessageCount || this.state?.isAborting || this.ui.size) {this.reconnect();return;}
+        if(this.resyncUi?.size) {
+          for(const id of this.resyncUi.keys())this.emit('questionCancelled',id);
+          this.resyncUi=undefined;
+          this.emit('nativeState',{busy:!this.idle(),streaming:false,queued:this.state?.queuedMessageCount??0,waiting:false});
+          this.finish();this.pump();
+        }
+      } else if(host.inputRequired===true && !this.ui.size && !this.resyncUi?.size)this.reconnect();
+    } catch {if(!this.closed)this.reconnect();}
+    finally {this.checkingState=false;}
+  }
   async boot() {
     if (this.session) return this.session;
     try {
@@ -295,13 +319,15 @@ export class NativeOmpCollab extends EventEmitter {
   reconnect() {
     if (this.closed || this.reconnecting) return;
     this.reconnecting = true;
+    for(const settle of this.steerWaiters.values())settle('indeterminate');
     clearTimeout(this.pumpTimer);
     const old = this.ws; this.ws = undefined; old?.terminate();
     this.emit('reconnecting'); this.emit('nativeState', { busy: true, reconnecting: true });
     void this.recoverLink().then(() => {
       if (this.closed) return;
       this.reconnecting = false;
-      this.emit('nativeState', { busy: !this.idle() }); this.finish(); this.pump();
+      if(this.resyncUi?.size)void this.checkState();
+      this.emit('nativeState', { streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle() }); this.finish(); this.pump();
     }, () => this.fail('Native shared reconnection failed; no automatic replay'));
   }
   async recoverLink() {
@@ -325,6 +351,23 @@ export class NativeOmpCollab extends EventEmitter {
     this.ws.send(sealOmpFrame(this.key,frame));
   }
   idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0 && !this.resyncUi?.size; }
+  canSteer() {
+    return !this.closed && !this.reconnecting && !this.snapshot && this.state?.isStreaming === true;
+  }
+  async steer(id, text, images = []) {
+    if (!this.canSteer()) return 'refused';
+    if (!id || this.receipts.has(id) || typeof text !== 'string' || !text.trim() || text.length > 100000) throw Error('Invalid or duplicate native steer');
+    this.receipts.set(id,{stage:'sent',text,steer:true});
+    let settle;
+    const result=new Promise(resolve=>{settle=resolve;});
+    const timer=setTimeout(()=>settle('indeterminate'),this.options.steerTimeoutMs??1500);
+    this.steerWaiters.set(id,settle);
+    try {
+      this.send({t:'prompt',text,...(images.length?{images}:{})});
+      return await result;
+    } catch { return 'indeterminate'; }
+    finally {clearTimeout(timer);this.steerWaiters.delete(id);}
+  }
   async submit(id, text, images = []) {
     if (!this.session || this.closed || this.turn) throw Error('Native shared session unavailable');
     if (!id || typeof text !== 'string' || !text.trim() || text.length > 100000) throw Error('Invalid native prompt');
@@ -419,17 +462,17 @@ export class NativeOmpCollab extends EventEmitter {
     if (frame.t==='snapshot-chunk') {
       if (!this.snapshot || !Array.isArray(frame.entries) || this.entries.size+frame.entries.length>100000) throw Error('Invalid native snapshot');
       this.snapshot.push(...frame.entries);
-      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
+      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
     }
     if (frame.t==='entry') this.entry(frame.entry,false);
     if (frame.t==='state') {
       this.state=frame.state;
       if (this.resyncUi) { for (const id of this.resyncUi.keys()) this.emit('questionCancelled',id); this.resyncUi=undefined; }
-      this.emit('nativeState',{busy:!this.idle()}); this.pump(); this.finish();
+      this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle()}); this.pump(); this.finish();
     }
     if (frame.t==='event') {
       const e=frame.event;
-      if (e.type==='agent_start') { if(this.state)this.state.isStreaming=true; this.emit('nativeState',{busy:true}); }
+      if (e.type==='agent_start') { if(this.state)this.state.isStreaming=true; this.emit('nativeState',{busy:true,streaming:true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0}); }
       if (e.type==='agent_end') { if(this.turn?.admitted)this.turn.ended=true; }
       if (['tool_execution_start','tool_execution_end'].includes(e.type)) this.emit('nativeTool',e);
       this.finish();
@@ -442,10 +485,11 @@ export class NativeOmpCollab extends EventEmitter {
       if (previous && JSON.stringify(previous)!==JSON.stringify(r)) this.emit('questionCancelled',id);
       const options=r.options?.map(o=>typeof o==='string'?o:o.label);
       this.ui.set(id,r);
+      this.emit('nativeState',{busy:true,streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:true});
       this.armTurnDeadline();
       if (!previous || JSON.stringify(previous)!==JSON.stringify(r)) this.emit('question',{id,method:r.kind,title:r.title,options});
     }
-    if(frame.t==='ui-request-end') {this.ui.delete(String(frame.reqId));this.resyncUi?.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.finish();this.pump();}
+    if(frame.t==='ui-request-end') {this.uiAnswers.get(String(frame.reqId))?.resolve();this.ui.delete(String(frame.reqId));this.resyncUi?.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle()});this.finish();this.pump();}
     // OhMyPi 18.12.5 guest.ts treats host errors as notices: they do not revoke a prompt already admitted into native history.
     if(frame.t==='error') {
       const turn=this.turn;
@@ -475,6 +519,7 @@ export class NativeOmpCollab extends EventEmitter {
       if(text && msg.stopReason==='stop')turn.finalText=text;
       if (snapshot && msg.stopReason === 'stop') turn.ended=true;
     }
+    if(own)for(const [id,receipt] of this.receipts)if(receipt.steer && receipt.stage==='sent' && receipt.text===text){receipt.stage='accepted';this.steerWaiters.get(id)?.('steered');break;}
     this.emit('nativeEntry',{entryId:entry.id,role,text,snapshot,own,sessionId:this.session?.sessionId,activeOwn:!!turn?.admitted,stopReason:msg?.stopReason});
   }
   finish() {
@@ -486,11 +531,23 @@ export class NativeOmpCollab extends EventEmitter {
   }
   answerUi(id,answer) {
     const r=this.ui.get(id); if(!r)throw Error('Native question already answered');
-    if(answer.cancelled===true)this.send({t:'ui-response',reqId:r.reqId});
-    else if(typeof answer.value==='string' && (r.kind!=='select'||r.options.some(o=>(typeof o==='string'?o:o.label)===answer.value)))this.send({t:'ui-response',reqId:r.reqId,value:answer.value});
-    else throw Error('Invalid native answer');
-    this.ui.delete(id);
+    const existing=this.uiAnswers.get(id);
+    if(existing) {
+      if(existing.answer!==JSON.stringify(answer))throw Error('Native answer already being delivered');
+      return existing.promise;
+    }
+    if(answer.cancelled!==true && !(typeof answer.value==='string' && (r.kind!=='select'||r.options.some(o=>(typeof o==='string'?o:o.label)===answer.value))))throw Error('Invalid native answer');
+    let resolve,reject;
+    const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
+    const timer=setTimeout(()=>reject(Error('Piから回答の受領確認が返りませんでした。接続を確認してください。')),this.options.answerTimeoutMs??8000);
+    const pending={answer:JSON.stringify(answer),promise,resolve,reject};
+    this.uiAnswers.set(id,pending);
+    promise.finally(()=>{clearTimeout(timer);if(this.uiAnswers.get(id)===pending)this.uiAnswers.delete(id);}).catch(()=>{});
+    try {this.send({t:'ui-response',reqId:r.reqId,...(answer.cancelled===true?{}:{value:answer.value})});}
+    catch(error){reject(error);}
+    return promise;
   }
+
   async stop() {
     const turn=this.turn; if(!turn)return false;
     if(!turn.sent){clearTimeout(turn.timer);this.turn=null;turn.reject(Error('Queued native input cancelled'));return true;}
@@ -505,7 +562,7 @@ export class NativeOmpCollab extends EventEmitter {
     this.emit('disconnected',message);this.close();
   }
   close() {
-    if(this.closed)return;this.closed=true;this.lifetime.abort();this.onJoinAbort?.();clearTimeout(this.pumpTimer);
+    if(this.closed)return;this.closed=true;clearInterval(this.stateTimer);for(const settle of this.steerWaiters.values())settle('indeterminate');for(const pending of this.uiAnswers.values())pending.reject(Error('Piへの回答中に接続が切れました。'));this.lifetime.abort();this.onJoinAbort?.();clearTimeout(this.pumpTimer);
     if(this.turn){clearTimeout(this.turn.timer);this.turn.reject(Error('Native connection detached; do not replay'));this.turn=null;}
     this.ws?.close();
     if(!this.options.host){this.child?.stdin.end();this.child?.kill('SIGTERM');void this.relay?.close();}

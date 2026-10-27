@@ -62,5 +62,9 @@ lines.on("line", line => {
     }
     answer({ ...active, message: `${active.message}\nhuman:${JSON.stringify(frame)}` });
   }
+  if(frame.type === "steer" && active) {
+    output({ type:"response",id:frame.id,command:"steer",success:true,data:{} });
+    answer({...active,message:active.message+"\n"+frame.message});active=null;
+  }
   if (frame.type === "abort" && active) output({ type: "prompt_result", id: active.id, status: "aborted", sessionSettled: true });
 });

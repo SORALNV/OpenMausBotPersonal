@@ -16,6 +16,10 @@ NativeOmpTransport.connect = binding => {
   client.recentFileWrites = () => existsSync(writes) ? JSON.parse(readFileSync(writes, "utf8")) : [];
   client.reviewFiles = async () => client.recentFileWrites();
   client.pendingOperation = question => question.message?.includes("Command: mkfs.ext4 /dev/sda") ? { id: "fixture-write", name: "bash", arguments: { command: "mkfs.ext4 /dev/sda" } } : question.title === "Allow tool: edit\nFile: tests/test_fixture.py" ? { name: "edit", arguments: { input: "*** Begin Patch\n[tests/test_fixture.py#1234]\nPUT >1:\n+assert True\n*** End Patch" } } : undefined;
+  const submit=client.submit.bind(client);
+  client.submit=(...args)=>{const result=submit(...args);client.emit('nativeState',{busy:true,streaming:true,queued:0});return result.finally(()=>client.emit('nativeState',{busy:false,streaming:false,queued:0}));};
+  client.canSteer=()=>!!client.turn;
+  client.steer=async(id,text,images)=>{if(!client.turn)return 'refused';await client.command('steer',{message:text,images});return 'steered';};
   return client;
 };
 NativeOmpCollab.connect = NativeOmpTransport.connect;

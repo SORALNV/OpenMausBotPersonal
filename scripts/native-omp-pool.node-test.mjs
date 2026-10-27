@@ -71,3 +71,18 @@ test('queued shared views preserve the image payload while serializing native in
  const sent=f.sent.find(e=>e.threadId==='two'&&e.frame.t==='prompt');assert.deepEqual(sent.frame.images,images);
  f.complete(f.two,'image','B','Second');await second;
 });
+
+
+test('explicit shared steer bypasses a waiting input without consuming or replaying its normal queue',async t=>{
+ const f=fixture();t.after(()=>f.pool.close());
+ const first=f.one.submit('owner','A'),next=f.two.submit('waiting','B');await pause(300);
+ f.broadcast({t:'entry',entry:{type:'custom_message',id:'owner-entry',details:{from:f.one.name},content:'A'}});
+ f.broadcast({t:'event',event:{type:'agent_start'}});
+ const injection=f.two.steer('injection','C');
+ f.broadcast({t:'entry',entry:{type:'custom_message',id:'steer-entry',details:{from:f.two.name},content:'C'}});
+ assert.equal(await injection,'steered');assert.equal(f.two.requestStatus('waiting'),'queued');
+ assert.deepEqual(f.sent.filter(e=>e.frame.t==='prompt').map(e=>e.frame.text),['A','C']);
+ f.complete(f.one,'owner','A','A and C');assert.equal((await first).sharedTurn,true);await pause(300);
+ assert.deepEqual(f.sent.filter(e=>e.frame.t==='prompt').map(e=>e.frame.text),['A','C','B']);
+ f.complete(f.two,'waiting','B','B only');await next;
+});

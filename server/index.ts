@@ -3147,7 +3147,8 @@ const wireTask = (task: TaskRecord, botModel: ModelSelection, awaiting = threads
   // Snoozes heal on read against the server clock; the 0 sentinel ("until new activity") survives reads.
   const { snoozedUntil, ...base } = toWireTask(task, botModel);
   const keepWarm = cacheKeepWarmStatus(task.threadId);
-  const coordinated = { ...base, waitingForTeammates: awaiting.has(task.threadId) && !task.busy, ...(keepWarm ? { cacheKeepWarm: keepWarm } : {}) };
+  const nativeOmpStatus = nativeOmp?.status(task.threadId);
+  const coordinated = { ...base, ...(nativeOmpStatus ? { nativeOmpStatus } : {}), waitingForTeammates: awaiting.has(task.threadId) && !task.busy, ...(keepWarm ? { cacheKeepWarm: keepWarm } : {}) };
   const asleep = snoozedUntil === 0 || (snoozedUntil !== undefined && snoozedUntil > Date.now());
   return asleep ? { ...coordinated, snoozedUntil } : coordinated;
 };
@@ -5227,7 +5228,7 @@ async function answerRequest(
   always?: boolean,
   rememberCommand?: boolean,
 ): Promise<RequestOutcome> {
-  const ompOutcome = nativeOmp?.answer(threadId, requestId, behavior, message);
+  const ompOutcome = await nativeOmp?.answer(threadId, requestId, behavior, message);
   if (ompOutcome !== undefined) return ompOutcome;
   const nativeOutcome = directCodex?.answer(threadId, requestId, behavior, message);
   if (nativeOutcome !== undefined) return nativeOutcome;
@@ -7782,7 +7783,12 @@ async function acceptDirectSend(
 
       if (guardedStart) return guardedStart(currentAtStart);
 
-      if (directCodex?.binding(botId, threadId) || nativeOmp?.binding(botId, threadId)) {
+      const ompBinding = nativeOmp?.binding(botId, threadId);
+      if (ompBinding && input.delivery === "steer") {
+        const message = await nativeOmp!.steer(ompBinding, text, { sendId, sender, replyToId: replyTo?.id, ...(dataContext ? { dataContext } : {}), ...spokenLineFields(via, callId) });
+        return { ok: true as const, threadId, message, ...(message.steered ? { steered: true as const } : {}) };
+      }
+      if (directCodex?.binding(botId, threadId) || ompBinding) {
         if (input.delivery === "steer") throw Object.assign(new Error("このCodex接続では差し込みを使えません。通常送信でキューへ追加してください。"), { status: 409 });
         return startOrQueueDirectMessage(botId, threadId, text, replyTo, sendId, sender, trigger, via, callId, dataContext);
       }
@@ -13154,6 +13160,10 @@ ROUTES.push(createBotMessageRoutes({
   store, registry, handoffs, phoneSecretSubmissions, directTurnDispatchClaims, groupSpeakers,
   routines: () => routines,
   desktopManaged: DESKTOP_MANAGED, cloudHome: Boolean(CLOUD_HOME), DirectSendRefused,
+  nativeSteer: async (botId, threadId, text, fields, queued) => {
+    const binding = nativeOmp?.binding(botId, threadId);
+    return binding ? nativeOmp!.steer(binding, text, fields, queued) : undefined;
+  },
   nativeApprovalControl: (botId, threadId, text, sendId, sender) => nativeOmp?.ownerConsent(botId, threadId, text, sendId, sender),
   acceptDirectSend, directSendRefusal, startTurn, usageTriggerFor, messageSender, cloudGuestSendRefusal, cloudThreadRefusal,
   cardAnswerRefusal, commandRememberRefusal, requestBehavior, requestedTaskBot, botForThread, threadBusy,
@@ -13585,6 +13595,7 @@ const toolResults = new ToolResults();
 const { personalPrivacy, personalPrivacyRoute } = createPersonalPrivacyRoutes(DATA_DIR, id => Boolean(store.botByThread(id) || store.groupByThread(id)), id => routines?.runForThread(id) ?? null);
 if (process.env.OMB_PERSONAL_BUILD === "1") {
   nativeOmp = new NativeOmpService({ dir: join(DATA_DIR, "private"), store,
+    changed: threadId => { const bot = store.botByThread(threadId); if (bot) broadcast({ kind: "bot", bot: wireBot(bot) }); },
     generate: (...args) => generateIndependentCodexText(registry, ...args), formatter: directReplyFormatter(registry), settled: drainQueuedSends,
     localTurn: async ({ botId, threadId, text, source, signal, images }) => {
       const binding = nativeOmp!.binding(botId, threadId);

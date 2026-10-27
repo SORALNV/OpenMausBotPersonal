@@ -250,3 +250,67 @@ test('shared native prompt carries real image content instead of Mac path marker
  c.frame({t:'entry',entry:{type:'custom_message',id:'image-input',details:{from:'OMB-synthetic'},content:[{type:'text',text:'Describe this'},...images]}});
  c.frame(answer('image-answer','Image described'));end(c);assert.equal((await pending).text,'Image described');c.close();
 });
+
+for(const value of ['Approve','Deny'])test(`native ${value} waits for host receipt and repeated clicks send once`,async()=>{
+ const {client:c,sent}=peer();
+ c.frame({t:'ui-request',request:{reqId:201,kind:'select',title:'Allow tool: bash',options:['Approve','Deny']}});
+ let settled=false;
+ const result=c.answerUi('201',{value});result.then(()=>{settled=true;});
+ assert.equal(c.answerUi('201',{value}),result);
+ await pause(15);assert.equal(settled,false);assert.equal(c.ui.has('201'),true);
+ assert.equal(sent.filter(f=>f.t==='ui-response').length,1);
+ c.frame({t:'ui-request-end',reqId:201});await result;
+ assert.equal(c.ui.has('201'),false);c.close();
+});
+test('a lost native answer receipt keeps the question open and reports failure',async()=>{
+ const {client:c}=peer();c.options.answerTimeoutMs=25;
+ c.frame({t:'ui-request',request:{reqId:202,kind:'select',title:'Allow tool: bash',options:['Approve','Deny']}});
+ await assert.rejects(c.answerUi('202',{value:'Deny'}),/受領確認/);
+ assert.equal(c.ui.has('202'),true);assert.equal(c.uiAnswers.size,0);c.close();
+});
+test('disconnect while delivering a native decision rejects instead of reporting success',async()=>{
+ const {client:c}=peer();
+ c.frame({t:'ui-request',request:{reqId:203,kind:'select',title:'Allow tool: bash',options:['Approve','Deny']}});
+ const result=c.answerUi('203',{value:'Deny'});const rejected=assert.rejects(result,/接続が切れ/);
+ c.close();await rejected;
+});
+
+test('standard shared prompt steers into a live turn and confirms native history admission once',async()=>{
+ const {client:c,sent}=peer();c.state.isStreaming=true;
+ const images=[{type:'image',data:'synthetic',mimeType:'image/png'}];
+ const result=c.steer('injection','追加の指示',images);
+ assert.deepEqual(sent,[{t:'prompt',text:'追加の指示',images}]);
+ c.frame(own('injected-entry','追加の指示'));
+ assert.equal(await result,'steered');assert.equal(c.requestStatus('injection'),'accepted');
+ await assert.rejects(c.steer('injection','追加の指示',images),/duplicate/);c.close();
+});
+test('steer does not submit when idle, reconnecting or still loading a snapshot',async()=>{
+ const {client:c,sent}=peer();assert.equal(await c.steer('idle','A'),'refused');
+ c.state.isStreaming=true;c.reconnecting=true;assert.equal(await c.steer('lost','A'),'refused');
+ c.reconnecting=false;c.snapshot=[];assert.equal(await c.steer('snapshot','A'),'refused');
+ assert.equal(sent.length,0);c.close();
+});
+test('missing steer admission is indeterminate, late native admission reconciles it without resend',async()=>{
+ const {client:c,sent}=peer();c.options.steerTimeoutMs=10;c.state.isStreaming=true;
+ assert.equal(await c.steer('late','B'),'indeterminate');assert.equal(sent.length,1);
+ c.frame(own('late-entry','B'));assert.equal(c.requestStatus('late'),'accepted');assert.equal(sent.length,1);c.close();
+});
+test('steering an owned running turn keeps its original completion and does not interrupt a human',async()=>{
+ const {client:c}=peer();const result=c.submit('original','Original');await pause(280);
+ c.frame(own('first','Original'));c.frame({t:'event',event:{type:'agent_start'}});
+ const steer=c.steer('next','Additional');c.frame(own('next-entry','Additional'));assert.equal(await steer,'steered');
+ c.frame(human('human-after','Human'));assert.equal(await c.stop(),false);
+ c.frame(answer('final-steered','Both handled'));end(c);assert.equal((await result).text,'Both handled');c.close();
+});
+test('authoritative host check repairs a missed end state through a snapshot, never by inventing idle',async()=>{
+ const {client:c}=peer();c.state.isStreaming=true;
+ c.refreshMetadata=async()=>({host:{sessionId:'synthetic-session',busy:false,inputRequired:false}});
+ let resync=0;c.reconnect=()=>{resync++;};await c.checkState();assert.equal(resync,1);assert.equal(c.state.isStreaming,true);c.close();
+});
+test('a fresh host check retires only absent resync questions and preserves actual pending approval',async()=>{
+ const {client:c}=peer();c.resyncUi=new Map([['old',{}]]);const ended=[];c.on('questionCancelled',id=>ended.push(id));
+ c.refreshMetadata=async()=>({host:{sessionId:'synthetic-session',busy:false,inputRequired:true}});
+ await c.checkState();assert.equal(c.idle(),false);assert.equal(ended.length,0);
+ c.refreshMetadata=async()=>({host:{sessionId:'synthetic-session',busy:false,inputRequired:false}});
+ await c.checkState();assert.equal(c.idle(),true);assert.deepEqual(ended,['old']);c.close();
+});

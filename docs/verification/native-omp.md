@@ -288,3 +288,15 @@ with different image bytes, symlink replacement and size limits. A synthetic red
 PNG was recognised by a live tool-free Luna call; no real photograph was used.
 The standard host protocol was checked at OhMyPi v18.12.5 (`collab/protocol.ts`,
 `host.ts`, `guest.ts`); OhMyPi itself is not patched.
+
+### 実行中への差し込みと状態の照合
+
+Personalの「実行中に差し込む」または設定した差し込みキーは、共有TUIの標準Collab `prompt`へ送る。OhMyPi 18.12.5のhostが `streamingBehavior: "steer"` として扱い、同じネイティブ履歴に追加する。通常の送信は従来通りキューで待つ。Botの仲介モデルのqueueing能力ではなく、接続中のネイティブセッションの実行状態で差し込みボタンを出す。
+
+受理はネイティブ履歴の自分の入力で照合する。受理がまだ見えない場合は未確認として保持し、タイムアウト・切断を理由に再送しない。画像の差し込みにも通常と同じ添付ファイル検査を通す。差し込みから承認回答・中断を自動で発生させない。
+
+接続復旧中は `reconnecting`、ネイティブのキューだけが残る場合は `native-queued`、状態照合中は `reconciling` とし、実行中の表示とは分ける。実行・承認待ちが残る共有セッションは30秒ごとに公式レジストリの状態を読み直し、通知と不一致なら同じセッションのスナップショットを取り直す。時間だけを根拠に待機中・成功へ変更しない。スナップショットに残る古い質問は、同一ホストへの新しい照会で承認待ちがないと確認できた場合にだけ整理する。
+
+隔離fixtureで、差し込みと通常キューの区別、同じsendIdの重複、受理通知遅延、画像、標準TUIからの同時入力、接続復旧中の表示、終了状態の取り逃し、承認受領確認を検証する。実ユーザーのPi会話へテスト入力を送らない。
+
+再接続や標準TUIからの別入力で元の依頼の文脈を失った承認要求も、無表示のまま捨てない。元の依頼の自動許可を流用せず、対応不明の理由を付けて保留操作を表示する。自動許可の受領確認が失敗した場合も、許可済みとして消さず確認可能な状態を保つ。

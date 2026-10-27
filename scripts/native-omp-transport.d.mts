@@ -33,7 +33,7 @@ export class NativeOmpTransport extends EventEmitter {
   initialize(): Promise<OmpSession>;
   command(type: string, args?: Record<string, unknown>): Promise<any>;
   submit(requestId: string, text: string, images?: readonly {type: "image"; data: string; mimeType: string}[]): Promise<OmpReply>;
-  answerUi(id: string, answer: { cancelled?: boolean; confirmed?: boolean; value?: string }): void;
+  answerUi(id: string, answer: { cancelled?: boolean; confirmed?: boolean; value?: string }): void | Promise<void>;
   stop(): Promise<boolean>;
   close(): void;
 }

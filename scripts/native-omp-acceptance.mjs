@@ -118,6 +118,28 @@ try {
   }
   const sharedCalls = calls().filter(call => call.type === "prompt" && call.message?.startsWith("そのまま送る共有入力"));
   assert.deepEqual(sharedCalls.map(call => call.message), ["そのまま送る共有入力A", "そのまま送る共有入力B"]);
+  const sharedMessages=()=>api(`/api/threads/${shared.activeTaskId}/messages?limit=100`);
+  await tool("send_bot_message",{bot_id:shared.id,task_id:shared.activeTaskId,text:"SYNTHETIC_HOLD"});
+  await until(()=>api("/api/bots?messages=0"),value=>value.bots.find(b=>b.id===shared.id)?.tasks.find(t=>t.threadId===shared.activeTaskId)?.nativeOmpStatus?.canSteer===true);
+  const promptsBeforeSteer=calls().filter(c=>c.type==="prompt").length;
+  const injection=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"実行中の架空追加入力",delivery:"steer",sendId:"fixture-native-steer-0001"}});
+  assert.equal(injection.steered,true);
+  await until(sharedMessages,value=>value.messages.some(m=>m.turnTerminal&&m.nativeOmp?.originalText.includes("実行中の架空追加入力")));
+  const duplicateSteer=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"実行中の架空追加入力",delivery:"steer",sendId:"fixture-native-steer-0001"}});
+  assert.equal(duplicateSteer.message.id,injection.message.id);
+  assert.equal(calls().filter(c=>c.type==="steer").length,1);
+  assert.equal(calls().filter(c=>c.type==="prompt").length,promptsBeforeSteer);
+  await tool("send_bot_message",{bot_id:shared.id,task_id:shared.activeTaskId,text:"SYNTHETIC_HOLD queue fixture"});
+  await until(()=>api("/api/bots?messages=0"),value=>value.bots.find(b=>b.id===shared.id)?.tasks.find(t=>t.threadId===shared.activeTaskId)?.nativeOmpStatus?.canSteer===true);
+  const heldA=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"キュー入力A",delivery:"queue",sendId:"fixture-native-queue-0001"}});
+  const heldB=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"キュー入力B",delivery:"queue",sendId:"fixture-native-queue-0002"}});
+  assert.equal(heldA.queued,true);assert.equal(heldB.queued,true);
+  const moved=await api(`/api/bots/${shared.id}/queue/${heldA.queueId}/steer`,{method:"POST",body:{threadId:shared.activeTaskId}});
+  assert.equal(moved.steered,true);assert.equal(moved.messages.length,2);
+  assert.deepEqual(moved.messages.map(m=>m.sendId),["fixture-native-queue-0001","fixture-native-queue-0002"]);
+  assert.deepEqual(moved.queueIds,[heldA.queueId,heldB.queueId]);
+  await until(sharedMessages,value=>value.messages.some(m=>m.turnTerminal&&m.nativeOmp?.originalText.includes("キュー入力A\n\nキュー入力B")));
+  assert.equal(calls().filter(c=>c.type==="steer").length,2);
   const beforeReview = (await messages()).messages.filter(m => m.nativeOmp?.formatted).length;
   await api("/api/native-omp", { method: "PUT", body: { bindings: [{ ...binding, approvalPolicy: "mediator" }, sharedBinding] } });
   const cardsBefore = (await messages()).messages.filter(m => m.card?.requestType === "permission").length;
@@ -238,7 +260,7 @@ try {
   assert.ok(!terminal.nativeOmp.originalText.includes("架空の設定を確認しました"));
   assert.ok(!JSON.stringify(progressDone).includes("SYNTHETIC_PRIVATE_REASONING"));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
-    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
+    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, nativeSteerAdmission: true, nativeSteerSendIdempotent: true, nativeQueuedSteerRetainsInputs: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
     namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
     mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, nativeUploadedImageBytesVerified: true, imageConsultationWithoutNative: true, consultationAnsweredWithoutNative: true, ombSettingsUseLocalHarness: true, ombProfileUsesExistingApplyPolicy: true, localNativeExecutionExcluded: true, explicitOwnerConsentWhileBusy: true, highRiskExecutionReceipt: true, consentExpiresAtCompletion: true, noSessionWideGrant: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));
@@ -247,7 +269,7 @@ try {
   try {
     const state = await api("/api/native-omp");
     const bots = await api("/api/bots?messages=0");
-    const history = await Promise.all(bots.bots.map(bot => api(`/api/threads/${bot.activeTaskId}/messages?limit=50`)));
+    const history = await Promise.all(bots.bots.map(bot => api(`/api/threads/${bot.threadId}/messages?limit=50`)));
     writeFileSync(join(reportDir, "fixture-error.json"), JSON.stringify({ state, history, calls: calls() }, null, 2), { mode: 0o600 });
   } catch { /* A crashed fixture may not answer diagnostics. */ }
   throw error;

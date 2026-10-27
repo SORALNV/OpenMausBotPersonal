@@ -163,6 +163,8 @@ export interface WireTask {
   rewound?: boolean;
   pinnedMessageId?: string;
   /** Runtime-only state, reset on load and never persisted. */
+  /** Authoritative NativeConnect state and live steer availability; server-derived, never persisted. */
+  nativeOmpStatus?: { state: string; canSteer: boolean };
   activity?: BotActivity;
   busy?: boolean;
   /** Epoch ms when this task's current busy stretch began; runtime-only. */

@@ -41,3 +41,26 @@ it("sends separate intents with Enter and Cmd+Enter, keeps Shift+Enter and IME, 
     expect(fixture.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: "steer" }));
   } finally { flushSync(() => root.unmount()); host.remove(); restoreComposerDraft(draftId, { text: "", attachments: [] }); }
 });
+
+it("uses native session steer capability rather than the bot model's queue capability", () => {
+  vi.stubEnv("VITE_OMB_PERSONAL", "1");
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
+  const originalSelection=bot.modelSelection,originalTasks=bot.tasks;
+  try {
+    bot.modelSelection={instanceId:"non-queue-native-mediator",model:"fixture"};
+    bot.tasks=[{threadId:bot.threadId,title:"Pi",createdAt:1,nativeOmpStatus:{state:"human-working",canSteer:true}}];
+    flushSync(()=>root.render(createElement(Composer,{bot})));
+    flushSync(()=>restoreComposerDraft(`bot:${bot.id}:${bot.threadId}`,{text:"追加入力",attachments:[]}));
+    expect(host.querySelector('[aria-label="実行中に差し込む"]')).not.toBeNull();
+    bot.modelSelection=originalSelection;
+    bot.tasks=[{...bot.tasks![0]!,nativeOmpStatus:{state:"reconnecting",canSteer:false}}];
+    flushSync(()=>root.render(createElement(Composer,{bot:{...bot}})));
+    expect(host.querySelector('[aria-label="実行中に差し込む"]')).toBeNull();
+    const event=new KeyboardEvent("keydown",{key:"Enter",metaKey:true,bubbles:true,cancelable:true});
+    flushSync(()=>host.querySelector("textarea")!.dispatchEvent(event));
+    expect(fixture.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type:"send",delivery:"steer"}));
+  } finally {bot.modelSelection=originalSelection;bot.tasks=originalTasks;flushSync(()=>root.unmount());host.remove();restoreComposerDraft(`bot:${bot.id}:${bot.threadId}`,{text:"",attachments:[]});}
+});

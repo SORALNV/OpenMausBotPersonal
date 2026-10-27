@@ -61,6 +61,7 @@ export interface BotMessageRouteDeps {
     },
     guardedStart?: (currentAtStart: BotRecord) => Promise<DirectSendReceipt>,
   ): Promise<DirectSendReceipt>;
+  nativeSteer?(botId: string, threadId: string, text: string, fields: Partial<Pick<Message, "sendId" | "sender" | "queueId">>, queued?: { text: string; sendId?: string; sender?: Message["sender"]; replyToId?: string; dataContext?: Message["dataContext"]; messageId: string }[]): Promise<Message | undefined>;
   nativeApprovalControl?(botId: string, threadId: string, text: string, sendId?: string, sender?: ResolvedSender): Message | undefined;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
@@ -277,6 +278,13 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // Hold the whole queue atomically: a racing settle drains it or this request steers it, never both.
       const held = holdSteeredQueue(bot.id, bot.threadId, m[2]);
       if (!held) return json(res, 404, { error: "no such queued message" });
+      try {
+        const message = await deps.nativeSteer?.(bot.id, bot.threadId, held.items.map(item => item.prompt).join("\n\n"), { queueId: held.items[0]?.messageId }, held.items);
+        if (message) {
+          settleHeldSteeredQueue(held);
+          return json(res, 200, { ok: true, steered: Boolean(message.steered), threadId: bot.threadId, messages: store.messagesFor(bot.threadId).filter(row => held.items.some(item => item.messageId === row.queueId)), queueIds: held.items.map(item => item.messageId) });
+        }
+      } catch (error) { restoreHeldSteeredQueue(held); throw error; }
       const currentAtStart = store.projectBotForTask(bot.id, bot.threadId);
       const instance = currentAtStart?.busy ? runningTurnInstance(currentAtStart, bot.threadId) : undefined;
       const engineCanSteer = Boolean(currentAtStart?.busy && instance?.adapter.capabilities.queueing && instance.adapter.steer);

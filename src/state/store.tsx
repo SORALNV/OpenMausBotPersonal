@@ -220,6 +220,7 @@ export interface ModelSelection {
 }
 
 export interface Task {
+  nativeOmpStatus?: import("../../shared/wire").WireTask["nativeOmpStatus"];
   waitingForTeammates?: boolean;
   threadId: string;
   routineRunId?: string;
