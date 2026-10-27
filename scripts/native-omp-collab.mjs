@@ -6,6 +6,7 @@ import { posix } from 'node:path';
 import { WebSocket } from 'ws';
 import { nativeOmpCommand } from './native-omp-transport.mjs';
 import { startOmpRelay } from './native-omp-collab-relay.mjs';
+import { nativeOmpTui } from './native-omp-tui.mjs';
 import { nativeOmpCatalog } from './native-omp-catalog.mjs';
 
 const BOOTSTRAP = String.raw`
@@ -185,7 +186,7 @@ print(json.dumps(result))
 /** Attaches as a standard OhMyPi 18.12.5 Collab guest. The native TUI alone owns the session writer. */
 export class NativeOmpCollab extends EventEmitter {
   constructor(binding, options = {}) {
-    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.uiAnswers = new Map(); this.receipts = new Map(); this.steerWaiters = new Map(); this.closed = false; this.lifetime = new AbortController();
+    super(); this.binding = binding; this.options = options; this.entries = new Map(); this.ui = new Map(); this.uiAnswers = new Map(); this.receipts = new Map(); this.steerWaiters = new Map(); this.localUi = new Map(); this.localUnknown=false; this.closed = false; this.lifetime = new AbortController();
   }
   static connect(binding, options) { return new NativeOmpCollab(binding, options); }
   initialize() { return this.initializing ??= this.boot().then(session=>{this.watchState();return session;}); }
@@ -193,7 +194,7 @@ export class NativeOmpCollab extends EventEmitter {
     if(this.stateTimer || this.closed)return;
     this.stateTimer=setInterval(()=>{if(!this.idle() && !this.reconnecting)void this.checkState();},this.options.stateCheckMs??30000);
     this.stateTimer.unref();
-    if(this.resyncUi?.size)void this.checkState();
+    if(!this.idle())void this.checkState();
   }
   async checkState() {
     if(this.checkingState || this.closed || this.reconnecting)return;
@@ -210,8 +211,41 @@ export class NativeOmpCollab extends EventEmitter {
           this.finish();this.pump();
         }
       } else if(host.inputRequired===true && !this.ui.size && !this.resyncUi?.size)this.reconnect();
+      if(host.busy===true && host.inputRequired===false && !this.ui.size)await this.checkLocalUi(meta);
+      else if(!host.busy || host.inputRequired)this.clearLocalUi();
     } catch {if(!this.closed)this.reconnect();}
     finally {this.checkingState=false;}
+  }
+  clearLocalUi(except) {
+    let changed=this.localUnknown;this.localUnknown=false;
+    for(const id of this.localUi.keys())if(id!==except){this.localUi.delete(id);this.emit('questionCancelled',id);changed=true;}
+    if(changed){this.emit('nativeState',{busy:!this.idle(),streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown});this.finish();this.pump();}
+  }
+  async checkLocalUi(metadata) {
+    if([...this.uiAnswers.keys()].some(id=>this.localUi.has(id)))return;
+    try {
+      const binding={...this.binding,expectedSessionId:this.session.sessionId,sessionDir:this.plan?.sessionDir??this.binding.sessionDir};
+      const reply=await (this.options.localUi??nativeOmpTui)(binding,metadata,'probe',{}, {signal:this.lifetime.signal});
+      if(this.closed || this.reconnecting || this.ui.size || [...this.uiAnswers.keys()].some(id=>this.localUi.has(id)))return;
+      const q=reply.question;this.clearLocalUi(q?.id);this.localUnknown=reply.approvalVisible===true && !q;
+      if(this.localUnknown)this.emit('nativeNotice',{code:'local-approval-unrecognized',admitted:true});
+      if(q && !this.localUi.has(q.id)){this.localUi.set(q.id,q);this.emit('question',q);}
+      this.emit('nativeState',{busy:!this.idle(),streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown});
+    } catch { if(!this.closed)this.emit('nativeState',{busy:true,streaming:false,queued:0,waiting:false}); }
+  }
+  answerLocalUi(id,answer) {
+    const q=this.localUi.get(id),existing=this.uiAnswers.get(id);
+    if(existing){if(existing.answer!==JSON.stringify(answer))throw Error('Native answer already being delivered');return existing.promise;}
+    if(!q || !['Approve','Deny'].includes(answer.value))throw Error('Invalid native terminal answer');
+    const promise=(async()=>{
+      const binding={...this.binding,expectedSessionId:this.session.sessionId,sessionDir:this.plan?.sessionDir??this.binding.sessionDir};
+      const receipt=await (this.options.localUi??nativeOmpTui)(binding,this.metadata,'answer',{fingerprint:q.fingerprint,operationId:q.operationId,value:answer.value},{signal:this.lifetime.signal});
+      if(receipt.received!==true)throw Error('Native terminal answer receipt unconfirmed');
+      if(this.localUi.get(id)===q){this.localUi.delete(id);this.emit('questionCancelled',id);}
+      this.emit('nativeState',{busy:!this.idle(),streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown});
+    })();
+    const slot={answer:JSON.stringify(answer),promise,reject:()=>{}};this.uiAnswers.set(id,slot);
+    promise.finally(()=>{if(this.uiAnswers.get(id)===slot)this.uiAnswers.delete(id);}).catch(()=>{});return promise;
   }
   async boot() {
     if (this.session) return this.session;
@@ -327,7 +361,7 @@ export class NativeOmpCollab extends EventEmitter {
       if (this.closed) return;
       this.reconnecting = false;
       if(this.resyncUi?.size)void this.checkState();
-      this.emit('nativeState', { streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle() }); this.finish(); this.pump();
+      this.emit('nativeState', { streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown,busy:!this.idle() }); this.finish(); this.pump();
     }, () => this.fail('Native shared reconnection failed; no automatic replay'));
   }
   async recoverLink() {
@@ -350,7 +384,7 @@ export class NativeOmpCollab extends EventEmitter {
     if (this.closed || this.ws?.readyState !== WebSocket.OPEN) throw Error('Native Collab unavailable');
     this.ws.send(sealOmpFrame(this.key,frame));
   }
-  idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0 && !this.resyncUi?.size; }
+  idle() { return this.state?.isStreaming === false && this.state.queuedMessageCount === 0 && !this.state.isAborting && this.ui.size === 0 && !this.resyncUi?.size && this.localUi.size===0 && !this.localUnknown; }
   canSteer() {
     return !this.closed && !this.reconnecting && !this.snapshot && this.state?.isStreaming === true;
   }
@@ -462,13 +496,13 @@ export class NativeOmpCollab extends EventEmitter {
     if (frame.t==='snapshot-chunk') {
       if (!this.snapshot || !Array.isArray(frame.entries) || this.entries.size+frame.entries.length>100000) throw Error('Invalid native snapshot');
       this.snapshot.push(...frame.entries);
-      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
+      if (frame.final) { for (const entry of this.snapshot) this.entry(entry,true); this.snapshot=null; this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown,busy:!this.idle(), reconnecting:!!this.reconnecting}); this.onWelcome?.(); this.armTurnDeadline(); if (!this.reconnecting) this.finish(); }
     }
     if (frame.t==='entry') this.entry(frame.entry,false);
     if (frame.t==='state') {
       this.state=frame.state;
       if (this.resyncUi) { for (const id of this.resyncUi.keys()) this.emit('questionCancelled',id); this.resyncUi=undefined; }
-      this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle()}); this.pump(); this.finish();
+      this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown,busy:!this.idle()}); this.pump(); this.finish();
     }
     if (frame.t==='event') {
       const e=frame.event;
@@ -489,7 +523,7 @@ export class NativeOmpCollab extends EventEmitter {
       this.armTurnDeadline();
       if (!previous || JSON.stringify(previous)!==JSON.stringify(r)) this.emit('question',{id,method:r.kind,title:r.title,options});
     }
-    if(frame.t==='ui-request-end') {this.uiAnswers.get(String(frame.reqId))?.resolve();this.ui.delete(String(frame.reqId));this.resyncUi?.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0,busy:!this.idle()});this.finish();this.pump();}
+    if(frame.t==='ui-request-end') {this.uiAnswers.get(String(frame.reqId))?.resolve();this.ui.delete(String(frame.reqId));this.resyncUi?.delete(String(frame.reqId));this.armTurnDeadline();this.emit('questionCancelled',String(frame.reqId));this.emit('nativeState',{streaming:this.state?.isStreaming===true,queued:this.state?.queuedMessageCount??0,waiting:this.ui.size>0 || this.localUi.size>0 || this.localUnknown,busy:!this.idle()});this.finish();this.pump();}
     // OhMyPi 18.12.5 guest.ts treats host errors as notices: they do not revoke a prompt already admitted into native history.
     if(frame.t==='error') {
       const turn=this.turn;
@@ -530,6 +564,7 @@ export class NativeOmpCollab extends EventEmitter {
     turn.resolve({requestId:turn.id,sessionId:this.session.sessionId,sessionFile:this.session.sessionFile,text:turn.finalText??turn.texts.join('\n\n'),sharedTurn:turn.contended});
   }
   answerUi(id,answer) {
+    if(this.localUi.has(id))return this.answerLocalUi(id,answer);
     const r=this.ui.get(id); if(!r)throw Error('Native question already answered');
     const existing=this.uiAnswers.get(id);
     if(existing) {

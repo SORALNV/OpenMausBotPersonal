@@ -163,7 +163,12 @@ export class NativeOmpService {
     const approvals: Active = { controller: new AbortController(), source: { id: `native-host-${binding.threadId}`, text: "" }, client, questions: new Set(), cards: new Map(), stopped: false };
     let lastNotice = "";
     client.on("nativeNotice", ({ code, admitted }: { code: string; admitted: boolean }) => {
-      if (this.closing || this.clients.get(binding.threadId) !== client || code !== "host-operation-error") return;
+      if (this.closing || this.clients.get(binding.threadId) !== client) return;
+      if (code === "local-approval-unrecognized") {
+        if (lastNotice !== code) this.store.appendMessage(binding.threadId, { role: "bot", kind: "activity", text: "Pi端末内の操作確認で待機中です。履歴上の要求と一意に対応付けられないため、自動で回答していません。標準OhMyPi端末で確認してください。" });
+        lastNotice = code; return;
+      }
+      if (code !== "host-operation-error") return;
       const key = this.active.get(binding.threadId)?.source.id ?? approvals.source.id;
       if (this.ledger[key]) { this.ledger[key].failure = { phase: "native-notice", status: admitted ? "accepted" : "unconfirmed" }; this.save(this.ledgerFile, this.ledger); }
       if (lastNotice === key) return;

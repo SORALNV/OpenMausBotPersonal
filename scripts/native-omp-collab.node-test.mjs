@@ -314,3 +314,25 @@ test('a fresh host check retires only absent resync questions and preserves actu
  c.refreshMetadata=async()=>({host:{sessionId:'synthetic-session',busy:false,inputRequired:false}});
  await c.checkState();assert.equal(c.idle(),true);assert.deepEqual(ended,['old']);c.close();
 });
+
+test('local TUI approval fallback is surfaced once and waits for a verified native receipt',async()=>{
+ const {client:c}=peer();c.state.isStreaming=true;const questions=[],ended=[];c.on('question',q=>questions.push(q));c.on('questionCancelled',id=>ended.push(id));
+ const q={id:'tui-fixture',fingerprint:'fixture',operationId:'tool-fixture',method:'select',title:'Allow tool: bash\nCommand: lsblk',options:['Approve','Deny']};
+ let resolve;const calls=[];c.metadata={};c.options.localUi=async(_b,_m,action,args)=>{calls.push({action,args});return action==='probe'?{question:q}:new Promise(yes=>{resolve=yes;});};
+ await c.checkLocalUi({});await c.checkLocalUi({});assert.equal(questions.length,1);assert.equal(c.localUi.size,1);
+ const answer=c.answerUi(q.id,{value:'Deny'});assert.equal(c.localUi.size,1);assert.equal(c.answerUi(q.id,{value:'Deny'}),answer);
+ resolve({received:true});await answer;assert.equal(c.localUi.size,0);assert.deepEqual(ended,[q.id]);assert.equal(calls.filter(x=>x.action==='answer').length,1);c.close();
+});
+test('unconfirmed local approval remains pending and a later host idle check retires it without retry',async()=>{
+ const {client:c}=peer();c.state.isStreaming=true;
+ const q={id:'tui-unknown',fingerprint:'fixture',operationId:'tool',method:'select',title:'Allow tool: bash\nCommand: lsblk',options:['Approve','Deny']};
+ c.options.localUi=async(_b,_m,action)=>action==='probe'?{question:q}:{received:false};await c.checkLocalUi({});
+ await assert.rejects(c.answerUi(q.id,{value:'Approve'}),/unconfirmed/);assert.equal(c.localUi.size,1);
+ c.state.isStreaming=false;c.refreshMetadata=async()=>({host:{sessionId:'synthetic-session',busy:false,inputRequired:false}});await c.checkState();assert.equal(c.localUi.size,0);assert.equal(c.idle(),true);c.close();
+});
+test('unrecognized local approval remains visible as waiting without offering an unsafe answer',async()=>{
+ const {client:c}=peer();c.state.isStreaming=true;const questions=[],states=[],notices=[];
+ c.on('question',q=>questions.push(q));c.on('nativeState',s=>states.push(s));c.on('nativeNotice',n=>notices.push(n));
+ c.options.localUi=async()=>({question:null,approvalVisible:true});await c.checkLocalUi({});
+ assert.equal(questions.length,0);assert.equal(states.at(-1).waiting,true);assert.equal(notices[0].code,'local-approval-unrecognized');c.close();
+});
