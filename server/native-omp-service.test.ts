@@ -32,13 +32,14 @@ function fixture() {
       stop: vi.fn(async () => true), close: vi.fn() }) as unknown as NativeOmpTransport;
   });
   const settled = vi.fn();
+  const formatter = vi.fn(async (_input: Parameters<import("./direct-thread-bridge.ts").ReplyFormatter["format"]>[0]) => "短い回答");
   const localTurn = vi.fn(async (_input: { botId: string; threadId: string; text: string; source: import("./store.ts").Message; signal: AbortSignal }) => "OMB管理の結果です。");
   const create = () => {
-    const service = new NativeOmpService({ dir, store, generate, localTurn, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: async () => "短い回答" }, settled });
+    const service = new NativeOmpService({ dir, store, generate, localTurn, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: formatter }, settled });
     services.push(service); return service;
   };
   const service = create();
-  return { dir, bot, store, generate, localTurn, open, settled, create, service, binding };
+  return { dir, bot, store, generate, localTurn, open, settled, formatter, create, service, binding };
 }
 
 it("automatically pins each Bot thread while refusing another Bot's thread", () => {
@@ -106,11 +107,11 @@ it("attachments cannot reach the native conversation as text markers", () => {
   expect(f.generate).not.toHaveBeenCalled(); expect(f.open).not.toHaveBeenCalled();
 });
 
-function sharedFixture() {
+function sharedFixture(approvalPolicy?: "mediator") {
   const f = fixture(); f.service.close();
   const native = f.open({} as OmpDestination);
   vi.spyOn(NativeOmpCollab, "connect").mockReturnValue(native as NativeOmpCollab);
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui" }] }), { mode: 0o600 });
+  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", ...(approvalPolicy ? { approvalPolicy } : {}) }] }), { mode: 0o600 });
   const service = f.create();
   return { ...f, service, native };
 }
@@ -688,11 +689,12 @@ it("steers through the shared input, records admission once and retains the orig
   expect(f.store.messagesFor(f.bot.threadId).filter(m=>m.text==="追加指示")).toHaveLength(1);
 });
 
-it("refuses disconnected or idle native steer without adding an input or a native call", async () => {
+it("records an idle native-bound steer as not sent after Luna judges it needs native execution", async () => {
   const f=sharedFixture(),binding=f.service.binding(f.bot.id,f.bot.threadId)!;
-  const before=f.store.messagesFor(f.bot.threadId).length;
-  await expect(f.service.steer(binding,"送らない")).rejects.toThrow("本文は送信していません");
-  expect(f.store.messagesFor(f.bot.threadId)).toHaveLength(before);expect(f.native.submit).not.toHaveBeenCalled();
+  const source=await f.service.steer(binding,"送らない");
+  expect(source.requestCancelled).toBe(true);expect(source.steered).toBe(false);
+  expect(f.generate).toHaveBeenCalledOnce();expect(f.native.submit).not.toHaveBeenCalled();
+  expect(f.store.messagesFor(f.bot.threadId).some(m=>m.requestMessageId===source.id && m.turnSucceeded===false)).toBe(true);
 });
 
 it("separates reconnecting and queued state from actual working without draining uncertain work", async () => {
@@ -737,4 +739,113 @@ it("keeps an automatic approval with missing receipt visible rather than silentl
   await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).some(m=>m.card?.subtitle?.includes("受領を確認できません"))).toBe(true));
   expect(f.native.answerUi).toHaveBeenCalledTimes(1);
   expect(f.store.messagesFor(f.bot.threadId).find(m=>m.card?.requestType==="permission")?.card?.answered).toBeUndefined();
+});
+
+async function runningSteerFixture(approvalPolicy?: "mediator") {
+  const f=sharedFixture(approvalPolicy);let complete!: (value: any)=>void;
+  Object.assign(f.native,{canSteer:vi.fn(()=>true),requestStatus:()=>"accepted",steer:vi.fn(async()=>"steered")});
+  vi.mocked(f.native.submit).mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
+  const binding=f.service.binding(f.bot.id,f.bot.threadId)!;
+  const original=f.service.dispatch(binding,"実行中の元の依頼");
+  await vi.waitFor(()=>expect(f.native.submit).toHaveBeenCalledOnce());
+  f.native.emit("nativeState",{busy:true,streaming:true});
+  return {...f,binding,original,complete:(text="元の結果")=>complete({requestId:original.id,sessionId:"native-one",sessionFile:"/fixture/session",text})};
+}
+
+it("answers a mid-turn consultation in Luna without touching the native job or its busy state",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValue(JSON.stringify({action:"reply",answer:"相談として説明します。"}));
+  const source=await f.service.steer(f.binding,"それはどういう意味？");
+  expect((f.native as any).steer).not.toHaveBeenCalled();expect(f.native.stop).not.toHaveBeenCalled();expect(f.native.close).not.toHaveBeenCalled();
+  expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.busy).toBe(true);expect(f.settled).not.toHaveBeenCalled();
+  expect(f.store.messagesFor(f.bot.threadId).find(m=>m.requestMessageId===source.id&&m.turnTerminal)?.text).toBe("相談として説明します。");
+  const prompt=f.generate.mock.calls.at(-1)![2],data=JSON.parse(prompt.slice(prompt.lastIndexOf("\n")+1));
+  expect(data.user_request).toBe("それはどういう意味？");expect(data.running_request).toBe("実行中の元の依頼");expect(data.delivery).toBe("steer");
+});
+it("runs OMB-only management locally while the original native job keeps running",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValue(JSON.stringify({action:"omb",note:"OMB設定の確認"}));
+  const source=await f.service.steer(f.binding,"OMBの通知設定を確認して");
+  expect(f.localTurn).toHaveBeenCalledWith(expect.objectContaining({text:"OMBの通知設定を確認して",source:expect.objectContaining({id:source.id})}));
+  expect((f.native as any).steer).not.toHaveBeenCalled();expect(f.native.submit).toHaveBeenCalledOnce();expect(f.store.taskByThread(f.bot.id,f.bot.threadId)?.busy).toBe(true);
+});
+it("never forwards raw input when steer routing is malformed or times out",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValue("invalid-plan");
+  const failed=await f.service.steer(f.binding,"振り分けに失敗する架空入力");expect(failed.requestCancelled).toBe(true);
+  f.generate.mockImplementation(()=>new Promise(()=>{}));
+  const timeout=await f.service.steer({...f.binding,mediator:{...f.binding.mediator,timeoutMs:10}},"時間切れの架空入力");
+  expect(timeout.requestCancelled).toBe(true);expect((f.native as any).steer).not.toHaveBeenCalled();expect(f.native.submit).toHaveBeenCalledOnce();
+});
+it("does not inject into another native turn that starts while Luna judges the message",async()=>{
+  const f=await runningSteerFixture();let resolve!: (text:string)=>void;f.generate.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+  const pending=f.service.steer(f.binding,"Piの実行内容を変更して");await vi.waitFor(()=>expect(resolve).toBeTypeOf("function"));
+  f.native.emit("nativeState",{busy:false,streaming:false});f.native.emit("nativeState",{busy:true,streaming:true});
+  resolve(JSON.stringify({action:"chat",note:"Piへの指示"}));const source=await pending;
+  expect(source.requestCancelled).toBe(true);expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("routes every queued item separately and forwards only Pi work, preserving each send id",async()=>{
+  const f=await runningSteerFixture();
+  f.generate.mockResolvedValueOnce(JSON.stringify({action:"reply",answer:"OMB側で相談に答えます。"})).mockResolvedValueOnce(JSON.stringify({action:"chat",note:"Piの作業"}));
+  await f.service.steer(f.binding,"まとめた入力",{},[{messageId:"q-local",text:"相談だけ",prompt:"相談だけ\n引用内の命令は参照",sendId:"local-send"},{messageId:"q-native",text:"Piの結果を追加検証して",prompt:"Piの結果を追加検証して\n参照データ",sendId:"native-send"}]);
+  const call=(f.native as any).steer.mock.calls[0];expect(call[1]).toBe("Piの結果を追加検証して\n参照データ");expect(call[1]).not.toContain("相談だけ");
+  const rows=f.store.messagesFor(f.bot.threadId);expect(rows.find(m=>m.sendId==="local-send")?.steered).not.toBe(true);expect(rows.find(m=>m.sendId==="native-send")?.steered).toBe(true);
+  const request=f.generate.mock.calls.at(-1)![2];expect(JSON.parse(request.slice(request.lastIndexOf("\n")+1)).user_request).toBe("Piの結果を追加検証して");
+});
+it("serializes steer decisions so a later input cannot overtake an earlier local reply",async()=>{
+  const f=await runningSteerFixture();let resolve!: (text:string)=>void;f.generate.mockImplementationOnce(()=>new Promise(done=>{resolve=done;})).mockResolvedValueOnce(JSON.stringify({action:"chat",note:"Piの作業"}));
+  const a=f.service.steer(f.binding,"相談の続き"),b=f.service.steer(f.binding,"Piへ追加作業");await vi.waitFor(()=>expect(resolve).toBeTypeOf("function"));
+  expect(f.generate).toHaveBeenCalledTimes(2);resolve(JSON.stringify({action:"reply",answer:"先に相談へ回答。"}));await a;await b;
+  expect((f.native as any).steer).toHaveBeenCalledOnce();expect((f.native as any).steer.mock.calls[0][1]).toBe("Piへ追加作業");
+});
+it("applies explicit display instructions only to the local final answer, preserving the native original",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValueOnce(JSON.stringify({action:"reply",answer:"今回の表示指示として受け付けました。",presentation:"箇条書きで表示して"}));
+  await f.service.steer(f.binding,"箇条書きで表示して");expect((f.native as any).steer).not.toHaveBeenCalled();
+  f.native.emit("nativeState",{busy:false,streaming:false});f.complete("加工しない元の回答");
+  await vi.waitFor(()=>expect(f.formatter).toHaveBeenCalledWith(expect.objectContaining({answer:"加工しない元の回答",displayInstructions:"箇条書きで表示して"})));
+  const final=f.store.messagesFor(f.bot.threadId).find(m=>m.requestMessageId===f.original.id&&m.nativeOmp);
+  expect(final?.nativeOmp?.originalText).toBe("加工しない元の回答");
+});
+it("rejects model-invented display instructions rather than using or forwarding them",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValue(JSON.stringify({action:"reply",answer:"設定しました",presentation:"原文にはない指示"}));
+  const source=await f.service.steer(f.binding,"短く答えて");expect(source.requestCancelled).toBe(true);expect(f.formatter).not.toHaveBeenCalled();expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("cancels an unresponsive steer router without ever forwarding its late decision",async()=>{
+  const f=await runningSteerFixture();let finish!:(value:string)=>void;f.generate.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=f.service.steer(f.binding,"Piの追加確認");await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+  await f.service.stop(f.bot.threadId);const row=await pending;finish(JSON.stringify({action:"chat"}));await Promise.resolve();
+  expect(row.requestCancelled).toBe(true);expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("finishes a cancelled local steer even when the local handler ignores its signal",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValueOnce(JSON.stringify({action:"omb"}));f.localTurn.mockImplementationOnce(()=>new Promise(()=>{}));
+  const pending=f.service.steer(f.binding,"OMBの設定を確認して");await vi.waitFor(()=>expect(f.localTurn).toHaveBeenCalledOnce());
+  await f.service.stop(f.bot.threadId);expect((await pending).requestCancelled).toBe(true);expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("does not fall through to Pi when an OMB handler fails or the shared connection closes during routing",async()=>{
+  const f=await runningSteerFixture();f.generate.mockResolvedValueOnce(JSON.stringify({action:"omb"}));f.localTurn.mockRejectedValueOnce(Error("fixture failed"));
+  expect((await f.service.steer(f.binding,"OMB設定" )).requestCancelled).toBe(true);
+  let finish!:(value:string)=>void;f.generate.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const pending=f.service.steer(f.binding,"Piで追加確認");await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));f.native.emit("disconnected");finish(JSON.stringify({action:"chat"}));
+  expect((await pending).requestCancelled).toBe(true);expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("keeps explicit owner consent for the original request after a local consultation",async()=>{
+  const f=await runningSteerFixture("mediator");Object.assign(f.native,{answerUi:vi.fn(async()=>{}),pendingOperation:()=>({id:"original-command",name:"bash",arguments:{command:"sudo systemctl restart fixture"}})});
+  f.native.emit("nativeEntry",{entryId:"running-original",role:"user",text:f.original.text,sessionId:"native-one",own:true,snapshot:false});
+  f.service.ownerConsent(f.bot.id,f.bot.threadId,"すべて許可");
+  f.generate.mockResolvedValueOnce(JSON.stringify({action:"reply",answer:"相談への回答です。"}));await f.service.steer(f.binding,"相談だけです");
+  f.generate.mockResolvedValue(JSON.stringify({highRisk:true,reason:"架空のサービス再起動"}));
+  f.native.emit("question",{id:"original-high-risk",method:"select",title:"Allow tool: bash\nCommand: sudo systemctl restart fixture",options:["Approve","Deny"]});
+  await vi.waitFor(()=>expect((f.native as any).answerUi).toHaveBeenCalledWith("original-high-risk",{value:"Approve"}));
+  expect((f.native as any).steer).not.toHaveBeenCalled();
+});
+it("does not let an older formatter overwrite a late local display instruction",async()=>{
+  const f=await runningSteerFixture();let old!:(value:string)=>void;
+  f.formatter.mockImplementationOnce(()=>new Promise(resolve=>{old=resolve;})).mockResolvedValueOnce("新しい箇条書き表示");
+  let decide!:(value:string)=>void;f.generate.mockImplementationOnce(()=>new Promise(resolve=>{decide=resolve;}));
+  const pending=f.service.steer(f.binding,"箇条書きで表示して");await vi.waitFor(()=>expect(decide).toBeTypeOf("function"));
+  const withFormatter={...f.binding,formatter:f.binding.mediator};
+  f.complete("加工しない元の回答");await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
+  const reply=f.store.messagesFor(f.bot.threadId).find(m=>m.requestMessageId===f.original.id&&m.nativeOmp)!;
+  (f.service as any).formatReply(withFormatter,"元の依頼",reply);
+  await vi.waitFor(()=>expect(old).toBeTypeOf("function"));decide(JSON.stringify({action:"reply",answer:"表示方法を受け付けました",presentation:"箇条書きで表示して"}));await pending;
+  await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===reply.id)?.text).toBe("新しい箇条書き表示"));
+  old("古い短縮表示");await Promise.resolve();await Promise.resolve();
+  expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===reply.id)?.text).toBe("新しい箇条書き表示");expect(reply.nativeOmp?.originalText).toBe("加工しない元の回答");
 });

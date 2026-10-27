@@ -122,6 +122,22 @@ try {
   await tool("send_bot_message",{bot_id:shared.id,task_id:shared.activeTaskId,text:"SYNTHETIC_HOLD"});
   await until(()=>api("/api/bots?messages=0"),value=>value.bots.find(b=>b.id===shared.id)?.tasks.find(t=>t.threadId===shared.activeTaskId)?.nativeOmpStatus?.canSteer===true);
   const promptsBeforeSteer=calls().filter(c=>c.type==="prompt").length;
+  const localWhileRunning = await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"説明だけください FIXTURE_LOCAL_ADVICE",delivery:"steer",sendId:"fixture-local-steer-0001"}});
+  assert.notEqual(localWhileRunning.steered,true);
+  assert.ok((await sharedMessages()).messages.some(m=>m.requestMessageId===localWhileRunning.message.id&&m.turnTerminal&&m.text.includes("実機は確認していません")));
+  const localDuplicate=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"説明だけください FIXTURE_LOCAL_ADVICE",delivery:"steer",sendId:"fixture-local-steer-0001"}});
+  assert.equal(localDuplicate.message.id,localWhileRunning.message.id);
+  const localOmb=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"OMBの設定を確認 FIXTURE_OMB_LOCAL",delivery:"steer",sendId:"fixture-local-omb-0001"}});
+  assert.notEqual(localOmb.steered,true);
+  assert.ok((await sharedMessages()).messages.some(m=>m.requestMessageId===localOmb.message.id&&m.turnTerminal&&m.text.includes("OMB管理API")));
+  const badSteer=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"振り分け失敗 FIXTURE_BAD_SESSION_PLAN",delivery:"steer",sendId:"fixture-bad-steer-0001"}});
+  assert.equal(badSteer.message.requestCancelled,true);
+  const localQueue=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"相談だけ FIXTURE_LOCAL_ADVICE",delivery:"queue",sendId:"fixture-local-queue-0001"}});
+  const movedLocal=await api(`/api/bots/${shared.id}/queue/${localQueue.queueId}/steer`,{method:"POST",body:{threadId:shared.activeTaskId}});
+  assert.equal(movedLocal.handledLocally,true);assert.equal(movedLocal.steered,false);assert.equal(movedLocal.messages.length,1);
+  assert.equal(calls().filter(c=>c.type==="steer").length,0);
+  assert.equal(calls().filter(c=>c.type==="prompt").length,promptsBeforeSteer);
+  assert.equal((await api("/api/bots?messages=0")).bots.find(b=>b.id===shared.id).tasks.find(t=>t.threadId===shared.activeTaskId).nativeOmpStatus.canSteer,true);
   const injection=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"実行中の架空追加入力",delivery:"steer",sendId:"fixture-native-steer-0001"}});
   assert.equal(injection.steered,true);
   await until(sharedMessages,value=>value.messages.some(m=>m.turnTerminal&&m.nativeOmp?.originalText.includes("実行中の架空追加入力")));
@@ -131,15 +147,18 @@ try {
   assert.equal(calls().filter(c=>c.type==="prompt").length,promptsBeforeSteer);
   await tool("send_bot_message",{bot_id:shared.id,task_id:shared.activeTaskId,text:"SYNTHETIC_HOLD queue fixture"});
   await until(()=>api("/api/bots?messages=0"),value=>value.bots.find(b=>b.id===shared.id)?.tasks.find(t=>t.threadId===shared.activeTaskId)?.nativeOmpStatus?.canSteer===true);
+  const heldLocal=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"混在キューの相談 FIXTURE_LOCAL_ADVICE",delivery:"queue",sendId:"fixture-mixed-local-0001"}});
   const heldA=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"キュー入力A",delivery:"queue",sendId:"fixture-native-queue-0001"}});
   const heldB=await api(`/api/bots/${shared.id}/messages`,{method:"POST",body:{threadId:shared.activeTaskId,text:"キュー入力B",delivery:"queue",sendId:"fixture-native-queue-0002"}});
   assert.equal(heldA.queued,true);assert.equal(heldB.queued,true);
   const moved=await api(`/api/bots/${shared.id}/queue/${heldA.queueId}/steer`,{method:"POST",body:{threadId:shared.activeTaskId}});
-  assert.equal(moved.steered,true);assert.equal(moved.messages.length,2);
-  assert.deepEqual(moved.messages.map(m=>m.sendId),["fixture-native-queue-0001","fixture-native-queue-0002"]);
-  assert.deepEqual(moved.queueIds,[heldA.queueId,heldB.queueId]);
+  assert.equal(moved.steered,true);assert.equal(moved.messages.length,3);
+  assert.deepEqual(moved.messages.map(m=>m.sendId),["fixture-mixed-local-0001","fixture-native-queue-0001","fixture-native-queue-0002"]);
+  assert.deepEqual(moved.queueIds,[heldLocal.queueId,heldA.queueId,heldB.queueId]);
   await until(sharedMessages,value=>value.messages.some(m=>m.turnTerminal&&m.nativeOmp?.originalText.includes("キュー入力A\n\nキュー入力B")));
   assert.equal(calls().filter(c=>c.type==="steer").length,2);
+  assert.ok(!calls().some(c=>c.type==="steer"&&c.message.includes("FIXTURE_LOCAL_ADVICE")));
+  assert.equal(moved.messages[0].steered,undefined);assert.equal(moved.messages[1].steered,true);
   const beforeReview = (await messages()).messages.filter(m => m.nativeOmp?.formatted).length;
   await api("/api/native-omp", { method: "PUT", body: { bindings: [{ ...binding, approvalPolicy: "mediator" }, sharedBinding] } });
   const cardsBefore = (await messages()).messages.filter(m => m.card?.requestType === "permission").length;
@@ -260,7 +279,7 @@ try {
   assert.ok(!terminal.nativeOmp.originalText.includes("架空の設定を確認しました"));
   assert.ok(!JSON.stringify(progressDone).includes("SYNTHETIC_PRIVATE_REASONING"));
   const report = { ok: true, isolatedHome: true, syntheticNativePeer: true, independentMediator: true, originalInputPreserved: true, nativeAnswerPreserved: true, shortDisplayOnly: true,
-    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, nativeSteerAdmission: true, nativeSteerSendIdempotent: true, nativeQueuedSteerRetainsInputs: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
+    nativeSessionResumed: true, separateNativeSessionPerThread: true, queuedInputsSeparate: true, humanApprovalBeforeTool: true, nativeSelectApprovalOnceOnly: true, humanQuestionsRelayed: true, nativeStopDispatched: true, nativeFailureNotSuccess: true, unrelatedBotUnchanged: true, sharedConnectorExactText: true, sharedConnectorRepeatedTurns: true, nativeSteerAdmission: true, consultationSteerStaysLocal: true, ombSteerStaysLocal: true, malformedSteerNeverForwarded: true, localOnlyQueuedSteer: true, mixedQueuedSteerSplit: true, localSteerSendIdempotent: true, originalNativeJobUnaffectedByLocalSteer: true, nativeSteerSendIdempotent: true, nativeQueuedSteerRetainsInputs: true, mediatorInspectionApproval: true, importantOperationStillNeedsHuman: true,
     namedSessionIdempotent: true, existingSessionSelected: true, chatCreatedSessionAndThread: true, newThreadNativeRoundTrip: true, saveOnlyCreatesNoThread: true, malformedManagementNeverForwarded: true,
     mediatorProjectSave: true, mediatorUnittestWithSavedSource: true, mediatorCommandLookup: true, mediatorSmokeWithExactSavedSource: true, mediatorNativeEdit: true, mediatorProjectConfig: true, mediatorLocalApi: true, mediatorPythonDiagnostic: true, noDevelopmentApprovalCards: true, nativeUploadedImageBytesVerified: true, imageConsultationWithoutNative: true, consultationAnsweredWithoutNative: true, ombSettingsUseLocalHarness: true, ombProfileUsesExistingApplyPolicy: true, localNativeExecutionExcluded: true, explicitOwnerConsentWhileBusy: true, highRiskExecutionReceipt: true, consentExpiresAtCompletion: true, noSessionWideGrant: true, nativeProgressBeforeFinal: true, nativeProgressSharesFinalTurn: true, privateThinkingExcluded: true, testedAt: new Date().toISOString() };
   writeFileSync(join(reportDir, "acceptance.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); console.log(JSON.stringify(report));

@@ -27,6 +27,7 @@ export interface ReplyFormatter {
     question: string;
     answer: string;
     signal: AbortSignal;
+    displayInstructions?: string;
   }): Promise<string>;
 }
 
@@ -45,6 +46,7 @@ export function presentDirectReply(
   answer: string,
   formatter: ReplyFormatter | undefined,
   selection: Readonly<ReplyFormatterSelection> | undefined,
+  displayInstructions?: string,
 ): Promise<ReplyPresentation> {
   if (!selection) return Promise.resolve({ text: answer, formatted: false });
   if (!formatter) return Promise.resolve({ text: answer, formatted: false, failure: "unavailable" });
@@ -58,7 +60,7 @@ export function presentDirectReply(
   });
   const formatted = Promise.resolve().then(() => formatter.format({
     providerId: selection.providerId, modelId: selection.modelId,
-    question, answer, signal: controller.signal,
+    question, answer, signal: controller.signal, ...(displayInstructions ? { displayInstructions } : {}),
   })).then((text): ReplyPresentation => typeof text === "string" && text.trim()
     ? { text, formatted: true }
     : { text: answer, formatted: false, failure: "invalid" },

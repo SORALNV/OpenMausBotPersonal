@@ -2895,6 +2895,18 @@ describe("restoring the open conversation", () => {
       expect(seen.notice).toEqual({ kind: "steer-images", botName: null });
     });
 
+    it("consumes queued inputs that Luna answered locally without marking them as native steers", async () => {
+      const { stream } = await boot(); stream.send(hello()); await settle();
+      flushSync(() => dispatch({ type: "pendingQueued", threadId: "bot-1-thread", queueId: "local-queue", text: "相談だけ" }));
+      await settle(); expect(seen.pendingQueued["bot-1-thread"]).toHaveLength(1);
+      const row = { id: "local-source", role: "user", kind: "text", text: "相談だけ", at: 1, queueId: "local-queue", requestPending: false };
+      vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify({ ok: true, steered: false, handledLocally: true, threadId: "bot-1-thread", messages: [row], queueIds: ["local-queue"] }))));
+      const settled = vi.fn(); flushSync(() => dispatch({ type: "steerQueued", botId: "bot-1", queueId: "local-queue", onSettled: settled }));
+      await settle(); expect(settled).toHaveBeenCalledOnce(); expect(seen.pendingQueued["bot-1-thread"] ?? []).toHaveLength(0);
+      const message = seen.bots.find(bot => bot.id === "bot-1")?.messages.find(message => message.id === "local-source");
+      expect(message?.text).toBe("相談だけ"); expect(message?.steered).not.toBe(true);
+    });
+
     it("the provider restores the conversation remembered on this device", async () => {
       const { stored, stream } = await boot({ [LAST_CONVERSATION_KEY]: "room-1" });
       stream.send(hello());

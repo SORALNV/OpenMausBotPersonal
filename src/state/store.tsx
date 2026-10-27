@@ -2554,7 +2554,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "steerQueued":
           void api(`/api/bots/${action.botId}/queue/${action.queueId}/steer`, { method: "POST", body: JSON.stringify({ threadId: action.threadId }) })
             .then((body) => {
-              if (body?.steered === true && Array.isArray(body.messages) && typeof body.threadId === "string") {
+              if ((body?.steered === true || body?.handledLocally === true) && Array.isArray(body.messages) && typeof body.threadId === "string") {
                 for (const message of body.messages) {
                   rawDispatch({ type: "messageAdded", threadId: body.threadId, message });
                 }
