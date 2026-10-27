@@ -1,3 +1,4 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { DaySeparator } from "./ChatDaySeparator";
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from "react";
 import { useAdvancedMode } from "@/lib/interface-mode";
@@ -1037,6 +1038,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const localVoice = localSystemVoiceActive();
   const locale = activeLocale();
   const busy = Boolean(bot.busy);
+  const nativeNotice = nativeOmpStatusLabel(bot.tasks?.find(task => task.threadId === bot.threadId)?.nativeOmpStatus);
   const openedAt = useThreadOpenedAt(bot.threadId);
   const headerAnimated = busy || (mascotMotion?.kind ?? "none") !== "none";
   const branch = useRef(messages);
@@ -1078,7 +1080,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const activity = liveActivityPhrases(lastMessage);
   const waiting = Boolean(
     bot.busy &&
-      bot.activity !== "waiting-on-you" &&
+      bot.activity !== "waiting-on-you" && !nativeNotice &&
       showWorkingDots(bot.busy, lastMessage),
   );
   const wasWaiting = useRef(false);
@@ -1207,7 +1209,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
               <ChevronRight size={14} aria-hidden="true" className="-ml-2.5 w-0 shrink-0 text-ink-secondary opacity-0 transition-[width,margin,opacity] duration-150 group-hover:ml-0 group-hover:w-3.5 group-hover:opacity-100 group-focus-visible:ml-0 group-focus-visible:w-3.5 group-focus-visible:opacity-100" />
             </button>
           )}
-          <span role="status" className="sr-only" data-chathead-status>{bot.busy ? t("sidebar.preview.working") : ""}</span>
+          <span role="status" className="sr-only" data-chathead-status>{nativeNotice ?? (bot.busy ? t("sidebar.preview.working") : "")}</span>
           {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">Teammates working</span>}
           {awayFromMainThread(profile, showThreads) && (
             <button
@@ -1261,6 +1263,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
       </div>
 
       <BotActivityPicker bot={bot} />
+      {nativeNotice && <div role="status" data-native-omp-status className="px-5 py-2 text-[12px] text-warning">{nativeNotice}</div>}
       {routineExecution && <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[11.5px] text-ink-secondary">
         <span className="min-w-0 flex-1 truncate">{t("routines.executionDetails", { name: routineExecution.routineName })}</span>
         {canOpenResults && resultsThreadId && <button type="button" onClick={() => openNotificationTarget(dispatch, { botId: bot.id, threadId: resultsThreadId }, state, showThreads)} className="rounded px-2 py-1 text-accent hover:bg-raised">{t("routines.results.back")}</button>}

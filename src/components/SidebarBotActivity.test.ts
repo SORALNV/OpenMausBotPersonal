@@ -294,3 +294,13 @@ describe("attentionUnpinAction", () => {
     expect(attentionUnpinAction(entry)).toEqual({ type: "pinGroupTask", groupId: "g", threadId: "g0", pinned: false, title: "Crew" });
   });
 });
+
+it("keeps native reconnect and queued states visible without reporting running work", () => {
+  for(const [state,label] of [["reconnecting","Piへの接続を復旧中"],["native-queued","Pi側のキューで待機中"],["reconciling","Piの状態を照合中"]]) {
+    const item={...task("native","Pi",{busy:true,activity:"no-signal",nativeOmpStatus:{state:state!,canSteer:false}}),queued:false};
+    const status=attentionRowStatus(item);
+    expect(status.active).toBe(true);expect(status.label).toBe(label);expect(status.Icon).toBe(Clock3);
+    expect(status.colorClass).not.toContain("animate-spin");
+    expect(attentionHasRunningWork([{kind:"bot",botId:"pi",botName:"Pi",task:item}])).toBe(false);
+  }
+});

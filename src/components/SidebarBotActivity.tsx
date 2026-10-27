@@ -1,3 +1,4 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { BellDot, CircleAlert, Clock3, Loader2, Pin, PinOff, type LucideIcon } from "lucide-react";
 import type { Dispatch } from "react";
 import type { Action, AppState, Bot, Group, Task } from "@/state/store";
@@ -75,16 +76,17 @@ export function attentionTriggerLabel(count: number): string {
 }
 
 export function attentionHasRunningWork(entries: readonly AttentionThread[]): boolean {
-  return entries.some((entry) => entry.task.activity === "working" || (entry.task.busy === true && entry.task.activity !== "waiting-on-you") || entry.task.queued === true);
+  return entries.some((entry) => !nativeOmpStatusLabel(entry.task.nativeOmpStatus) && (entry.task.activity === "working" || (entry.task.busy === true && entry.task.activity !== "waiting-on-you") || entry.task.queued === true));
 }
 
 export function attentionRowStatus(task: AttentionThread["task"]): { active: boolean; Icon: LucideIcon; colorClass: string; label: string } {
   const waiting = task.activity === "waiting-on-you";
   const teammateWait = !waiting && task.waitingForTeammates === true;
-  const working = !waiting && !teammateWait && (task.busy || task.activity === "working");
-  const active = waiting || teammateWait || working || task.queued || task.unread === true;
-  const label = waiting ? t("task.waiting") : working ? t("chat.activity.working") : teammateWait ? t("task.waitingOnTeammate") : task.queued ? t("task.queued") : t("task.unread");
-  const Icon = waiting ? CircleAlert : working ? Loader2 : teammateWait || task.queued ? Clock3 : BellDot;
+  const notice = nativeOmpStatusLabel(task.nativeOmpStatus);
+  const working = !notice && !waiting && !teammateWait && (task.busy || task.activity === "working");
+  const active = Boolean(notice) || waiting || teammateWait || working || task.queued || task.unread === true;
+  const label = notice ?? (waiting ? t("task.waiting") : working ? t("chat.activity.working") : teammateWait ? t("task.waitingOnTeammate") : task.queued ? t("task.queued") : t("task.unread"));
+  const Icon = waiting ? CircleAlert : notice ? Clock3 : working ? Loader2 : teammateWait || task.queued ? Clock3 : BellDot;
   const colorClass = cn(working && "animate-spin text-success", (waiting || teammateWait) && "text-warning");
   return { active, Icon, colorClass, label };
 }
@@ -189,11 +191,12 @@ export function SidebarBotActivity({ bot, rowThreadId, density, pendingQueued, d
     {tasks.map((task) => {
       const waiting = task.activity === "waiting-on-you";
       const teammateWait = !waiting && task.waitingForTeammates === true;
-      const working = !waiting && !teammateWait && (task.busy || task.activity === "working");
-      const status = waiting ? t("sidebar.preview.waiting") : working ? t("chat.activity.working") : teammateWait ? t("sidebar.preview.waitingOnTeammate") : task.queued ? t("task.queued") : t("task.unread");
+      const notice = nativeOmpStatusLabel(task.nativeOmpStatus);
+  const working = !notice && !waiting && !teammateWait && (task.busy || task.activity === "working");
+      const status = notice ?? (waiting ? t("sidebar.preview.waiting") : working ? t("chat.activity.working") : teammateWait ? t("sidebar.preview.waitingOnTeammate") : task.queued ? t("task.queued") : t("task.unread"));
       const title = localizedTaskTitle(task.title);
       const label = `${bot.name}: ${title} · ${status}${task.unread && (waiting || working || teammateWait || task.queued) ? ` · ${t("task.unread")}` : ""}`;
-      const Icon = waiting ? CircleAlert : working ? Loader2 : teammateWait || task.queued ? Clock3 : BellDot;
+      const Icon = waiting ? CircleAlert : notice ? Clock3 : working ? Loader2 : teammateWait || task.queued ? Clock3 : BellDot;
       return <button key={task.threadId} type="button" data-sidebar-activity-row={task.threadId} aria-label={label} title={label}
         onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })}
         className={cn("flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] outline-none hover:bg-raised/50 focus-visible:ring-1 focus-visible:ring-accent/60", iconOnly && "justify-center", waiting ? "text-warning" : "text-ink-secondary")}>

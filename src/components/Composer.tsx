@@ -1,3 +1,4 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
@@ -134,6 +135,7 @@ export function Composer({
     ? members?.find((member) => member.id === groupBusyBotId)?.modelSelection.instanceId
     : bot?.modelSelection.instanceId;
   const nativeOmpStatus = bot?.tasks?.find(task => task.threadId === threadId)?.nativeOmpStatus;
+  const nativeNotice = nativeOmpStatusLabel(nativeOmpStatus);
   const canSteer = nativeOmpStatus ? nativeOmpStatus.canSteer :
     state.instances.find((i) => i.instanceId === steerInstanceId)?.capabilities?.queueing === true;
   const composerTask = profile?.tasks?.find((task) => task.threadId === threadId);
@@ -966,7 +968,7 @@ export function Composer({
           // is pending.
           disabled={Boolean(approval) || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
-          placeholder={
+          placeholder={nativeNotice ? `${nativeNotice}。通常送信はキューに追加します` :
             setupLocked
               ? t("composer.placeholder.locked")
               : approval

@@ -1,3 +1,4 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Archive, ArchiveRestore, BellOff, Check, ChevronRight, Clock, Clock3, FolderInput, Link2, Link2Off, Loader2, MoreHorizontal, Pencil, Pin, PinOff, RefreshCw, Trash2 } from "lucide-react";
@@ -17,7 +18,7 @@ import { localizedTaskTitle } from "@/lib/task-title";
 
 export { isSnoozed, orderedThreadList };
 
-type ThreadRowTask = Pick<Task, "threadId" | "title" | "projectId" | "busy" | "activity" | "unread" | "openedBy" | "closedBy" | "archivedAt" | "snoozedUntil" | "waitingForTeammates" | "link"> & {
+type ThreadRowTask = Pick<Task, "threadId" | "nativeOmpStatus" | "title" | "projectId" | "busy" | "activity" | "unread" | "openedBy" | "closedBy" | "archivedAt" | "snoozedUntil" | "waitingForTeammates" | "link"> & {
   queued?: boolean;
   pinned?: boolean;
   createdAt?: number;
@@ -83,7 +84,7 @@ const tomorrowNineAm = () => {
   return when.getTime();
 };
 
-const isWorking = (task: Pick<Task, "activity" | "busy">): boolean => task.activity === "working" || Boolean(task.busy);
+const isWorking = (task: Pick<Task, "activity" | "busy" | "nativeOmpStatus">): boolean => !nativeOmpStatusLabel(task.nativeOmpStatus) && (task.activity === "working" || Boolean(task.busy));
 
 const isWaitingOnTeammate = (task: Pick<Task, "waitingForTeammates">): boolean =>
   task.waitingForTeammates === true;
@@ -235,7 +236,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({ task, ownerId, 
   const finishing = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const actionRef = useRef<HTMLButtonElement>(null);
-  const status = task.activity === "waiting-on-you" ? t("task.waiting") : isWaitingOnTeammate(task) ? t("task.waitingOnTeammate") : isWorking(task) ? activityLabel ?? t("chat.activity.working") : task.queued ? t("task.queued") : null;
+  const status = nativeOmpStatusLabel(task.nativeOmpStatus) ?? (task.activity === "waiting-on-you" ? t("task.waiting") : isWaitingOnTeammate(task) ? t("task.waitingOnTeammate") : isWorking(task) ? activityLabel ?? t("chat.activity.working") : task.queued ? t("task.queued") : null);
   const byline = threadByline(task);
   const updatedAt = threadRecency(task);
   const updatedStamp = formatUpdatedAt(updatedAt);
