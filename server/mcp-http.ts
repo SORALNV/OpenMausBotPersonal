@@ -11,13 +11,15 @@ export class McpHttpError extends Error {
   readonly kind: McpHttpFailure;
   readonly status: number | undefined;
   readonly wwwAuthenticate: string | undefined;
+  readonly networkCode: string | undefined;
 
-  constructor(kind: McpHttpFailure, message: string, status?: number, wwwAuthenticate?: string) {
+  constructor(kind: McpHttpFailure, message: string, status?: number, wwwAuthenticate?: string, networkCode?: string) {
     super(message);
     this.name = "McpHttpError";
     this.kind = kind;
     this.status = status;
     this.wwwAuthenticate = wwwAuthenticate;
+    this.networkCode = networkCode;
   }
 }
 
@@ -260,7 +262,10 @@ export class RemoteMcpClient {
       response = await this.fetchImpl(url, { method: "POST", headers, body: JSON.stringify(frame), signal });
     } catch (error) {
       if (signal.aborted) throw error;
-      throw new McpHttpError("network", "request failed");
+      const cause = error && typeof error === "object" ? error as { code?: unknown; cause?: { code?: unknown } } : {};
+      const code = cause.cause?.code ?? cause.code;
+      const allowed = ["EACCES", "EPERM", "EHOSTUNREACH", "ENETUNREACH", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ERR_INVALID_URL", "ERR_INVALID_ARG_VALUE", "ERR_INVALID_CHAR", "ERR_HTTP_INVALID_HEADER_VALUE", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_INVALID_ARG"];
+      throw new McpHttpError("network", "request failed", undefined, undefined, typeof code === "string" && allowed.includes(code) ? code : undefined);
     }
     if (!response.ok) {
       drain(response);
