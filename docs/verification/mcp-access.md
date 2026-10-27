@@ -23,7 +23,7 @@ HTTP検証は専用ホーム、デスクトップ所有者capability、架空の
 
 Personalと汎用Electronで同じMach-OのLC_UUIDが使われると、macOSがLAN許可を正しく対応付けられない場合がある。[Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)は、主実行ファイルのUUIDの欠落・他アプリとの重複が許可の誤動作につながるとしている。
 
-Personalのパッケージ化では、元の実行ファイルUUIDとBundle IDからアプリ固有のUUIDを決め、署名前に設定する。通常のランチャーとRuntimeは別のUUIDを持ち、同じ元バイナリからの再パッケージ化では値を変えない。日本語のNSLocalNetworkUsageDescriptionも追加する。既存の署名証明書とキーチェーンを維持する。旧ランチャーからの初回移行だけは、バックアップ後にpersonal-install-runtime.mjsの--migrate-launcherを明示する。
+Personalのパッケージ化では、元の実行ファイルUUIDとBundle IDからアプリ固有のUUIDを決め、署名前に設定する。通常のランチャーとRuntimeは別のUUIDを持ち、同じ元バイナリからの再パッケージ化では値を変えない。日本語のNSLocalNetworkUsageDescriptionも追加する。既存の署名証明書とキーチェーンを維持する。旧ランチャーからの初回移行だけは、personal-package-runtime.mjsに--preserve-launcherを渡して現在のランチャー本体とASARを維持し、バックアップ後にpersonal-install-runtime.mjsの--migrate-launcherを明示する。
 
 この修正はOS許可を付与・リセットしない。アプリ固有の通常のLAN許可を本人が選ぶ。権限データベースの改変、ネットワーク全体の除外設定、別プロセスを通じた拒否の迂回は行わない。
 

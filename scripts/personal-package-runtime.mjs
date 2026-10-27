@@ -36,6 +36,15 @@ rmSync(archive);
 await asar.createPackage(source, archive);
 const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHash("sha256").update(asar.getRawHeader(archive).headerString).digest("hex") } };
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), join(launcher, "Contents/Info.plist")]);
+const preserveLauncher = process.argv.includes("--preserve-launcher");
+if (preserveLauncher) {
+  const installed = "/Applications/OpenMausBot Personal.app";
+  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", `=identifier "dev.sora.openmausbot.personal" and certificate leaf = H"${build.signing.certificateSha1}"`, installed]);
+  const metadata = JSON.parse(asar.extractFile(join(installed, "Contents/Resources/app.asar"), "personal-launcher.json").toString());
+  if (metadata.version !== 1 || metadata.fingerprint !== build.signing.certificateSha1) throw new Error("Existing fixed launcher identity differs");
+  rmSync(launcher, { recursive: true });
+  run("/usr/bin/ditto", [installed, launcher]);
+}
 withPersonalSigning(join(repo, ".privacy-dev/personal-signing"), ({ identity, keychain }) => {
   for (const app of [runtime, launcher]) {
     setPersonalAppIdentity(app);
@@ -44,5 +53,5 @@ withPersonalSigning(join(repo, ".privacy-dev/personal-signing"), ({ identity, ke
     assertPersonalAppIdentity(app);
   }
 });
-writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, packagingCommit, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, packagingCommit, preserveLauncher, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
 console.log(JSON.stringify({ directory, runtime, launcher }));
