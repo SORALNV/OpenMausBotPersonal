@@ -118,7 +118,7 @@ export function WorkingFolder({ bot }: { bot: Bot }) {
 export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {
   const { dispatch } = useStore();
   const { servers, error, refresh } = useMcpServers();
-  const mounted = new Set((servers ? mcpServersForBot(servers, bot.mcpServers) : []).map((server) => server.name));
+  const mounted = new Set((servers ? mcpServersForBot(servers, bot.mcpServers, bot.id) : []).map((server) => server.name));
   const usesAll = bot.mcpServers == null;
 
   const toggle = (name: string) => {
@@ -158,11 +158,11 @@ export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpS
             <div key={server.name} className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <div className="truncate font-mono text-[12.5px] text-ink">{server.name}</div>
-                {!server.enabled && <div className="text-[11.5px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
+                {server.delegated ? <div className="text-[11.5px] text-ink-secondary">Managerへの委任で管理・{server.delegated.bots.find(entry => entry.id === bot.id)?.tools.length ?? 0}ツール</div> : !server.enabled && <div className="text-[11.5px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
               </div>
               <Switch
                 checked={mounted.has(server.name)}
-                disabled={!server.enabled || !!bot.busy || error}
+                disabled={Boolean(server.delegated) || !server.enabled || !!bot.busy || error}
                 aria-label={t("botAccess.mcpAllow", { name: server.name })}
                 onClick={() => toggle(server.name)}
                 className="disabled:cursor-not-allowed"

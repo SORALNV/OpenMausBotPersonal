@@ -811,6 +811,10 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       text: `A confirmation card is now visible to the user for ${proposal}.${warningText}\n\n${status} End this turn and wait for the decision.`,
     };
   }
+  if (name === "manage_mcp_access") {
+    try { return { text: JSON.stringify(await api("/api/internal/mcp-access", { method: "POST", body: JSON.stringify(args) })) }; }
+    catch (cause) { return { text: cause instanceof Error ? cause.message : String(cause), isError: true }; }
+  }
   if (name === "add_mcp_server") {
     let saved: Json;
     try {

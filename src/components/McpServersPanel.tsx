@@ -24,6 +24,7 @@ import { completeMcpSignIn, mcpSignInLink, runMcpSignIn, type McpSignInStatus } 
 import { api, useStore } from "@/state/store";
 
 import { Select } from "./Select";
+import { McpAccessPanel } from "./McpAccessPanel";
 import { Switch } from "./SettingsPrimitives";
 import { ClaudeCodeSwitches } from "./ClaudeCodeSwitches";
 import { WhopIcon } from "./WhopIcon";
@@ -54,7 +55,7 @@ interface McpOAuthClientListing {
   clientSecretConfigured: boolean;
   redirectUri: string;
 }
-export type McpServerListing = (StdioMcpListing | RemoteMcpListing) & { managedBy?: string; runsOn?: { environmentId: string; label: string } };
+export type McpServerListing = (StdioMcpListing | RemoteMcpListing) & { managedBy?: string; delegated?: { bots: { id: string; tools: string[] }[] }; runsOn?: { environmentId: string; label: string } };
 
 export function isRemoteMcpListing(server: McpServerListing): server is RemoteMcpListing {
   return "url" in server;
@@ -908,7 +909,7 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
                     <div className="min-w-0 flex-[1_1_220px]">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="min-w-0 truncate text-[14px] font-medium text-ink">{whop ? "Whop" : server.name}</span>
-                        <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", server.enabled ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>{t(server.enabled ? "mcp.badge.on" : "mcp.badge.off")}</span>
+                        <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", server.enabled ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>{server.delegated ? `Bot別配布 ${server.delegated.bots.length}件` : t(server.enabled ? "mcp.badge.on" : "mcp.badge.off")}</span>
                         {auth && <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", auth === "signed-in" ? "bg-success/10 text-success" : "bg-warning/10 text-warning")}>{t(auth === "signed-in" ? "mcp.auth.signedIn" : "mcp.auth.needsSignIn")}</span>}
                         {server.managedBy && <span className="rounded-full bg-raised px-2 py-0.5 text-[10.5px] text-ink-secondary">{t("policy.managedBy", { organization: server.managedBy })}</span>}
                       </div>
@@ -942,8 +943,8 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
                       <span className="ml-1 flex items-center">
                         {busy === `toggle:${server.name}` && <Loader2 size={13} className="mr-1.5 animate-spin text-ink-secondary" />}
                         <Switch
-                          checked={server.enabled}
-                          disabled={busy !== null || signingIn !== null}
+                          checked={server.enabled && !server.delegated}
+                          disabled={busy !== null || signingIn !== null || Boolean(server.delegated)}
                           onClick={() => void toggle(server)}
                           aria-label={t("mcp.toggleAria", {
                             name: server.name,
@@ -962,6 +963,7 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
                       <div className="mt-2 flex flex-wrap gap-2">{(store.bots ?? []).filter((bot) => !bot.hidden).map((bot) => <button key={bot.id} type="button" onClick={() => { dispatch({ type: "togglePlugins", open: false }); openBotSettings(dispatch, "access", { botId: bot.id, page: "mcp" }); }} className="rounded-lg bg-control px-2.5 py-1.5 text-ink hover:bg-raised-hover">{t("whop.botSettings", { name: bot.name })}</button>)}</div>
                     </details>
                   </div>}
+                  {isRemoteMcpListing(server) && !server.runsOn && <McpAccessPanel server={server.name} onSaved={() => void load()} />}
                   {renderSignIn(server)}
                   {result && signingIn !== server.name && (
                     <div role="status" className={cn("mt-3 rounded-lg px-3 py-2 text-[12px]", result.ok ? "bg-success/10 text-success" : result.auth === "required" ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger")}>

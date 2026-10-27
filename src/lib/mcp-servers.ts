@@ -5,6 +5,7 @@ import { api } from "@/state/store";
 export interface McpServerSummary {
   name: string;
   enabled: boolean;
+  delegated?: { bots: { id: string; tools: string[] }[] };
 }
 
 let cached: { servers: McpServerSummary[] | null; error: boolean } = { servers: null, error: false };
@@ -20,7 +21,7 @@ const subscribe = (listener: () => void) => {
 export function updateMcpServers(servers: McpServerSummary[]): void {
   generation += 1;
   inflight = null;
-  cached = { servers: servers.map(({ name, enabled }) => ({ name, enabled: Boolean(enabled) })), error: false };
+  cached = { servers: servers.map(({ name, enabled, delegated }) => ({ name, enabled: Boolean(enabled), ...(delegated ? { delegated: structuredClone(delegated) } : {}) })), error: false };
   for (const listener of listeners) listener();
 }
 
@@ -54,8 +55,8 @@ export function useMcpServers(): { servers: McpServerSummary[] | null; error: bo
   return { ...current, refresh: () => loadMcpServers(true) };
 }
 
-export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined): McpServerSummary[] {
-  const enabled = all.filter((server) => server.enabled);
+export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined, botId?: string): McpServerSummary[] {
+  const enabled = all.filter((server) => server.delegated ? Boolean(botId && server.delegated.bots.some(bot => bot.id === botId)) : server.enabled);
   if (own == null) return enabled;
   return enabled.filter((server) => own.includes(server.name));
 }

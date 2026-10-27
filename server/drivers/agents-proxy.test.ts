@@ -659,6 +659,7 @@ describe("agents-proxy MCP surface", () => {
       "propose_team_memory",
       "skills_list",
       "skill_manage",
+      "manage_mcp_access",
       "add_mcp_server",
     ]);
     const tool = (name: string) => list.result.tools.find((entry: { name: string }) => entry.name === name);

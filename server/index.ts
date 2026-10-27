@@ -622,6 +622,8 @@ import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.
 import { createAntigravityAccountRoutes } from "./routes/antigravity-accounts.ts";
 import { createConfigRoutes } from "./routes/config.ts";
 import { createInstanceRoutes } from "./routes/instances.ts";
+import { McpAccess } from "./mcp-access.ts";
+import { mcpAccessRoutes } from "./routes/mcp-access.ts";
 import { createMcpServerRoutes } from "./routes/mcp-servers.ts";
 import { createSetupImportRoutes } from "./routes/setup-import.ts";
 import { createComputerRoutes } from "./routes/computers.ts";
@@ -1778,7 +1780,7 @@ type InternalCapability = {
   threadId: string;
   generation: string;
   depth: number;
-  kind: "agents" | "connectors" | "computer" | "browser" | "hooks" | "phone" | "data" | "highlevel";
+  kind: "agents" | "custom-mcp" | "connectors" | "computer" | "browser" | "hooks" | "phone" | "data" | "highlevel";
   skillAuthoring: boolean;
   createdBots: number;
   createdRooms?: number;
@@ -3071,6 +3073,7 @@ const store = new Store(
   (instanceId) => registry.cliTarget(instanceId)?.driverKind,
   () => cfg.language ?? Intl.DateTimeFormat().resolvedOptions().locale,
 );
+const mcpAccess = new McpAccess({ file: join(DATA_DIR, "private", "mcp-access.json"), servers: () => cfg.mcpServers ?? {}, bot: id => store.bot(id), refusal: mcpPolicyRefusal });
 const creditMoves = cloudCredit && createCreditMoves({ credit: cloudCredit, store, context: selectionContext, threadBusy, saveDefault: saveNewBotModel,
   defaults: () => [cfg.defaultModelSelection, cfg.newBotDefaults?.profile.modelSelection], engineName: id => registry.get(id)?.displayName ?? id,
   log: line => console.warn(line) });
@@ -3225,7 +3228,7 @@ function previewSystemPrompt(bot: BotRecord) {
     { id: "cloud-home", label: "My Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled(), syncedFolders(DATA_DIR), sharedComputers.known(CLOUD_HOME_LENDER)) : "" },
     { id: "composio", label: "Connected apps", text: caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) + describeConnectorScopes(bot.connectorScopes) : "" },
     { id: "highlevel", label: "HighLevel", text: caps?.highlevelMcp === true && highlevelHost.mounts(bot) ? highlevelHost.prompt(bot) : "" },
-    { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" }, { id: "to-connect", label: "Connections to make", text: cloudConnections.prompt(bot) },
+    { id: "mcp", label: "MCP servers", text: caps?.customMcp ? [customMcpPrompt(Object.keys(engineMcpServers(bot))), mcpAccess.prompt(bot.id)].filter(Boolean).join("\n\n") : "" }, { id: "to-connect", label: "Connections to make", text: cloudConnections.prompt(bot) },
     { id: "browser", label: "Browser", text: previewPlan.browser ? browserPromptFor(bot, agentsMounted) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -8466,7 +8469,7 @@ async function startTurn(
       }
       // User MCP servers' tools are never pre-allowed: every call rides the normal permission flow.
       if (instance.adapter.capabilities.customMcp === true) {
-        attachCustomMcp(integrations, await withMcpSignIn(engineMcpServers(bot, !automated && !opts?.commsDepth && !opts?.cardContinuation && !opts?.coordination, threadId), mcpOAuth), cfg);
+        attachCustomMcp(integrations, await withMcpSignIn(engineMcpServers(bot, !automated && !opts?.commsDepth && !opts?.cardContinuation && !opts?.coordination, threadId, dispatchClaimId), mcpOAuth), cfg);
       }
       const worksInWorkspace = supportsWorkspaceFiles(instance.driverKind);
       if (worksInWorkspace) {
@@ -8917,7 +8920,7 @@ async function startTurn(
         { id: "plan", label: "Surface", text: surfacePrompt({ computer: mountedComputer, browser: Boolean(integrations.browser) }, { pinned: plan.pinned, note: plan.note + vpsUnavailableNote + vmUpdateNote + (computerSkipped && plan.computer !== "off" ? computerSkippedNote(redactSecretsInText(computerSkipped)) : ""), canSelect: computerSelectionTurns.has(threadId), cloudHome: Boolean(CLOUD_HOME) }) },
         { id: "cloud-home", label: "My Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled(), syncedFolders(DATA_DIR), sharedComputers.known(CLOUD_HOME_LENDER)) : "" },
         { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) + describeConnectorScopes((liveBot ?? bot).connectorScopes) : "" },
-        { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) }, { id: "to-connect", label: "Connections to make", text: cloudConnections.prompt(liveBot ?? bot) },
+        { id: "mcp", label: "MCP servers", text: [customMcpPrompt(Object.keys(integrations.custom ?? {})), mcpAccess.prompt(bot.id)].filter(Boolean).join("\n\n") }, { id: "to-connect", label: "Connections to make", text: cloudConnections.prompt(liveBot ?? bot) },
         { id: "browser", label: "Browser", text: integrations.browser ? browserPromptFor(bot, Boolean(integrations.agents)) : "" },
         { id: "data", label: "Data", text: integrations.data ? BUILT_IN_DATA_SYSTEM_PROMPT : "" },
         { id: "highlevel", label: "HighLevel", text: integrations.highlevel ? highlevelHost.prompt(liveBot ?? bot) : "" },
@@ -10391,7 +10394,7 @@ async function runClaimedGroupMemberTurn(
     return true;
   }
   if (instance.adapter.capabilities.customMcp === true) {
-    attachCustomMcp(integrations, await withMcpSignIn(engineMcpServers(bot, false, threadId), mcpOAuth), cfg);
+    attachCustomMcp(integrations, await withMcpSignIn(engineMcpServers(bot, false, threadId, internalGeneration), mcpOAuth), cfg);
   }
   // An interrupt during connected-app setup must still stop the queued room operation before it starts a process.
   if (isCancelled?.()) return false;
@@ -10747,7 +10750,7 @@ async function runClaimedGroupMemberTurn(
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd, { attachFile: Boolean(integrations.agents) && !CLOUD_HOME && !HOSTED_WORKSPACE }) : "" },
     { id: "shell", label: "Long-running commands", text: workspace ? longCommandsPrompt(roomComputerPromptKind) : "" },
-    { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
+    { id: "mcp", label: "MCP servers", text: [customMcpPrompt(Object.keys(integrations.custom ?? {})), mcpAccess.prompt(bot.id)].filter(Boolean).join("\n\n") },
     { id: "computer", label: "Computer", text: computerPrompt(roomComputerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer) },
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind), browser: Boolean(integrations.browser) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
@@ -12854,7 +12857,10 @@ function mcpServerResponse() {
     const auth = mcpOAuth.authState(server.name, server.url);
     const listed = server.oauth ? { ...server, oauth: { ...server.oauth, redirectUri: mcpOAuthRedirectUri(server.url) } } : server;
     return auth === "none" ? listed : { ...listed, auth };
-  }).map(server =>
+  }).map(server => mcpAccess.owns(server.name) ? { ...server, delegated: { bots: store.bots.filter(bot => !bot.hidden && (!bot.mcpServers || bot.mcpServers.includes(server.name))).flatMap(bot => {
+    const tools = mcpAccess.view().rules[server.name]?.tools.filter(tool => mcpAccess.permitted(bot.id, server.name, tool)) ?? [];
+    return tools.length ? [{ id: bot.id, tools }] : [];
+  }) } } : server).map(server =>
     managedPolicy.mcpAllowed(server.name, "url" in server ? server.url : undefined) ? server : { ...server, managedBy: policy!.organizationName });
   return { servers, ...(policy && !policy.mcp.allowCustom ? { managed: { organizationName: policy.organizationName, allowlist: policy.mcp.allowlist } } : {}) };
 }
@@ -12862,14 +12868,19 @@ function mcpPolicyRefusal(name: string, server: object): string | undefined {
   return managedPolicy.mcpRefusal(name, "url" in server && typeof server.url === "string" ? server.url : undefined);
 }
 
-function engineMcpServers(bot: BotRecord, replies = false, threadId = bot.threadId) {
+function engineMcpServers(bot: BotRecord, replies = false, threadId = bot.threadId, generation?: string) {
   const servers = customMcpServers(cfg, bot.mcpServers);
+  for (const name of Object.keys(servers)) if (mcpAccess.owns(name)) delete servers[name];
+  const delegated = mcpAccess.mounted(bot.id);
+  const token = delegated.length && generation ? mintInternalCapability({ botId: bot.id, threadId, generation, depth: 0, kind: "custom-mcp", skillAuthoring: false, createdBots: 0, openedThreads: 0 }) : undefined;
+  for (const name of delegated) if (!bot.mcpServers || bot.mcpServers.includes(name)) servers[name] = { type: "http", url: `http://127.0.0.1:${PORT}/api/internal/delegated-mcp/${name}`, headers: token ? { Authorization: `Bearer ${token}` } : {} };
   const chat = googleChat?.protects(threadId) ? googleChat.server(bot.id, replies) : undefined;
   if (chat) servers.google_chat = chat;
   return withoutPendingSignIn(managedPolicy.filterMcp(servers), mcpOAuth);
 }
 
 function persistMcpServers(next: Record<string, unknown>): void {
+  mcpAccess.beforeServersChange(next);
   saveConfig({ mcpServers: next });
   cfg.mcpServers = next;
 }
@@ -13436,6 +13447,8 @@ ROUTES.push(createInstanceRoutes({
   providerInstancesChanging, describeInstances, persistProviderInstance, configStatus, broadcast, testCliBinary,
   cliProbeEnvironment, threadBusy, botForThread, activeGroupTurnForBot,
 }));
+const signedDelegatedMcp = async (name: string, server: any) => (await withMcpSignIn({ [name]: server }, mcpOAuth))[name]!;
+ROUTES.push(mcpAccessRoutes({ access: mcpAccess, servers: () => cfg.mcpServers ?? {}, signed: signedDelegatedMcp, sessionLive: id => sessions.isLive(id) }));
 ROUTES.push(createMcpServerRoutes({
   cfg, sessions, mcpOAuth,
   cloudHome: CLOUD_HOME,
@@ -14015,7 +14028,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const parsed = z.object({
         botId: z.string().regex(/^[\w-]{1,128}$/),
         threadId: z.string().regex(/^[\w-]{1,128}$/),
-        kind: z.enum(["agents", "connectors", "computer", "data", "highlevel"]).default("agents"),
+        kind: z.enum(["agents", "custom-mcp", "connectors", "computer", "data", "highlevel"]).default("agents"),
         depth: z.number().int().min(0).max(MAX_COMMS_DEPTH).default(0),
         skillAuthoring: z.boolean().default(false),
         deliversSavedFiles: z.boolean().default(false),
@@ -14061,7 +14074,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (internalCapability.generation === EXTERNAL_RUNTIME_GENERATION && !externalRuntimeMayCall(method, path)) {
         return json(res, 403, { error: "an external runtime can only list its peers, hand them work with coordinate_bots and read assignment_status" });
       }
-      const requiredCapabilityKind = path === "/api/internal/hook"
+      const requiredCapabilityKind = path.startsWith("/api/internal/delegated-mcp/")
+        ? "custom-mcp"
+        : path === "/api/internal/hook"
         ? "hooks"
         : path === "/api/internal/browser/mcp"
         ? "browser"
@@ -15475,6 +15490,20 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         const updated = updateChannel(room.id, patch);
         return json(res, 200, { ok: true, memberIds: updated.memberIds, memberCount: updated.memberIds.length, message: `Updated room “${updated.name}”.` });
+      }
+      if (method === "POST" && path === "/api/internal/mcp-access") {
+        const body = await readInternalBody();
+        return json(res, 200, mcpAccess.manage(internalSender.id, body));
+      }
+      const delegatedMcp = path.match(/^\/api\/internal\/delegated-mcp\/([a-z][a-z0-9_-]{0,31})$/u);
+      if (method === "POST" && delegatedMcp) {
+        const body = await readInternalBody(), controller = new AbortController();
+        const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.once("close", disconnect);
+        try {
+          const answer = await mcpAccess.rpc(internalSender.id, delegatedMcp[1]!, body, AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]), signedDelegatedMcp, () => internalCapabilityIsActive(internalCapability));
+          if (answer === undefined) { res.writeHead(202); res.end(); return; }
+          return json(res, 200, answer);
+        } finally { res.off("close", disconnect); }
       }
       if (method === "POST" && path === "/api/internal/mcp-servers") {
         // Single-flight with the MCP servers route: two writers must not interleave a read of cfg.mcpServers with a save.
