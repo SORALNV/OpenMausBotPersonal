@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { assertPersonalAppIdentity, setPersonalAppIdentity } from "./personal-app-identity.mjs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { createRequire } from "node:module";
 import { withPersonalSigning } from "./personal-signing.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
+const packagingCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 const build = JSON.parse(readFileSync(join(repo, ".privacy-dev/evidence/personal-app-build.json"), "utf8"));
 const directory = join(repo, ".privacy-dev/personal-runtime", randomUUID());
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -36,9 +38,11 @@ const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHas
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), join(launcher, "Contents/Info.plist")]);
 withPersonalSigning(join(repo, ".privacy-dev/personal-signing"), ({ identity, keychain }) => {
   for (const app of [runtime, launcher]) {
+    setPersonalAppIdentity(app);
     run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
     run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+    assertPersonalAppIdentity(app);
   }
 });
-writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, packagingCommit, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
 console.log(JSON.stringify({ directory, runtime, launcher }));

@@ -1,3 +1,4 @@
+import { setPersonalAppIdentity } from "./personal-app-identity.mjs";
 import { personalLoginHome } from "./personal-login-home.mjs";
 import { parse as parseYaml } from "yaml";
 import { spawnSync } from "node:child_process";
@@ -81,6 +82,7 @@ const raw = asar.getRawHeader(archive);
 const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHash("sha256").update(raw.headerString).digest("hex") } };
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), info]);
 rmSync(join(resources, "app-update.yml"), { force: true });
+setPersonalAppIdentity(app);
 const signing = withPersonalSigning(join(repo, ".privacy-dev", "personal-signing"), ({ identity, keychain }) => {
   run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), join(resources, speechBundle)]);
   const speechHelperRequirement = personalSigningRequirement(join(resources, speechBundle), identity);

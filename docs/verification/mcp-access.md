@@ -18,3 +18,13 @@
 - `node_modules/.bin/vitest run server/mcp-access.test.ts src/components/McpAccessPanel.test.ts src/lib/mcp-servers.test.ts src/components/bot-settings/AccessSection.test.ts server/drivers/agents-call.test.ts server/drivers/agents-catalog-wire.test.ts`
 
 HTTP検証は専用ホーム、デスクトップ所有者capability、架空のNAS、通常のBot実行経路を使う。管理ツールからの付与、付与Botの通常送信へのMCP組込み、一覧・読取、上流へ届く前の書込拒否、未付与Botの組込みなし、なりすまし・自己昇格・本人上限変更の拒否、即時解除、古い設定保存の拒否、認証値の非公開を確認する。実際のNASへ書き込んだり、ユーザーの会話へ検証入力を送ったりしない。
+
+## macOSのLAN許可とビルドの識別
+
+Personalと汎用Electronで同じMach-OのLC_UUIDが使われると、macOSがLAN許可を正しく対応付けられない場合がある。[Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)は、主実行ファイルのUUIDの欠落・他アプリとの重複が許可の誤動作につながるとしている。
+
+Personalのパッケージ化では、元の実行ファイルUUIDとBundle IDからアプリ固有のUUIDを決め、署名前に設定する。通常のランチャーとRuntimeは別のUUIDを持ち、同じ元バイナリからの再パッケージ化では値を変えない。日本語のNSLocalNetworkUsageDescriptionも追加する。既存の署名証明書とキーチェーンを維持する。旧ランチャーからの初回移行だけは、バックアップ後にpersonal-install-runtime.mjsの--migrate-launcherを明示する。
+
+この修正はOS許可を付与・リセットしない。アプリ固有の通常のLAN許可を本人が選ぶ。権限データベースの改変、ネットワーク全体の除外設定、別プロセスを通じた拒否の迂回は行わない。
+
+検証: node --test scripts/personal-app-identity.node-test.mjs。変更範囲、再実行の安定性、Runtimeとの分離、不正なMach-OやUUIDの重複・欠落・不一致時の拒否を架空のバイナリで確認する。

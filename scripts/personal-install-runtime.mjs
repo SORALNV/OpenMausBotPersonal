@@ -1,3 +1,4 @@
+import { assertPersonalAppIdentity } from "./personal-app-identity.mjs";
 import { personalLoginHome } from "./personal-login-home.mjs";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -48,6 +49,8 @@ personalLoginHome({ home: homedir(), env: { OMB_PERSONAL_CODEX_LOGIN_HOME: stage
 let current;
 try { current = JSON.parse(asar.extractFile(join(destination, "Contents/Resources/app.asar"), "personal-launcher.json").toString()); } catch { current = null; }
 const migrate = !current || process.argv.includes("--migrate-launcher");
+assertPersonalAppIdentity(join(version, "OpenMausBot Runtime.app"));
+if (!migrate) assertPersonalAppIdentity(destination);
 if (current && (current.version !== 1 || current.fingerprint !== pkg.fingerprint)) throw new Error("Existing launcher identity differs; explicit migration required");
 run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", launcherRequirement, destination]);
 if (migrate) {
