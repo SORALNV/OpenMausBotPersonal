@@ -69,4 +69,3 @@ export function addCloudScreen(view: AddCloudView | null | undefined, { now, tie
 export function addCloudStop(blocked: string): AddCloudStop {
   return blocked === "signups_closed" || blocked === "checkout_open" || blocked === "rate" ? blocked : "one";
 }
-

@@ -148,4 +148,3 @@ describe("folderPageCsp", () => {
       webOrigin("http://user:pw@host"), webOrigin(7)]).toEqual(["http://127.0.0.1:5174", "https://home.example.com", null, null, null, null]);
   });
 });
-
