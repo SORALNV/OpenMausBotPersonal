@@ -75,6 +75,37 @@ afterAll(async () => {
 });
 
 describe("preparing a harness response for a device", () => {
+  it("removes old unread background histories from hydration and preserves an explicitly opened detail", async () => {
+    const payload = { bot: { id: "mail", threadId: "main", tasks: [
+      { threadId: "main", unread: true },
+      { threadId: "run", background: true, unread: true },
+      { threadId: "past", routineRunId: "old-run", unread: true },
+    ], messages: [{ kind: "options", card: { requestId: "approve", title: "Allow?" } }] } };
+    respond = res => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
+    const ordinary = await device();
+    expect(ordinary.status).toBe(200);
+    expect(JSON.parse(ordinary.text).bot.tasks).toEqual([{ threadId: "main", unread: true }]);
+    const opened = await device("/api/bots/mail/tasks/run", "POST", "{}");
+    expect(opened.status).toBe(200);
+    expect(JSON.parse(opened.text).bot.tasks.map((task: { threadId: string }) => task.threadId)).toEqual(["main", "run"]);
+    expect(JSON.parse(opened.text).bot.messages).toEqual(payload.bot.messages);
+    const refreshed = await device();
+    expect(JSON.parse(refreshed.text).bot.tasks).toHaveLength(1);
+    expect(payload.bot.tasks).toHaveLength(3);
+  });
+
+  it("does not reintroduce hidden histories through event updates or replay", async () => {
+    respond = res => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end('id: fixture:25\ndata: {"kind":"bot","bot":{"id":"mail","threadId":"main","tasks":[{"threadId":"main"},{"threadId":"old","background":true,"unread":true}]}}\n\n');
+    };
+    const update = await device("/api/events");
+    expect(update.status).toBe(200);
+    expect(update.text).toContain("id: fixture:25\n");
+    const frame = JSON.parse(update.text.split("\n").find(line => line.startsWith("data:"))!.slice(5));
+    expect(frame.bot.tasks).toEqual([{ threadId: "main" }]);
+  });
+
   it("gives only transactional phone credential saves the longer deadline", () => {
     expect(proxyHeadersTimeoutMs("/api/bots/b1/secret-cards/m1/provide")).toBe(105_000);
     expect(proxyHeadersTimeoutMs("/api/bots/b1/messages")).toBe(30_000);

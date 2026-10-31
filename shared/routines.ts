@@ -147,7 +147,7 @@ export interface RoutineRun {
   manual: boolean;
   triggerSource?: RoutineRunTrigger;
   /** "app": a connected-app event started it; triggerSource is then "webhook" (an outside event). */
-  eventSource?: "app";
+  eventSource?: "app" | "google-chat";
   webhookId?: string;
   deliveryId?: string;
   /** Room task created for a team-goal run. */

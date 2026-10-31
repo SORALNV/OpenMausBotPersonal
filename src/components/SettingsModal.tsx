@@ -49,6 +49,7 @@ import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
 import { PersonalComposerSettings } from "./PersonalComposerSettings";
 import { GoogleChatSettings } from "./GoogleChatSettings";
 import { DirectCodexSettings } from "./DirectCodexSettings";
+import { BotThreadCleanupSettings } from "./BotThreadCleanupSettings";
 import { NativeOmpSettings } from "./NativeOmpSettings";
 import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
@@ -674,6 +675,7 @@ export function SettingsModal() {
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <DirectCodexSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <BotThreadCleanupSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeOmpSettings onOpenThread={(botId, threadId) => { dispatch({ type: "switchTask", botId, threadId }); dispatch({ type: "toggleAppSettings", open: false }); }} />}
 
             <ProSettingsCard />

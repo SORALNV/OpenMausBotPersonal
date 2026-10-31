@@ -1,3 +1,4 @@
+import { ComposerRoomWait } from "./ComposerRoomWait";
 import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
@@ -552,6 +553,7 @@ export function Composer({
     }
   };
   const send = (delivery?: "queue" | "steer") => {
+    if (approval) delivery = "queue";
     if (locked || attachmentPending) return;
     if (delivery === "steer" && group && effectiveChannelMode === "goal") {
       dispatch({ type: "error", message: "目標モードはキューで送信してください。差し込みはチャットモードで使えます。" });
@@ -805,6 +807,7 @@ export function Composer({
             />
           </div>
         )}
+        <ComposerRoomWait profile={profile} group={group} groups={state.groups} dispatch={dispatch} />
         <ComposerAttachments
           items={attachments}
           onAdd={addAttachments}
@@ -966,13 +969,13 @@ export function Composer({
           }}
           // Not disabled during an upload: a disabled element drops keyboard focus for good. send() refuses while one
           // is pending.
-          disabled={Boolean(approval) || locked}
+          disabled={locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={nativeNotice ? `${nativeNotice}。通常送信はキューに追加します` :
             setupLocked
               ? t("composer.placeholder.locked")
               : approval
-              ? t("composer.placeholder.approval")
+              ? "確認待ちです。追加の指示は順番待ちに追加できます"
               : attachmentPending
               ? t("composer.placeholder.attaching")
               : recording

@@ -1,3 +1,4 @@
+import { backgroundThread } from "../background-threads.ts";
 import { engineMemory, type EngineMemory } from "../engine-memory.ts";
 import { seenWithin } from "../thread-presence.ts";
 
@@ -47,6 +48,7 @@ export const UNWATCHED_IDLE_MS = 30_000;
  */
 export function engineIdleMs(threadId: string, policy: SessionIdlePolicy, memory: Pick<EngineMemory, "enabled" | "headroom"> = engineMemory,
   now: number = Date.now()): number {
+  if (backgroundThread(threadId)) return Math.min(policy.idleMs, UNWATCHED_IDLE_MS);
   if (!memory.enabled) return policy.idleMs;
   if (!seenWithin(threadId, WATCHED_MS, now)) return Math.max(policy.minimumMs, Math.min(policy.idleMs, UNWATCHED_IDLE_MS));
   return Math.max(policy.minimumMs, Math.round(policy.idleMs * memory.headroom()));

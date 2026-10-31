@@ -5,6 +5,39 @@ import { describe, expect, it } from "vitest";
 import { createSseScrubber, isJson, MAX_SSE_EVENT_BYTES, scrub } from "../src/wire.ts";
 
 describe("scrub", () => {
+  it("sends only ordinary conversations to clients that do not understand background flags", () => {
+    const main = { threadId: "main", title: "Mail", unread: false };
+    const bot = { id: "mail", threadId: "main", tasks: [main,
+      { threadId: "scheduled", title: "Inbox watch", background: true, unread: true },
+      { threadId: "legacy-run", routineRunId: "run", unread: true },
+      { threadId: "legacy-work", openedBy: { kind: "work" }, unread: true },
+    ] };
+    expect(scrub({ bots: [bot] }).bots[0].tasks).toEqual([main]);
+    expect(scrub({ kind: "bot", bot }).bot.tasks).toEqual([main]);
+    expect(bot.tasks).toHaveLength(4);
+    expect(bot.tasks[1].unread).toBe(true);
+  });
+
+  it("keeps an explicitly opened background detail and its approval without listing other background history", () => {
+    const task = { threadId: "waiting", background: true, activity: "waiting-on-you", resumeCursors: { codex: "private" } };
+    const input = { bot: { id: "mail", threadId: "waiting", tasks: [{ threadId: "main" }, task,
+      { threadId: "old", background: true },
+    ], messages: [{ kind: "options", card: { requestId: "approve", title: "Allow?" } }] } };
+    const detail = scrub(input, { openedThreadId: "waiting" });
+    expect(detail.bot.tasks.map(task => task.threadId)).toEqual(["main", "waiting"]);
+    expect(detail.bot.messages).toEqual(input.bot.messages);
+    expect(JSON.stringify(detail)).not.toContain("resumeCursors");
+    expect(scrub(input).bot.tasks.map(task => task.threadId)).toEqual(["main"]);
+  });
+
+  it("preserves explicitly promoted conversations, group threads, and ordinary message content", () => {
+    const input = { bots: [{ id: "bot", threadId: "main", tasks: [
+      { threadId: "main" }, { threadId: "chosen", background: false, openedBy: { kind: "work" } },
+    ] }], groups: [{ id: "group", threadId: "room", memberIds: ["bot"], tasks: [{ threadId: "room" }] }],
+    messages: [{ text: "background: true", tasks: [{ threadId: "text-data", background: true }] }] };
+    expect(scrub(input)).toEqual(input);
+  });
+
   it("removes resumeCursors wherever it is nested", () => {
     const bot = {
       id: "b1",
@@ -114,6 +147,17 @@ describe("isJson", () => {
 });
 
 describe("createSseScrubber", () => {
+  it("filters background tasks from replayed and split bot frames without changing their resume cursor", () => {
+    const scrubber = createSseScrubber();
+    const frame = 'id: generation:17\ndata: {"kind":"bot","bot":{"id":"mail","threadId":"main","tasks":[{"threadId":"main"},{"threadId":"old","background":true,"unread":true}]}}\n\n';
+    const split = frame.indexOf('"background"') + 4;
+    expect(scrubber(frame.slice(0, split))).toBe("");
+    const output = scrubber(frame.slice(split));
+    expect(output).toContain("id: generation:17\n");
+    const shown = JSON.parse(output.split("\n").find(line => line.startsWith("data:"))!.slice(5));
+    expect(shown.bot.tasks).toEqual([{ threadId: "main" }]);
+  });
+
   it("keeps the blank-line terminator that ends an event", () => {
     const out = createSseScrubber()('data: {"kind":"hello"}\n\n');
     expect(out).toBe('data: {"kind":"hello"}\n\n');

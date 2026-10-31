@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "../../shared/background-thread";
 import { useMemo, useState, type JSX } from "react";
 import { Bug, Copy, Download, Gauge, ListChecks, MessagesSquare, MoreHorizontal, Search, SquarePen } from "lucide-react";
 import { currentTaskBot, openBotThread, useStore, visibleMessages, type Bot } from "@/state/store";
@@ -35,7 +36,7 @@ function useChatMoreItems(profile: Bot): { items: SidebarMenuItem[]; on: boolean
   const usage = usageSummary(bot, state.instances);
   const hasMessages = messages.length > 0;
   const transcript = () => formatTranscriptMarkdown({ title: bot.name, messages, botName: bot.name, isGroup: false });
-  const threads = advanced ? [] : orderedThreadList((profile.tasks ?? []).filter((task) => !task.routineRunId));
+  const threads = advanced ? [] : orderedThreadList((profile.tasks ?? []).filter((task) => !isBackgroundThread(task)));
   const items: SidebarMenuItem[] = [
     {
       key: "find",

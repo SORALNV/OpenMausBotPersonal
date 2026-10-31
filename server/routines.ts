@@ -118,7 +118,7 @@ export interface RoutineRun {
   waitedMs?: number;
   triggerSource?: RoutineRunTrigger;
   /** "app": a connected-app event started it (its triggerSource stays "webhook", an outside event). */
-  eventSource?: "app";
+  eventSource?: "app" | "google-chat";
   webhookId?: string;
   deliveryId?: string;
   sourceThreadId?: string;
@@ -866,7 +866,7 @@ export class RoutineManager {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
-    eventSource?: "app";
+    eventSource?: "app" | "google-chat";
   }): { id: string } {
     this.assertWritable();
     const existing = this.webhookRunReceipt(input.webhookId, input.deliveryId);

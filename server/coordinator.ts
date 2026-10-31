@@ -154,11 +154,15 @@ export interface Coordinator {
   sharedRequest(node: HandoffView): { id: string; botIds: string[] };
   cancelRoom(groupId: string, threadId?: string, reason?: string, status?: "failed" | "cancelled"): void;
   cancelDirect(threadId: string, reason?: string): void;
+  /** Cancel one parked question/approval assignment; never interrupt a running assignment. */
+  cancelWaitingNode(id: string, reason: string): boolean;
   activeDirect(threadId: string): boolean;
   assignerOf(threadId: string): HandoffView | undefined;
   outstandingDirect(threadId: string): HandoffView[];
   /** Direct conversations whose turn waits on teammates: an open handoff it made that owes a reply, or a root parked to resume with no question for the person. */
   awaitingTeammateThreads(): Set<string>;
+  /** Ancestor conversations whose teammate work is parked on a person; no question text is exposed in this summary. */
+  teammateInputThreads(): Set<string>;
   liveEdges(): LiveHandoffEdge[];
   stopAwaitingDirect(threadId: string, reason?: string): HandoffView[];
   /** The next start goes on with this thread's turn, so a shutdown's "cut" line would be false. */

@@ -1274,3 +1274,38 @@ describe("RuntimeCoordinator: outward restart policy, answerNode, continuation o
     expect(w.host.runs[0]!.composed.turn).toBe("continued");
   });
 });
+
+describe("teammate input summaries", () => {
+  it("distinguishes running teammates from their person's blocker and refreshes the waiting ancestor", async () => {
+    const w = world(hold);
+    const { node } = send(w, chief, "input-root", undefined, builder, "Check access");
+    ended(w, "input-root"); w.coordinator.tick();
+    expect(w.coordinator.teammateInputThreads().size).toBe(0);
+    await w.host.release(node.id, { ok: true, text: "", cards: { question: "Waiting on the person: sign in to github.com", ids: ["fixture-card"] } });
+    expect(w.coordinator.teammateInputThreads()).toEqual(new Set(["chief-chat"]));
+    expect(w.coordinator.awaitingTeammateThreads()).toContain("chief-chat");
+    expect(w.host.changes.some(change => change.threads.includes("chief-chat"))).toBe(true);
+    w.coordinator.stopAwaitingDirect("chief-chat");
+    expect(w.coordinator.teammateInputThreads().size).toBe(0);
+    expect(w.coordinator.awaitingTeammateThreads().size).toBe(0);
+    w.coordinator.close();
+  });
+});
+
+describe("Chief cancellation of an exact parked assignment", () => {
+  it("cancels a parked room question while a different assignment keeps running", async () => {
+    const w = world(() => "hold");
+    const first = send(w, chief, "wait-root", undefined, inRoom("builder"), "Check an old login").node;
+    ended(w, "wait-root"); w.coordinator.tick();
+    await w.host.release(first.id, { ok: true, text: "", cards: { question: "Waiting on the person: sign in to example.test", ids: ["old-card"] } });
+    const second = send(w, tester, "other-root", undefined, inRoom("builder", "g2", "room-2"), "Other work").node;
+    ended(w, "other-root"); w.coordinator.tick(); await flush();
+    expect(w.coordinator.node(first.id)?.status).toBe("waiting");
+    expect(w.coordinator.node(second.id)?.status).toBe("running");
+    expect(w.coordinator.cancelWaitingNode(second.id, "Must not stop working assignments")).toBe(false);
+    expect(w.coordinator.cancelWaitingNode(first.id, "Chief cancelled obsolete wait")).toBe(true);
+    expect(w.coordinator.node(first.id)).toMatchObject({ status: "cancelled", outcome: "stopped" });
+    expect(w.coordinator.node(second.id)?.status).toBe("running");
+    expect(w.coordinator.cancelWaitingNode(first.id, "Repeated cancellation")).toBe(false);
+  });
+});

@@ -2,6 +2,8 @@ import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 export interface OmpDestination {
+  harness?: "deepseek";
+  knownRequestIds?: string[];
   host: string;
   user: string;
   botId: string;

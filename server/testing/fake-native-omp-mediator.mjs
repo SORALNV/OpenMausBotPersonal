@@ -16,11 +16,14 @@ const text = prompt.includes("高リスク検出器") ? '{"highRisk":false}'
   })()
   : prompt.includes("セッション管理ルーター") ? (() => {
     const input = JSON.parse(prompt.slice(prompt.lastIndexOf('\n') + 1));
+    if (input.user_request.includes("FIXTURE_PROJECT_INVALID")) return JSON.stringify({ action: "chat", steps: [{ sessionQuery: "unknown", request: "架空の確認" }] });
+    if (input.user_request.includes("FIXTURE_PROJECT_CROSS")) return JSON.stringify({ action: "chat", steps: input.projects.map(project => ({ sessionQuery: project.sessionId, request: project.name + "の担当分だけを確認" })) });
     if (input.user_request.includes("FIXTURE_LOCAL_ADVICE")) return JSON.stringify({ action: "reply", answer: "相談として説明します。実機は確認していません。" });
     if (input.user_request.includes("FIXTURE_OMB_LOCAL") || input.user_request.includes("FIXTURE_OMB_PROFILE")) return JSON.stringify({ action: "omb", note: "OMBの設定を確認" });
     if (input.user_request.includes("FIXTURE_CREATE_AND_LINK")) return JSON.stringify({ action: "create", name: "架空の研究プロジェクト", destination: "new-thread", newThreadRequest: input.user_request });
     if (input.user_request.includes("FIXTURE_CREATE_ONLY")) return JSON.stringify({ action: "create", name: "架空の保存専用", destination: "none" });
     if (input.user_request.includes("FIXTURE_BAD_SESSION_PLAN")) return "invalid-plan";
+    if (input.mode === "router") return JSON.stringify({ action: "chat", sessionQuery: "omb-7312f6e096a604067beb75180eadc322", note: "架空の既存セッションを選択" });
     return JSON.stringify({ action: "chat", note: "短縮した架空の回答" });
   })()
   : "短縮した架空の回答";

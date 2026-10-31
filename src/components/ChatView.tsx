@@ -1210,7 +1210,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             </button>
           )}
           <span role="status" className="sr-only" data-chathead-status>{nativeNotice ?? (bot.busy ? t("sidebar.preview.working") : "")}</span>
-          {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">Teammates working</span>}
+          {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">{bot.activity === "waiting-on-you" ? "依頼先があなたの確認待ち" : "チームメイトに依頼中"}</span>}
           {awayFromMainThread(profile, showThreads) && (
             <button
               type="button"

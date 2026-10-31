@@ -3811,6 +3811,24 @@ describe("runs that report into a chat", () => {
     expect(h.taskTitles).toHaveLength(1);
   });
 
+  it("persists and deduplicates a Google Chat notification through the outside-event queue", async () => {
+    const h = harness();
+    h.options.eventResultsThread = ({ botId, webhookId }) => `${botId}:${webhookId}:main`;
+    const input = {
+      webhookId: "google-chat-notifications", webhookName: "Google Chat",
+      prompt: "Check this shift using Google Calendar read tools only.", botId: "maus-1", runOn: "maus" as const,
+      deliveryId: "bridge-123:45", receivedAt: Date.now(), eventSource: "google-chat" as const,
+    };
+    const first = h.manager.enqueueWebhook(input);
+    const retry = h.manager.enqueueWebhook(input);
+    expect(retry.id).toBe(first.id);
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === first.id)).toMatchObject({
+      eventSource: "google-chat", triggerSource: "webhook", deliveryId: "bridge-123:45", status: "running",
+      resultsThreadId: "maus-1:google-chat-notifications:main",
+    });
+  });
+
   it("finds a conversation's live run before an older finished one", async () => {
     const h = harness();
     h.options.joinConversation = () => "chat";

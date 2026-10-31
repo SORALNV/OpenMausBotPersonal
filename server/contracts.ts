@@ -250,6 +250,8 @@ export interface ProviderAdapter {
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
+  /** Release an idle transport without deleting history; must leave running turns untouched. */
+  releaseIdleSession?(threadId: ThreadId): void;
   /** Never throws for a vanished ask: `unavailable` means nobody could take the answer, and the caller treats it as a deny. */
   respondToRequest(
     threadId: ThreadId,

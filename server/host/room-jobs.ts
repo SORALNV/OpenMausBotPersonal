@@ -57,7 +57,7 @@ export function createRoomJobs({ store, coordinator, cfg, operations, speakerOf,
   function openLane(room: GroupRecord, roomThreadId: string, botId: string, sender: { id: string; name: string }, brief: string) {
     const existing = store.workThread(botId, sender.id, roomThreadId, true);
     const snippet = brief.replace(/\s+/g, " ").trim().slice(0, 48);
-    const task = existing ?? store.createTask(botId, `${room.name} · ${snippet || "room job"}`, false, undefined,
+    const task = existing ?? store.createBackgroundTask(botId, `${room.name} · ${snippet || "room job"}`, false, undefined,
       { botId: sender.id, name: sender.name, threadId: roomThreadId, kind: "work", roomLane: true, at: Date.now() },
       undefined, undefined, store.pinGroupCwd(room.id, roomThreadId) ?? undefined);
     if (!task) throw new Error("The recipient no longer exists");

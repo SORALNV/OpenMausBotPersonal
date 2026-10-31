@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "../../shared/background-thread";
 import { useEffect, useState, type SetStateAction } from "react";
 
 const chosen = new Map<string, boolean>();
@@ -61,6 +62,6 @@ export function searchMatchesThreads(
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return false;
-  return Boolean(tasks?.some((task) => !task.routineRunId && task.title.toLowerCase().includes(q)))
+  return Boolean(tasks?.some((task) => !isBackgroundThread(task) && task.title.toLowerCase().includes(q)))
     || folders.some((folder) => folder.name.toLowerCase().includes(q));
 }

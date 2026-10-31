@@ -306,3 +306,37 @@ OhMyPi 18.12.5は、最後の共有ゲストが切断したときの保留中の
 差し込みの判定は同一スレッド内で順序を守る。複数キューは一件ずつ判定し、Pi向けだけをまとめる。判定失敗・タイムアウト時に原文をPiへフォールバック送信しない。判定中に元の実行終了や接続先変更が起きた場合も別の実行へ差し込まない。OMB内の返答は独立した表示ターンに置き、元のPi作業・承認・完了状態を変更しない。
 
 `node scripts/native-omp-acceptance.mjs` は架空の仲介モデルとネイティブ相手を使う隔離HTTP検証。実行中の相談・OMB操作・振り分け失敗・ローカルだけのキュー・混在キュー・sendId再送を通し、ネイティブ送信記録に相談がないことと、元の作業が継続することを確認する。実モデルによる自然文の分類精度はこの検証の対象外。
+
+## One chat for multiple projects
+
+The free-management router preserves separate native sessions while selecting
+them from a single OMB conversation. Owner project mappings are stored in
+`private/native-omp-projects.json`; each maps a name and a short description to
+a catalogued session ID. Unconfigured mappings are derived from the Bot's
+existing fixed project threads. A generic native title therefore does not lose
+its project association. Owner GET/PUT `/api/native-omp/projects` edits these
+mappings; updates apply to the next request and cannot change an active turn.
+
+The mediator can return up to four ordered project steps. All destinations are
+resolved before execution. Each step receives the full original user request,
+its own scope and bounded previous results as reference data. Original native
+answers and per-step receipts are saved before proceeding. A failed or stopped
+step prevents later work; completed work is not replayed automatically. A
+recovered partial answer is not marked as a successful compound request.
+Standard pool serialization, human TUI use, high-risk approvals, local OMB
+routing and independent display formatting remain in place. Old snapshot
+histories are retained in their original views instead of being copied into
+the router conversation. `private/native-omp-last-route.json` retains recent
+project IDs for follow-up interpretation.
+
+```sh
+node node_modules/vitest/vitest.mjs run server/native-omp-projects.test.ts server/native-omp-router.test.ts
+node scripts/native-omp-projects-acceptance.mjs
+node --test scripts/native-omp-pool.node-test.mjs
+```
+
+The HTTP fixture uses temporary HOME/data and fake models/native peers. It
+covers ordered routing, previous-result handoff, original answers, one visible
+thread, advice, invalid destinations and stopping before the next project.
+Real model classification and native-device checks are separate evidence;
+never submit fixture prompts to production project sessions.

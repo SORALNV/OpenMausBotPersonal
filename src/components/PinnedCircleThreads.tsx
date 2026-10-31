@@ -1,4 +1,5 @@
 import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, FolderPlus, Plus } from "lucide-react";
@@ -26,7 +27,7 @@ function useVisibleMessages(bot: Bot): Message[] {
 }
 
 function botHasThreadList(bot: Pick<Bot, "tasks" | "projects">, query: string): boolean {
-  return (bot.tasks?.filter((task) => !task.routineRunId).length ?? 1) > 1
+  return (bot.tasks?.filter((task) => !isBackgroundThread(task)).length ?? 1) > 1
     || (bot.projects?.length ?? 0) > 0
     || Boolean(query);
 }

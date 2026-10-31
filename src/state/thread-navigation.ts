@@ -1,4 +1,5 @@
 import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread, type BackgroundThread } from "../../shared/background-thread";
 import type { NotificationTarget } from "@/lib/notify";
 import type { Action, AppState } from "./store";
 
@@ -6,7 +7,7 @@ interface NotificationThreadOwner {
   id: string;
   threadId: string;
   mainThreadId?: string;
-  tasks?: Array<{ threadId: string }>;
+  tasks?: Array<{ threadId: string } & BackgroundThread>;
 }
 
 interface NotificationRoutingState {
@@ -59,7 +60,8 @@ export function openNotificationTarget(
 }
 
 export function botOpensTo(bot: Pick<NotificationThreadOwner, "threadId" | "mainThreadId" | "tasks">, threadsShown: boolean): string {
-  return !botThreadsShown(bot, threadsShown) && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
+  const selected = bot.tasks?.find(task => task.threadId === bot.threadId);
+  return (!botThreadsShown(bot, threadsShown) || Boolean(selected && isBackgroundThread(selected))) && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
     ? bot.mainThreadId : bot.threadId;
 }
 

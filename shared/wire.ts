@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "./background-thread.ts";
 /** The client-visible wire model for tasks, bots, messages and rooms. A field
  * here is one the server emits in every response and SSE frame that carries
  * the shape. */
@@ -130,6 +131,8 @@ export interface WireTask {
   projectId?: string;
   /** Detached routine execution, reachable through its visible results card. */
   routineRunId?: string;
+  /** Automatic work stays out of the normal conversation list; false explicitly promotes it. */
+  background?: boolean;
   /** Set when a bot, not a person, opened this thread. */
   openedBy?: TaskOpenedBy;
   /** Set by close_thread; absent while the thread is open. */
@@ -578,11 +581,11 @@ export function orderedThreadList<T extends { pinned?: boolean; lastThreadOrderA
 export const isSnoozed = (task: Pick<WireTask, "snoozedUntil">, now = Date.now()): boolean =>
   task.snoozedUntil !== undefined && (task.snoozedUntil === 0 || task.snoozedUntil > now);
 
-type OpenThreadCandidate = Pick<WireTask, "routineRunId" | "archivedAt" | "closedBy" | "openedBy" | "snoozedUntil" | "pinned" | "lastThreadOrderAt" | "createdAt">;
+type OpenThreadCandidate = Pick<WireTask, "background" | "routineRunId" | "openedBy" | "archivedAt" | "closedBy" | "snoozedUntil" | "pinned" | "lastThreadOrderAt" | "createdAt">;
 
 /** The top row of the bot's thread list, so deleting the open thread never pulls a hidden one into view. */
 export function nextOpenThread<T extends OpenThreadCandidate>(tasks: readonly T[], now = Date.now()): T | undefined {
-  const own = tasks.filter((task) => !task.routineRunId);
+  const own = tasks.filter((task) => !isBackgroundThread(task));
   const open = own.filter((task) => task.archivedAt === undefined);
   const listed = open.filter((task) => task.pinned === true || !(task.closedBy || task.openedBy || isSnoozed(task, now)));
   return [listed, open, own].map((candidates) => orderedThreadList(candidates)[0]).find((task) => task !== undefined);

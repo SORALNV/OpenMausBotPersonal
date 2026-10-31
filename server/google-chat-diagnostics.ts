@@ -2,8 +2,8 @@ import { chmodSync, existsSync, lstatSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const CHAT_STAGES = ["feed", "parse", "upstream", "mask", "deliver", "persist"] as const;
-export const CHAT_CODES = ["OK", "FEED_TIMEOUT", "FEED_CONNECTION", "FEED_AUTH", "FEED_HTTP", "FEED_INVALID", "BODY_INVALID", "CURSOR_RESET", "TARGET_MISSING", "MASK_TIMEOUT", "MASK_FAILED", "DELIVERY_FAILED", "STORAGE_FAILED", "UPSTREAM_TIMEOUT", "UPSTREAM_FAILED", "CANCELLED", "INTERRUPTED"] as const;
+export const CHAT_STAGES = ["feed", "parse", "upstream", "mask", "context", "classify", "queue", "deliver", "persist"] as const;
+export const CHAT_CODES = ["OK", "FEED_TIMEOUT", "FEED_CONNECTION", "FEED_AUTH", "FEED_HTTP", "FEED_INVALID", "BODY_INVALID", "CURSOR_RESET", "TARGET_MISSING", "MASK_TIMEOUT", "MASK_FAILED", "CONTEXT_TIMEOUT", "CONTEXT_FAILED", "CLASSIFIER_TIMEOUT", "CLASSIFIER_FAILED", "QUEUE_FAILED", "DELIVERY_FAILED", "STORAGE_FAILED", "UPSTREAM_TIMEOUT", "UPSTREAM_FAILED", "CANCELLED", "INTERRUPTED", "MONITOR_NOT_READY"] as const;
 export type ChatStage = typeof CHAT_STAGES[number];
 export type ChatCode = typeof CHAT_CODES[number];
 type Operation = "poll" | "body" | "warmup";

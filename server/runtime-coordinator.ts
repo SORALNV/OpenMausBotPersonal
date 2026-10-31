@@ -339,6 +339,20 @@ export class RuntimeCoordinator implements Coordinator {
     for (const n of this.live()) if (this.direct(n, threadId)) this.runtime.cancel(n.id, reason, "stopped");
   }
 
+  cancelWaitingNode(id: string, reason: string): boolean {
+    this.ready();
+    const node = this.store.get(id);
+    if (!node || node.status !== "needs_input") return false;
+    const pending = [node];
+    for (let i = 0; i < pending.length; i++) {
+      const child = pending[i]!;
+      if (child.status === "running") return false;
+      pending.push(...this.store.children(child.id).filter(item => !isTerminal(item)));
+    }
+    this.runtime.cancel(id, reason, "stopped");
+    return true;
+  }
+
   stopAwaitingDirect(threadId: string, reason = "Stopped by user"): HandoffView[] {
     this.ready();
     return this.runtime.stopRequester({ threadId }, reason).map(a => this.project(a));
@@ -379,6 +393,24 @@ export class RuntimeCoordinator implements Coordinator {
       const root = view(n);
       if (!root.parentId && !root.groupId && (root.status === "resume" || (root.status === "waiting" && root.question === undefined && !root.cards?.length))) {
         threads.add(root.threadId);
+      }
+    }
+    return threads;
+  }
+
+  teammateInputThreads(): Set<string> {
+    this.ready();
+    const threads = new Set<string>();
+    for (const node of this.live()) {
+      if (node.status !== "needs_input") continue;
+      let child = node;
+      const seen = new Set<string>([child.id]);
+      while (child.parentId && child.reply !== "none") {
+        const parent = this.store.get(child.parentId);
+        if (!parent || isTerminal(parent) || seen.has(parent.id)) break;
+        seen.add(parent.id);
+        if (!parent.assignee.destination.groupId) threads.add(parent.assignee.destination.threadId);
+        child = parent;
       }
     }
     return threads;
@@ -460,6 +492,13 @@ export class RuntimeCoordinator implements Coordinator {
         for (const row of rows) {
           const groupId = row.assignee.destination.groupId;
           if (groupId) groups.add(groupId); else threads.add(row.assignee.destination.threadId);
+          const seen = new Set<string>([row.id]);
+          let parent = row.parentId ? this.store.get(row.parentId) : undefined;
+          while (parent && !seen.has(parent.id)) {
+            seen.add(parent.id);
+            if (parent.assignee.destination.groupId) groups.add(parent.assignee.destination.groupId); else threads.add(parent.assignee.destination.threadId);
+            parent = parent.parentId ? this.store.get(parent.parentId) : undefined;
+          }
         }
         host.changed(groups, threads);
       },

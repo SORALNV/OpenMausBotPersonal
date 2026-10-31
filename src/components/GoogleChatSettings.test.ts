@@ -19,10 +19,10 @@ it("connects the selected existing bot and stops through owner API without sendi
   try {
     await act(async () => root.render(createElement(GoogleChatSettings)));
     expect((host.querySelector("select") as HTMLSelectElement).value).toBe("bot");
-    await click("Google Chatを接続");
+    await click("通知先を登録・状態確認");
     const connect = mocked.api.mock.calls.find(([path]) => path === "/api/google-chat/connect")!;
     expect(connect[1].method).toBe("POST"); expect(JSON.parse(connect[1].body)).toEqual({ botId: "bot", threadId: "conversation" });
-    expect(host.textContent).toContain("監視接続: OK");
+    expect(host.textContent).toContain("通知先登録済み／監視状態: OK");
     expect(host.textContent).toContain("未確認（接続正常だけでは本文取得の成功を意味しません）");
     await click("Google Chatの受信を停止");
     const stop = mocked.api.mock.calls.find(([, init]) => init?.method === "PUT")!;
@@ -43,11 +43,11 @@ it("checks the masked body separately from healthy transport and displays only t
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
   try {
     await act(async () => root.render(createElement(GoogleChatSettings)));
-    expect(host.textContent).toContain("監視接続: OK");
+    expect(host.textContent).toContain("通知先登録済み／監視状態: OK");
     expect(host.textContent).toContain("失敗 / mask / MASK_TIMEOUT");
     await act(async () => { [...host.querySelectorAll("button")].find(button => button.textContent === "本文取得を診断")!.click(); });
     expect(mocked.api).toHaveBeenCalledWith("/api/google-chat/check", { method: "POST", body: "{}", timeoutMs: 140000 });
-    expect(host.textContent).toContain("本文取得・ローカルマスク完了: 47件（AIへ未送信）");
+    expect(host.textContent).toContain("本文取得・ローカルマスク完了: 47件（通知判定へは未送信）");
     expect(host.textContent).toContain("完了 / mask / OK");
   } finally { await act(async () => root.unmount()); host.remove(); }
 });

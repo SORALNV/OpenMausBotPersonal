@@ -64,3 +64,21 @@ it("uses native session steer capability rather than the bot model's queue capab
     expect(fixture.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type:"send",delivery:"steer"}));
   } finally {bot.modelSelection=originalSelection;bot.tasks=originalTasks;flushSync(()=>root.unmount());host.remove();restoreComposerDraft(`bot:${bot.id}:${bot.threadId}`,{text:"",attachments:[]});}
 });
+
+it("allows additional input during an approval without turning that text into permission", () => {
+  vi.stubEnv("VITE_OMB_PERSONAL", "1");
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  const original = bot.messages;
+  try {
+    bot.messages = [{ id: "approval", at: 1, role: "bot", kind: "options", card: { requestId: "req", requestType: "permission", title: "Synthetic permission", subtitle: "Fixture command", options: ["Allow", "Deny"], tool: "bash" } }];
+    flushSync(() => root.render(createElement(Composer, { bot })));
+    expect(host.querySelector("textarea")!.disabled).toBe(false);
+    flushSync(() => restoreComposerDraft(`bot:${bot.id}:${bot.threadId}`, { text: "追加の相談", attachments: [] }));
+    flushSync(() => host.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true })));
+    expect(fixture.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ type: "send", text: "追加の相談", delivery: "queue" }));
+    expect(fixture.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "answer" }));
+  } finally { bot.messages = original; flushSync(() => root.unmount()); host.remove(); restoreComposerDraft(`bot:${bot.id}:${bot.threadId}`, { text: "", attachments: [] }); }
+});

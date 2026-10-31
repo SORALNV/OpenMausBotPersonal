@@ -17,7 +17,7 @@ export function GoogleChatSettings() {
     let active = true;
     void Promise.all([api<Status>("/api/google-chat"), api<{ bots: Bot[] }>("/api/bots?messages=0")]).then(([s, list]) => {
       if (!active) return;
-      setStatus(s); setBots(list.bots.filter(bot => !bot.hidden)); setBotId(s.botId ?? list.bots.find(bot => bot.name === "予定管理人")?.id ?? "");
+      setStatus(s); setBots(list.bots.filter(bot => !bot.hidden)); setBotId(s.botId ?? list.bots.find(bot => bot.name === "連絡管理人")?.id ?? "");
     }).catch(() => { if (active) setError("Google Chatの設定を読み込めません。"); });
     return () => { active = false; };
   }, []);
@@ -48,20 +48,20 @@ export function GoogleChatSettings() {
       try { setStatus(await api<Status>("/api/google-chat")); } catch { /* Preserve the existing diagnostic state. */ }
     } finally { setChecking(false); }
   };
-  return <Card title="Google Chat連携" subtitle="監視専用ブラウザの新着を受け取り、返信を頼んだときだけ送信します。">
+  return <Card title="Google Chat連携" subtitle="連絡管理人が新たな対応の必要性を判定し、必要なときだけ短く通知します。">
     <div className="space-y-3">
-      <p className="text-sm text-ink-secondary">対象は監視サーバーに登録したスレッドだけです。取得本文は登録語句だけをこのMacで置換します。未登録の個人情報は自動検出しません。受信だけでAIや返信を起動しません。</p>
+      <p className="text-sm text-ink-secondary">対象は監視サーバーに登録したスレッドだけです。本文はこのMacで登録語句を置換してから、連絡管理人の通知判定へ渡します。本人に新たな返信・判断・予定確認が必要なときだけ短く知らせます。全文転送やGoogle Chatへの自動返信は行いません。未登録の個人情報は自動検出しません。</p>
       <label className="block text-sm">新着を届けるボット<select aria-label="Google Chat接続先" className="mt-1 block w-full rounded-lg border border-hairline bg-inset p-2" value={botId} disabled={busy || !status} onChange={event => setBotId(event.target.value)}>
         <option value="">ボットを選ぶ</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
       </select></label>
-      <p role="status" className="text-sm">{busy ? "接続を設定中…" : status?.enabled ? `監視接続: ${status.state} / 受信位置 ${status.cursor}` : "未接続・停止中"}</p>
+      <p role="status" className="text-sm">{busy ? "接続を設定中…" : status?.enabled ? `通知先登録済み／監視状態: ${status.state} / 受信位置 ${status.cursor}` : "未接続・停止中"}</p>
       {status?.enabled && <p className="text-sm">本文取得・マスク: {status.diagnostics?.body ? `${status.diagnostics.body.endedAt ? status.diagnostics.body.code === "OK" ? "完了" : "失敗" : "処理中"} / ${status.diagnostics.body.stage} / ${status.diagnostics.body.code ?? "待機"}${status.diagnostics.body.elapsedMs !== undefined ? ` / ${(status.diagnostics.body.elapsedMs / 1000).toFixed(1)}秒` : ""}` : "未確認（接続正常だけでは本文取得の成功を意味しません）"}</p>}
-      <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-accent px-4 py-2 text-accent-ink" disabled={busy || checking || !status || !botId} onClick={() => void change(true)}>Google Chatを接続</button>
+      <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-accent px-4 py-2 text-accent-ink" disabled={busy || checking || !status || !botId} onClick={() => void change(true)}>通知先を登録・状態確認</button>
         <button type="button" className="rounded-lg border border-hairline px-4 py-2" disabled={busy || checking || !status?.enabled} onClick={() => void change(false)}>Google Chatの受信を停止</button>
         <button type="button" className="rounded-lg border border-hairline px-4 py-2" disabled={busy || checking || !status?.enabled} onClick={() => void check()}>本文取得を診断</button></div>
-      {checking && <p role="status" className="text-sm">本文を取得・マスクしています。最大135秒。AIへの送信やGoogle Chatへの投稿は行いません。</p>}
-      {checked !== undefined && <p role="status" className="text-sm">本文取得・ローカルマスク完了: {checked}件（AIへ未送信）</p>}
-      <p className="text-xs text-ink-secondary">接続情報はMac内で読み込み、画面やAIには渡しません。停止するとこのボットへの新着受信とGoogle Chatツールの組込みを止めます。</p>
+      {checking && <p role="status" className="text-sm">本文を取得・マスクしています。最大135秒。通知判定やGoogle Chatへの投稿は行いません。</p>}
+      {checked !== undefined && <p role="status" className="text-sm">本文取得・ローカルマスク完了: {checked}件（通知判定へは未送信）</p>}
+      <p className="text-xs text-ink-secondary">通知先の登録は監視成功を意味しません。再ログイン要求中は新着を受信できません。接続情報はMac内で読み込み、画面やAIには渡しません。</p>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   </Card>;

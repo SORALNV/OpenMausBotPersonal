@@ -2907,6 +2907,30 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(dump.argv).toContain("claude-other");
   });
 
+  it("releases only an idle transport and resumes its preserved native history on the next turn", async () => {
+    const gate = join(scratch, "release-finish");
+    const dump = join(scratch, "release-dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create("slow", { FAKE_CLAUDE_SLOW_FINISH_GATE: gate });
+    const first = await instance.adapter.sendTurn({ threadId: "release-transport", text: "one" });
+    await expect.poll(() => existsSync(dump)).toBe(true);
+    const pid = dumpedPid(dump);
+    instance.adapter.releaseIdleSession!("release-transport");
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    expect(recorder.events.some(event => event.type === "session.exited")).toBe(false);
+    writeFileSync(gate, "finish");
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const cursor = (recorder.events.find(event => event.type === "session.started") as { sessionId: string }).sessionId;
+    instance.adapter.releaseIdleSession!("release-transport");
+    await expect.poll(() => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    }, { timeout: 10_000 }).toBe(false);
+    const next = await instance.adapter.sendTurn({ threadId: "release-transport", text: "two", resumeCursor: cursor });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === next.turnId);
+    expect(dumpedPid(dump)).not.toBe(pid);
+    expect(JSON.parse(readFileSync(dump, "utf8")).argv).toContain("--resume");
+  });
+
   it("closes an idle session after the configured window", async () => {
     // Ten seconds is the floor; poll the native log for the close instead of sleeping past it.
     process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS = "10000";

@@ -67,7 +67,7 @@ function profiles(): Record<string, Record<string, string>> {
 
 const PROFILES = profiles();
 /** Refused by the server to every bot that is not a Chief of Staff. */
-const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread"];
+const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "manage_thread_wait"];
 /** The profile that mounts the most: its bridged list is checked in whole. */
 const FULL = "skills+shared+voice+escalations+x";
 
@@ -76,27 +76,27 @@ const FULL = "skills+shared+voice+escalations+x";
  * either: lock a saving in by lowering the number. A Chief's list is longer
  * than another bot's only by the Chief-only names in find_tool's description. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "default": 14912,
-  "voice": 15653,
-  "shared": 14952,
-  "shared+voice": 15693,
-  "skills": 14939,
-  "skills+voice": 15680,
-  "skills+shared": 14979,
-  "skills+shared+voice": 15720,
-  "non-chief": 14801,
-  "voice+non-chief": 15542,
-  "shared+non-chief": 14841,
-  "shared+voice+non-chief": 15582,
-  "skills+non-chief": 14828,
-  "skills+voice+non-chief": 15569,
-  "skills+shared+non-chief": 14868,
-  "skills+shared+voice+non-chief": 15609,
-  "skills+shared+voice+cloud-home": 15718,
-  "skills+shared+voice+non-chief+cloud-home": 15607,
-  "skills+shared+voice+escalations": 15738,
-  "skills+shared+voice+escalations+x": 15832,
-  "default+legacy-switches": 14912,
+  "default": 15191,
+  "voice": 15932,
+  "shared": 15231,
+  "shared+voice": 15972,
+  "skills": 15218,
+  "skills+voice": 15959,
+  "skills+shared": 15258,
+  "skills+shared+voice": 15999,
+  "non-chief": 15041,
+  "voice+non-chief": 15782,
+  "shared+non-chief": 15081,
+  "shared+voice+non-chief": 15822,
+  "skills+non-chief": 15068,
+  "skills+voice+non-chief": 15809,
+  "skills+shared+non-chief": 15108,
+  "skills+shared+voice+non-chief": 15849,
+  "skills+shared+voice+cloud-home": 15997,
+  "skills+shared+voice+non-chief+cloud-home": 15847,
+  "skills+shared+voice+escalations": 16017,
+  "skills+shared+voice+escalations+x": 16111,
+  "default+legacy-switches": 15191,
 };
 
 type RpcAnswer = { id: number; result?: { tools?: unknown[]; content?: Array<{ text: string }>; isError?: boolean }; error?: { code: number; message: string } };

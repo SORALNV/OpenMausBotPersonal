@@ -224,6 +224,7 @@ export interface Task {
   waitingForTeammates?: boolean;
   threadId: string;
   routineRunId?: string;
+  background?: boolean;
   projectId?: string;
   title: string;
   createdAt: number;
@@ -254,6 +255,9 @@ export interface Task {
 }
 
 export interface ThreadOpener {
+  kind?: "pair" | "work";
+  threadId?: string;
+  roomLane?: true;
   botId: string;
   name: string;
   delegationId?: string;

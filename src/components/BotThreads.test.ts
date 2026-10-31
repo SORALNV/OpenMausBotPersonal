@@ -103,6 +103,18 @@ describe("sidebar bot threads", () => {
     }
   });
 
+  it("shows one ordinary conversation when automatic executions and delegated work accumulate", () => {
+    const candidate: Bot = { ...bot, threadId: "idle", tasks: [bot.tasks![0]!,
+      ...Array.from({ length: 20 }, (_, index) => ({ threadId: `auto-${index}`, title: `Background ${index}`, createdAt: index + 2, background: true })),
+      { threadId: "delegated", title: "Delegated job", createdAt: 30, openedBy: { botId: "other", name: "Other", at: 30, kind: "work" } },
+    ] };
+    const markup = renderToStaticMarkup(threadList(candidate));
+    expect(markup).toContain('data-sidebar-thread-row="idle"');
+    expect(markup).not.toContain('data-sidebar-thread-row="auto-');
+    expect(markup).not.toContain("Delegated job");
+    expect(markup).not.toContain("Background 0");
+  });
+
   it("folds open threads another bot opened into one collapsed group outside the six visible rows", () => {
     const openedBy = { botId: "pepper", name: "Pepper", at: 1 };
     const own = Array.from({ length: 7 }, (_, index) => ({ threadId: `own-${index}`, title: `Own ${index}`, createdAt: 10 + index, busy: false, activity: "idle" as const }));

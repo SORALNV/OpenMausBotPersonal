@@ -636,6 +636,14 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       : "";
     return { text: `Memory updated.${entry}${full}${movedNote}` };
   }
+  if (name === "manage_thread_wait") {
+    const r = await api("/api/internal/thread-waits", { method: "POST", body: JSON.stringify({
+      action: args.action, fromBotId: BOT_ID, fromThreadId: THREAD_ID,
+      ...(args.bot_id ? { toBotId: args.bot_id } : {}), ...(args.thread_id ? { toThreadId: args.thread_id } : {}),
+      ...(args.wait_id ? { waitId: args.wait_id } : {}), ...(args.expected_token ? { expectedToken: args.expected_token } : {}), ...(args.reason ? { reason: args.reason } : {}),
+    }) });
+    return { text: JSON.stringify(r), ...(r.error ? { isError: true } : {}) };
+  }
   if (name === "retry_thread") {
     const botId = String(args.bot_id ?? "").trim();
     const threadId = String(args.thread_id ?? "").trim();

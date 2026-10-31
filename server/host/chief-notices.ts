@@ -12,7 +12,7 @@ type PeerAsk = NonNullable<Message["peerAsk"]>;
 export type EscalationOutcome = "chief" | "person" | "muted" | "off" | "skipped" | "failed";
 
 export interface ChiefNoticeDeps {
-  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createTask" | "appendMessage" | "messagesFor">;
+  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createBackgroundTask" | "appendMessage" | "messagesFor">;
   assignerOf(threadId: string): unknown;
   notify(notification: Notification | null): void;
   threadBusy(botId: string, threadId: string): boolean;
@@ -62,7 +62,7 @@ export function createChiefNotices(deps: ChiefNoticeDeps) {
     };
     if (!chief) return tellThePerson();
     const notices = store.tasks(chief.id).find((candidate) => candidate.title === input.title && !candidate.archivedAt)
-      ?? store.createTask(chief.id, input.title, false, undefined, { botId: chief.id, name: chief.name, at: Date.now() });
+      ?? store.createBackgroundTask(chief.id, input.title, false, undefined, { botId: chief.id, name: chief.name, at: Date.now() });
     if (!notices || notices.threadId === threadId) return tellThePerson();
     store.appendMessage(notices.threadId, {
       role: "bot",

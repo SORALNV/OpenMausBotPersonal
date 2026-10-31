@@ -1,5 +1,6 @@
 import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
 import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Check, ChevronDown, FolderInput, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, type Bot, type BotProject, type Group, type Task } from "@/state/store";
@@ -421,8 +422,10 @@ function ConversationTaskPicker({
 export function BotActivityPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const showThreads = botThreadsShown(bot, useShowThreads());
-  if (showThreads) return null;
-  const activity = threadsWhenTreeHidden(bot, state.pendingQueued).filter((task) => task.threadId !== bot.threadId);
+  const background = (bot.tasks ?? []).filter(task => isBackgroundThread(task) && (task.busy || task.waitingForTeammates || task.activity === "waiting-on-you" || task.activity === "working"))
+    .map(task => ({ ...task, queued: Boolean(state.pendingQueued[task.threadId]?.length) }));
+  const activity = (showThreads ? background : [...threadsWhenTreeHidden(bot, state.pendingQueued), ...background])
+    .filter((task) => task.threadId !== bot.threadId);
   if (!activity.length) return null;
   return (
     <div className="flex shrink-0 items-center gap-2 px-5 py-2" data-background-activity>
@@ -448,7 +451,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
   return (
     <ConversationTaskPicker
       threadId={bot.threadId}
-      tasks={orderedThreadList((bot.tasks ?? []).filter((task) => !task.routineRunId))}
+      tasks={orderedThreadList((bot.tasks ?? []).filter((task) => !isBackgroundThread(task)))}
       busy={false}
       bot={bot}
       attention={crossBotAttentionThreads(state.bots, state.pendingQueued, bot.id, state.groups)}

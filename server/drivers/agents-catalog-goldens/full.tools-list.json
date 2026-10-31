@@ -1064,6 +1064,48 @@
       }
     },
     {
+      "name": "manage_thread_wait",
+      "description": "Chief only. list shows reachable bots' input, teammate and computer waits, including parked room assignments, with IDs and tokens. To cancel an unwanted wait, clear that exact bot_id/thread_id with its latest expected_token and a reason; copy wait_id too when listed. This cancels the wait; it never approves, signs in, marks work complete or erases history. Working threads are refused; running teammates may continue. Use when the person asks to clear a stuck wait. No retry or resubmission is performed.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "clear"
+            ]
+          },
+          "bot_id": {
+            "type": "string",
+            "description": "Optional list filter (also includes that bot's delegated room waits); required for clear."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Exact target thread from list; required for clear."
+          },
+          "wait_id": {
+            "type": "string",
+            "description": "Copy waitId from list for a parked room assignment; omit for a direct thread."
+          },
+          "expected_token": {
+            "type": "string",
+            "description": "Latest list token; required for clear."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Cancellation reason; required for clear."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
       "name": "retry_thread",
       "description": "Chief of Staff only. Resume a teammate's thread whose last run failed, stalled or could not start — the one an incident report named — exactly where it stopped, keeping its conversation and files. The teammate gets a line saying you asked for the retry and why. Use it when the cause looks transient (a crash, a timeout, a busy service). Use coordinate_bots with a corrected brief instead when the request itself needs to change, and tell the person instead when only they can fix the cause (a sign-in, a missing credential, an unanswered question). Never retry the same thread more than twice.",
       "inputSchema": {

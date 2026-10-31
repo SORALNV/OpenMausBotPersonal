@@ -10,7 +10,10 @@ import { createRequire } from "node:module";
 import { runtimeRequirement, verifyPersonalRuntime } from "../electron/personal-runtime-verifier.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const pkg = JSON.parse(readFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), "utf8"));
+const packageIndex = process.argv.indexOf("--package");
+if (packageIndex >= 0 && !process.argv[packageIndex + 1]) throw new Error("--package requires a runtime package manifest");
+const packageFile = packageIndex >= 0 ? resolve(process.argv[packageIndex + 1]) : join(repo, ".privacy-dev/evidence/personal-runtime-package.json");
+const pkg = JSON.parse(readFileSync(packageFile, "utf8"));
 runtimeRequirement(pkg.fingerprint);
 const launcherRequirement = `=identifier "dev.sora.openmausbot.personal" and certificate leaf = H"${pkg.fingerprint}"`;
 const run = (command, args) => {
