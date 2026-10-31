@@ -1,9 +1,8 @@
-# Send to My Cloud
+# The move to My Cloud
 
-What it covers: Settings → MausBot Cloud's **This computer and My Cloud**
-(where things stand, and Send everything), My Cloud's strip, the switcher's
-send line, and the one-time move to My Cloud with its check. Settings → Logins
-shows where each login is.
+What it covers: the one-time move of everything on this computer to My Cloud
+(its transport, what it carries and its check), and the line either page shows
+while it goes.
 
 ## Two real servers
 
@@ -16,34 +15,23 @@ node --test electron/cloud-send.node-test.mjs electron/cloud-send-move.node-test
 `scripts/testing/cloud-send-fixture.ts` starts this computer's server as the
 desktop app starts it (its private utility-process port over Node's IPC) and a
 Cloud home paired the way the Admin pairs it, with main's own wiring
-(`electron/cloud-send-main.mjs`) between them through a fake `ipcMain`. Temp
-homes, a synthetic Claude CLI and a fake 1Password SDK; no network. The e2e
-checks:
+(`electron/one-home-main.mjs`, which installs `electron/cloud-send-main.mjs`)
+between them through a fake `ipcMain`. Temp homes, a synthetic Claude CLI and a
+fake 1Password SDK; no network. `fx.olderSend` sends as an older desktop's Send
+everything did, so a test can start from what such a send left on My Cloud.
 
-- a bot (instructions, picture, skill, notes), a login kept to it, 1Password
-  and About me reach My Cloud, the bot with its own id and conversation id;
-- a bot whose switch is off stays here, and a login kept to it reaches no bot
-  there (narrowed);
-- a change here goes, a change made on My Cloud is kept until **Use this
-  computer's**, and something removed on My Cloud is not brought back until its
-  switch is turned on again;
-- a password changed here goes on the next send;
-- My Cloud's page is told bot names and counts only, never a login's site;
-- every send signs its session out, and no answer or log carries a secret;
-- **Bring newer chats** adds a sent bot's chats to My Cloud;
-- **Send everything** brings the chats too, by row, under the same bot and
-  conversation ids; a second send adds only the new messages, nothing twice; a
-  send of one item never carries chats;
+`server/cloud-send.e2e.test.ts` checks:
+
 - when My Cloud's 1Password refuses this computer's token, everything else
-  arrives and the strip's notice says *1Password* and why, never a login's site;
-- **a long conversation, sent in pages by the real send** (tool-heavy turns, so
-  a few turns make several 300-row pages): a new bot's conversation of three
-  pages and more with the move, one My Cloud got from a Bring
-  and then sent from its first row, a later send of two pages and more, a
-  context summary that ends a send, and a room of three pages and more (made on
-  My Cloud under the same ids). Each is read back on both servers the way the
-  chat view pages it, and the path from each server's own leaf, which is what
-  its bot reads, must match row for row, summaries included.
+  arrives and My Cloud's notice says *1Password* and why, never a login's site;
+- an attachment a row names is kept on My Cloud under its own name, once;
+- **a long conversation, carried in pages by the move** (tool-heavy turns, so a
+  few turns make several 300-row pages): a new bot's conversation of three
+  pages and more, a later pass of two pages and more, a context summary that
+  ends a pass, and a room of three pages and more (made on My Cloud under the
+  same ids). Each is read back on both servers the way the chat view pages it,
+  and the path from each server's own leaf, which is what its bot reads, must
+  match row for row, summaries included.
 
 `server/cloud-send-move.e2e.test.ts` runs the move as main runs it (`move`, then
 `move({ final: true })`, then `check`): a 1,599-row conversation with 22
@@ -70,6 +58,14 @@ models reach the bot; a conversation's project, model, approval and snooze and a
 room conversation's time limit reach it too. A reply over 1 MB arrives whole,
 imported, Claude Code and library skills arrive, and a model on the home network
 stays here. `check()` is ok, and a move run again changes nothing.
+`server/cloud-send-rooms.e2e.test.ts` runs the move over every shape of room: one
+with history arrives; one nobody wrote in yet (as a team setup or a package
+makes it, with a bot that lives only there) arrives as its thread with no rows;
+one whose bots were all deleted here is never made there and the check leaves it
+out with its conversation; one an older send carried and the person then removed
+on My Cloud stays removed and the check leaves it out. `check()` is ok, and a
+move run again changes nothing. A check that finds something missing logs the
+rooms and conversations by id (`electron/one-home.mjs` `missingOf`).
 `server/cloud-send-store.e2e.test.ts` fills My Cloud's attachment store: the
 attachment is refused in plain words, its chat still goes, no partial file is
 left, and the check names the attachment.
@@ -83,17 +79,24 @@ the sender's ids). `electron/cloud-send.node-test.mjs` covers main's paging (a
 page's `sent` as it goes, a conversation's later pages waiting once one is not
 taken) and a send that goes on once My Cloud is back after being away. `server/login-handoff.test.ts` and
 `electron/cloud-send.node-test.mjs` cover the
-rest of the reasons a person reads: a send that stops as a whole, logins this
+rest of the reasons a person reads: a pass that stops as a whole, logins this
 computer's server did not hand over, and a 1Password token 1Password already
 refused here.
 
 My Cloud's welcome (`src/components/cloud-welcome/CloudWelcome.test.ts`): while
-a move or a whole send runs, or once one has gone, **Bring your stuff** is done
-by itself, so the welcome goes straight on to the AI with no Copy, fresh start
-or button; back on that step it says so in one line, with a fresh start only
-behind **More**. Before anything has come, the old choice is offered. Found by a
-real-user run on a packaged desktop and a test Cloud, where the welcome kept
-offering **Copy to My Cloud** after everything had already arrived.
+the move runs, or once it has gone, **Bring your stuff** is done by itself, so
+the welcome goes straight on to the AI with nothing to press; back on that step
+it says so in one line, with a fresh start only behind **More**. Before anything
+has come, it offers a fresh start. The move never shows as a strip over the page
+(`src/components/CloudSendStrip.test.ts`): it lives in the account area at the
+bottom of the sidebar (`src/components/AccountMove.test.ts`). On its way, the
+account line says "Moving to My Cloud…" and so does one row in the account
+menu, with the progress in its tooltip; after a day of failing the line says "My
+Cloud move needs you" and ends with Try again, the avatar gets a red dot, and the
+menu's top row says "Try My Cloud move again", the size of every other row, with
+the reason in its tooltip. Both run the one retry, and both wait with a spinner
+while it runs. On My Cloud's page the menu says once what arrived, with the phone
+to pair and Got it.
 
 ## The real utility port
 
@@ -111,22 +114,6 @@ Point the same pieces at a disposable Fly test Cloud set up like a customer's
 (never a customer's): this computer's server started as the app starts it,
 main's wiring with Node's own fetch, the Cloud paired through its signed
 pairing route. Print each failed item's error, never a value.
-
-## The real renderer
-
-```sh
-node --experimental-strip-types scripts/verify-cloud-send.ts
-```
-
-It seeds the same two servers (Ember with instructions, a picture, two skills
-and notes, two logins and 1Password here; a Chief and nine bots on My Cloud),
-mounts the app twice through the isolated Vite preview, and prints both pages:
-this computer's, opened on Settings → MausBot Cloud, and My Cloud's. Only the
-desktop's main-process bridges are stand-ins (`scripts/testing/cloud-send-preview.tsx`);
-Send to My Cloud's call main's real wiring through `/__send`. The switcher's
-native menu is drawn from main's own template, since a page can't show a native
-menu. Drive either page with any browser automation; nothing reaches the
-user's app, data or a real Cloud.
 
 ## The move to My Cloud, by itself
 
@@ -155,3 +142,31 @@ and can fail any request main sends My Cloud (`fx.intercept`). The e2e checks:
   switches on what was on there;
 - on a trial, a moved key is saved and checked but unused while the credit
   lasts (a stub plays the Admin's credit relay), and used once it runs out.
+
+## Why a move hasn't finished: the report to the Admin
+
+```sh
+node --test electron/move-status.node-test.mjs electron/one-home.node-test.mjs electron/one-home-keep.node-test.mjs electron/one-home-main.node-test.mjs
+node --test --test-name-pattern="where its move stands" electron/cloud-account.node-test.mjs
+```
+
+The real move (`createOneHome`, and `installOneHome` as main wires it) over
+fakes, with the sign-in's state set the way the Admin's session leaves it. The
+tests check:
+
+- each reason a move doesn't start has its own code, through the move's own
+  gates, and none of them starts a move: no sign-in, a sign-in the Admin can't
+  vouch for now, no Cloud, only a team's, a Cloud setting up or ended, moves
+  off, "Keep this computer's bots here", another account's move, this
+  computer frozen with no move, its server not answering, and already moved;
+- each phase's failure has its own code and phase (a network failure, an owner
+  session refused, the Admin's 429, this computer's server, My Cloud refusing
+  or answering nothing, the freeze, the check after three passes, the switch),
+  is counted from the first until the move is done, and its sentence leaves
+  without what My Cloud said, quotes, addresses, paths or tokens;
+- the wait says whether it waits for a quiet moment or for work, by its kind
+  only, and a stage is dated once however often the wait looks again;
+- the report goes a moment after a change, at most once a minute, every 15
+  minutes otherwise, holds off six hours from an Admin without the route, and a
+  send that fails, throws or never answers changes nothing in the move.
+

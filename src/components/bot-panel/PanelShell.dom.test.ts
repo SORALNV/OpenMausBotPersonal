@@ -1,17 +1,18 @@
 // @vitest-environment happy-dom
-// The Simple bot panel in a real DOM, where effects run and focus moves: named links, Escape and focus.
+// The Simple bot panel in a real DOM, where effects run and focus moves: named links, Escape and focus, and the chat
+// header's pill that opens it.
 import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, BotSettingsSection } from "@/state/store";
 
-const fixture = vi.hoisted(() => ({ dispatch: vi.fn() }));
+const fixture = vi.hoisted(() => ({ dispatch: vi.fn(), settingsOpen: false }));
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
   return {
     ...original,
-    useStore: () => ({ state: original.initialState, dispatch: fixture.dispatch, flushBotPatches: () => Promise.resolve(null) }),
+    useStore: () => ({ state: { ...original.initialState, settingsOpen: fixture.settingsOpen }, dispatch: fixture.dispatch, flushBotPatches: () => Promise.resolve(null) }),
   };
 });
 vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => false, readAdvancedMode: () => false, setAdvancedMode: vi.fn() }));
@@ -22,21 +23,21 @@ vi.mock("../DesktopCapabilities", async (importOriginal) => ({
 vi.mock("../Avatar", () => ({ BotAvatar: () => null, MausAvatar: () => null }));
 vi.mock("../AvatarImageGenerator", () => ({ AvatarImageGenerator: () => null }));
 vi.mock("@/lib/use-organization-branding", () => ({ useOrganizationBranding: () => null }));
-vi.mock("../bot-settings/MemorySection", () => ({ MemorySection: () => null }));
-vi.mock("../bot-settings/useBotOverview", () => ({
-  useBotOverview: () => ({ overview: null, overviewError: false, prompt: null, promptError: false }),
-  useBotHistory: () => ({ rows: null, error: false, revision: null, rollingBack: false }),
-  HistoryRollbackDialog: () => null,
-}));
-const stub = (name: string) => () => createElement("div", { [`data-stub-${name}`]: true });
+const stub = (name: string) => (props: Record<string, unknown>) =>
+  createElement("div", { [`data-stub-${name}`]: true, "data-editing-instructions": props.editingInstructions === true ? "true" : undefined });
 vi.mock("./DetailsTab", () => ({ DetailsTab: stub("details") }));
 vi.mock("./LibraryTab", () => ({ LibraryTab: stub("library") }));
 vi.mock("./ComputerTab", () => ({ ComputerTab: stub("computer") }));
-vi.mock("./SettingsTab", () => ({ SettingsTab: stub("settings") }));
-vi.mock("./pages", () => ({ PageBody: ({ page }: { page: string }) => createElement("div", { "data-stub-page": page }), pageSurfaceCls: "" }));
+vi.mock("./pages", () => ({
+  PageBody: ({ page, editingInstructions }: { page: string; editingInstructions?: boolean }) =>
+    createElement("div", { "data-stub-page": page, "data-editing-instructions": editingInstructions === true ? "true" : undefined },
+      createElement("section", { "data-panel-card": "approval" })),
+  pageSurfaceCls: "",
+}));
 
 const { BotPanel } = await import("./PanelShell");
 const { openBotSettings } = await import("./panel-link");
+const { ChatHeadPill } = await import("../ChatHeadPill");
 
 const bot: Bot = {
   id: "scout", threadId: "thread-scout", name: "Scout", title: "Researcher", description: "", soul: "",
@@ -68,7 +69,7 @@ const press = (element: Element | null, key: string) => {
   return event;
 };
 const menu = () => document.querySelector("[data-sidebar-popover-menu]");
-const moreButton = () => host.querySelector('[data-testid="chat-more"]')?.closest("button") ?? null;
+const moreButton = () => host.querySelector("[data-panel-share]")?.closest("button") ?? null;
 // What BotSettingsDialog's window listener would do with the key: close the whole panel.
 const dialogCloses = vi.fn();
 const onWindowKey = (event: KeyboardEvent) => {
@@ -102,9 +103,14 @@ describe("named links into the bot panel", () => {
     await settle();
     expect(page()).toBe("apps");
 
+    flushSync(() => openBotSettings(fixture.dispatch, "access", { page: "folder" }));
+    await settle();
+    expect(page()).toBe("folder");
+
+    // Simple mode has no MCP page: the link lands where Access does.
     flushSync(() => openBotSettings(fixture.dispatch, "access", { page: "mcp" }));
     await settle();
-    expect(page()).toBe("mcp");
+    expect([tab(), page()]).toEqual(["computer", null]);
 
     flushSync(() => openBotSettings(fixture.dispatch, "access"));
     await settle();
@@ -112,27 +118,185 @@ describe("named links into the bot panel", () => {
   });
 
   it("follows the same link again after the panel has moved on", async () => {
-    openBotSettings(fixture.dispatch, "usage");
-    render("usage");
+    openBotSettings(fixture.dispatch, "access");
+    render("access");
     await settle();
-    expect(tab()).toBe("settings");
+    expect(tab()).toBe("computer");
 
     click(host.querySelector('[data-panel-tab="details"]'));
     expect(tab()).toBe("details");
 
-    flushSync(() => openBotSettings(fixture.dispatch, "usage"));
-    render("usage");
+    flushSync(() => openBotSettings(fixture.dispatch, "access"));
+    render("access");
     await settle();
-    expect(tab()).toBe("settings");
+    expect(tab()).toBe("computer");
+  });
+
+  it("opens Bot settings with the Instructions editor for a soul link, and closes it when the panel moves on", async () => {
+    openBotSettings(fixture.dispatch, "soul");
+    render("soul");
+    await settle();
+    expect(page()).toBe("settings");
+    expect(host.querySelector('[data-stub-page="settings"]')?.getAttribute("data-editing-instructions")).toBe("true");
+    click(host.querySelector("[data-panel-back]"));
+    expect([tab(), page()]).toEqual(["details", null]);
+    click(host.querySelector("[data-panel-gear]"));
+    expect(host.querySelector('[data-stub-page="settings"]')?.getAttribute("data-editing-instructions")).toBeNull();
+  });
+
+  it("scrolls a permissions link to Before it acts on the Bot settings page", async () => {
+    const scrolled = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    openBotSettings(fixture.dispatch, "permissions");
+    render("permissions");
+    await settle();
+    expect(page()).toBe("settings");
+    expect(scrolled.mock.contexts).toContain(host.querySelector('[data-panel-card="approval"]'));
+  });
+
+  it("lands usage, history, voice and visibility links on the Details tab, with no Advanced page", async () => {
+    for (const section of ["usage", "history", "voice", "visibility", "overview"] as const) {
+      openBotSettings(fixture.dispatch, section);
+      render(section);
+      await settle();
+      expect([tab(), page()], section).toEqual(["details", null]);
+    }
+  });
+});
+
+describe("the panel's tabs", () => {
+  it("are Details, Library and Computer, opening on Details, each drawing its own tab", async () => {
+    render(null);
+    await settle();
+    expect([...host.querySelectorAll('[role="tab"]')].map((element) => [element.getAttribute("data-panel-tab"), element.textContent]))
+      .toEqual([["details", "Details"], ["library", "Library"], ["computer", "Computer"]]);
+    expect(tab()).toBe("details");
+    const strip = host.querySelector('[role="tablist"]')!.className.split(" ");
+    expect(strip).toEqual(expect.arrayContaining(["sticky", "top-0", "bg-app", "gap-0.5"]));
+    expect(host.querySelector('[role="tab"]')!.className.split(" ")).toEqual(expect.arrayContaining(["h-[26px]", "text-[13px]", "bg-ink/[0.07]"]));
+    for (const id of ["library", "computer", "details"]) {
+      click(host.querySelector(`[data-panel-tab="${id}"]`));
+      expect(tab()).toBe(id);
+      expect(host.querySelector(`[data-stub-${id}]`), id).not.toBeNull();
+    }
+  });
+});
+
+describe("the panel's top", () => {
+  it("has a round Share button that copies or downloads the conversation, a gear for Bot settings, and Close", async () => {
+    render(null);
+    await settle();
+    const top = [...host.querySelectorAll("button")].slice(0, 3);
+    expect(top.map((button) => button.getAttribute("aria-label") ?? button.getAttribute("title"))).toEqual(["Share", "Bot settings", "Close settings"]);
+    for (const button of [moreButton()!, top[1]!, top[2]!]) expect(button.querySelector("span, svg")).not.toBeNull();
+    click(moreButton());
+    expect([...menu()!.querySelectorAll("[data-menu-key]")].map((row) => row.getAttribute("data-menu-key"))).toEqual(["copy", "download"]);
+    press(moreButton(), "Escape");
+    click(top[2]!);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("opens Bot settings from the gear on any tab, with Back to Details", async () => {
+    render(null);
+    await settle();
+    click(host.querySelector('[data-panel-tab="computer"]'));
+    click(host.querySelector("[data-panel-gear]"));
+    expect(page()).toBe("settings");
+    expect(host.querySelector("[data-panel-gear]")!.getAttribute("aria-current")).toBe("page");
+    expect(host.querySelector("[data-panel-back]")!.textContent).toBe("Details");
+    click(host.querySelector("[data-panel-back]"));
+    expect([tab(), page()]).toEqual(["details", null]);
+  });
+
+  it("puts the name right under the avatar, with no call button beside it", async () => {
+    render(null);
+    await settle();
+    const row = host.querySelector("[data-panel-name-row]")!;
+    expect(row.querySelector("[data-panel-rename]")!.textContent).toBe("Scout");
+    expect(host.querySelector("[data-panel-avatar]")!.nextElementSibling).toBe(row);
+    expect(host.querySelector("[data-call-button]")).toBeNull();
+  });
+});
+
+describe("the chat header's pill", () => {
+  const withTasks: Bot = { ...bot, tasks: [
+    { threadId: "thread-scout", title: "Plan the launch", createdAt: 1 },
+    { threadId: "other", title: "Older notes", createdAt: 0, unread: true },
+  ] };
+  const pill = (props: Partial<Parameters<typeof ChatHeadPill>[0]> = {}) => {
+    const header = document.createElement("div");
+    document.body.append(header);
+    const headerRoot = createRoot(header);
+    const onToggle = vi.fn();
+    flushSync(() => headerRoot.render(createElement(ChatHeadPill, { bot: withTasks, avatar: { state: "idle" }, privacy: null, onToggle, ...props })));
+    return { header, onToggle, done: () => { flushSync(() => headerRoot.unmount()); header.remove(); } };
+  };
+
+  it("names the bot, opens the bot panel, and dots another conversation that needs a look", () => {
+    const { header, onToggle, done } = pill();
+    try {
+      const button = header.querySelector<HTMLButtonElement>("[data-chathead-pill]")!;
+      expect(button.textContent).toBe("Scout");
+      expect(button.getAttribute("aria-label")).toBe("Open Scout's profile");
+      expect(button.getAttribute("aria-expanded")).toBe("false");
+      expect(button.hasAttribute("aria-controls")).toBe(false);
+      expect(header.querySelector("[data-chathead-chevron]")).not.toBeNull();
+      expect(header.querySelector("[data-chathead-elsewhere]")!.getAttribute("aria-label")).toBe("Other activity (1)");
+      click(button);
+      expect(onToggle).toHaveBeenCalledOnce();
+    } finally {
+      done();
+    }
+  });
+
+  it("says the panel is open and points at it, then hides the hover chevron", () => {
+    fixture.settingsOpen = true;
+    const { header, done } = pill();
+    try {
+      const button = header.querySelector<HTMLButtonElement>("[data-chathead-pill]")!;
+      expect(button.getAttribute("aria-expanded")).toBe("true");
+      expect(button.getAttribute("aria-controls")).toBe("bot-panel");
+      expect(header.querySelector("[data-chathead-chevron]")).toBeNull();
+    } finally {
+      fixture.settingsOpen = false;
+      done();
+    }
+  });
+
+  it("names the conversation on screen when it is not the bot's main one", () => {
+    const { header, done } = pill({ bot: { ...withTasks, mainThreadId: "other" } });
+    try {
+      const button = header.querySelector<HTMLButtonElement>("[data-chathead-pill]")!;
+      expect(header.querySelector("[data-chathead-conversation]")!.textContent).toBe("Plan the launch");
+      expect(button.getAttribute("aria-label")).toBe("Open Scout's profile, Plan the launch");
+      expect(header.querySelector("[data-chathead-chevron]")).toBeNull();
+    } finally {
+      done();
+    }
+    const untitled = pill({ bot: { ...withTasks, mainThreadId: "other", tasks: [{ ...withTasks.tasks![0]!, title: "New thread" }, withTasks.tasks![1]!] } });
+    try {
+      expect(untitled.header.querySelector("[data-chathead-conversation]")!.textContent).toBe("New conversation");
+    } finally {
+      untitled.done();
+    }
+  });
+
+  it("has no dot when the other conversations are quiet, and says who can read a team chat", () => {
+    const quiet = pill({ bot: { ...withTasks, tasks: withTasks.tasks!.map((task) => ({ ...task, unread: false })) }, privacy: { kind: "private" } });
+    try {
+      expect(quiet.header.querySelector("[data-chathead-elsewhere]")).toBeNull();
+      expect(quiet.header.querySelector('[data-chathead-privacy="private"]')!.textContent).toBe("Private · only you");
+    } finally {
+      quiet.done();
+    }
   });
 });
 
 describe("Escape in the bot panel", () => {
   const onPage = async () => {
-    openBotSettings(fixture.dispatch, "model");
-    render("model");
+    openBotSettings(fixture.dispatch, "skills");
+    render("skills");
     await settle();
-    expect(page()).toBe("model");
+    expect(page()).toBe("skills");
   };
 
   it("goes back from a drill-in page instead of closing the panel, though the panel sits in a dialog", async () => {
@@ -141,14 +305,14 @@ describe("Escape in the bot panel", () => {
     back?.focus();
     const event = press(back, "Escape");
     expect(event.defaultPrevented).toBe(true);
-    expect([tab(), page()]).toEqual(["details", null]);
+    expect([tab(), page()]).toEqual(["library", null]);
     expect(dialogCloses).not.toHaveBeenCalled();
     // On a tab, Escape is the dialog's: it closes the panel.
-    press(host.querySelector('[data-panel-tab="details"]'), "Escape");
+    press(host.querySelector('[data-panel-tab="library"]'), "Escape");
     expect(dialogCloses).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the ⋯ menu first, on a tab and on a page, and only the next Escape reaches the panel", async () => {
+  it("closes the Share menu first, on a tab and on a page, and only the next Escape reaches the panel", async () => {
     render(null);
     await settle();
     moreButton()?.focus();
@@ -167,9 +331,9 @@ describe("Escape in the bot panel", () => {
     expect(menu()).not.toBeNull();
     press(moreButton(), "Escape");
     expect(menu()).toBeNull();
-    expect(page()).toBe("model");
+    expect(page()).toBe("skills");
     press(moreButton(), "Escape");
-    expect([tab(), page()]).toEqual(["details", null]);
+    expect([tab(), page()]).toEqual(["library", null]);
     expect(dialogCloses).not.toHaveBeenCalled();
   });
 });

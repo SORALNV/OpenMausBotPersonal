@@ -4,7 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -83,7 +83,9 @@ const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHas
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), info]);
 rmSync(join(resources, "app-update.yml"), { force: true });
 setPersonalAppIdentity(app);
-const signing = withPersonalSigning(join(repo, ".privacy-dev", "personal-signing"), ({ identity, keychain }) => {
+const signingDir = process.env.OMB_PERSONAL_SIGNING_DIR ? resolve(process.env.OMB_PERSONAL_SIGNING_DIR) : join(repo, ".privacy-dev", "personal-signing");
+if (process.env.OMB_PERSONAL_SIGNING_DIR && !existsSync(signingDir)) throw new Error("The requested existing signing identity is missing");
+const signing = withPersonalSigning(signingDir, ({ identity, keychain }) => {
   run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), join(resources, speechBundle)]);
   const speechHelperRequirement = personalSigningRequirement(join(resources, speechBundle), identity);
   run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);

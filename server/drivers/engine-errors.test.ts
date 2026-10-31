@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { engineFailureKind, engineFailureMessage, httpStatusOf, outOfCreditsMessage, providerReason, stopCause } from "./engine-errors.ts";
+import { engineFailureKind, engineFailureMessage, httpStatusOf, plainFailureMessage, providerReason, stopCause } from "./engine-errors.ts";
 import { classifyError } from "./retry.ts";
 
 const reason = (text: string) => classifyError({ text }).reason;
@@ -22,7 +22,7 @@ describe("engineFailureMessage", () => {
       .toBe('Your Cursor account is out of credits (Cursor says: "Your team has no credits left"). Add credits with Cursor, then run it again.');
     expect(engineFailureMessage("Gemini", "Internal error: insufficient credits for this request"))
       .toBe('Your Gemini account is out of credits (Gemini says: "insufficient credits for this request"). Add credits with Gemini, then run it again.');
-    expect(outOfCreditsMessage("MiniMax", "provider returned a completion error: upstream error 1008: insufficient balance"))
+    expect(plainFailureMessage("MiniMax", "provider returned a completion error: upstream error 1008: insufficient balance"))
       .toBe('Your MiniMax account is out of credits (MiniMax says: "upstream error 1008: insufficient balance"). Add credits with MiniMax, then run it again.');
   });
 
@@ -49,7 +49,7 @@ describe("engineFailureMessage", () => {
   it("leaves a failure it does not know to the caller, whose text stays as it was", () => {
     expect(engineFailureMessage("Grok", "Internal error: could not change mode")).toBeNull();
     expect(engineFailureMessage("Grok", "Grok could not confirm its MCP catalog in time. No prompt was sent.")).toBeNull();
-    expect(outOfCreditsMessage("xAI", "xAI HTTP 401: Incorrect API key provided (invalid_api_key)")).toBe("xAI HTTP 401: Incorrect API key provided (invalid_api_key)");
+    expect(plainFailureMessage("xAI", "xAI HTTP 401: Incorrect API key provided (invalid_api_key)")).toBe("xAI HTTP 401: Incorrect API key provided (invalid_api_key)");
     expect(engineFailureKind("Stopped after 64 steps without a final answer.")).toBeNull();
   });
 });
@@ -77,6 +77,34 @@ describe("providerReason", () => {
   });
 });
 
+describe("a provider refusing a tool's schema", () => {
+  /** Kimi Code's prompt failure as acpRpcError relays it; Moonshot's line is quoted in https://github.com/MoonshotAI/kimi-code/issues/4231. */
+  const KIMI = "Internal error: 400 tools.function.parameters is not a valid moonshot flavored json schema, details: <At path 'root': schema exceeds maximum allowed size> (session/prompt)";
+
+  it("says in plain words that a tool was too large, keeping the words that class it an invalid request", () => {
+    const plain = engineFailureMessage("Kimi", KIMI);
+    expect(plain).toBe("Kimi refused this turn as an invalid request because the input schema of one of this bot's tools is too large, so nothing ran. "
+      + "Turn off the MCP server or app that tool comes from for this bot, or switch the bot to another AI.");
+    expect(engineFailureKind(KIMI)).toBe("tool_schema");
+    expect([reason(KIMI), reason(plain!)]).toEqual(["invalid_request", "invalid_request"]);
+    expect(classifyError({ text: plain! }).transient).toBe(false);
+  });
+
+  it("names the tool when the provider does", () => {
+    expect(engineFailureMessage("OpenAI", "OpenAI HTTP 400: Invalid schema for function 'computer_browser_prepare': schema must be a JSON Schema of 'type: \"object\"', got 'type: \"None\"'."))
+      .toBe('OpenAI refused this turn as an invalid request because the input schema of the "computer_browser_prepare" tool uses a form OpenAI does not accept, so nothing ran. '
+        + "Turn off the MCP server or app that tool comes from for this bot, or switch the bot to another AI.");
+    expect(engineFailureKind("API Error: 400 tools.12.custom.input_schema: JSON schema is invalid")).toBe("tool_schema");
+    expect(engineFailureKind("Invalid JSON payload received. Unknown name \"additionalProperties\" at 'tools[0].function_declarations[3].parameters'")).toBe("tool_schema");
+  });
+
+  it("is in plain words on the chat runtime too, where any other failure keeps its text", () => {
+    expect(plainFailureMessage("Kimi", KIMI)).toBe(engineFailureMessage("Kimi", KIMI));
+    expect(plainFailureMessage("Groq", "Groq HTTP 400: model_decommissioned")).toBe("Groq HTTP 400: model_decommissioned");
+    expect(engineFailureKind("Mistral HTTP 400: Invalid model: kimi")).toBe("refused");
+  });
+});
+
 describe("stopCause", () => {
   it("never lets a bare stop token stand alone as the cause, and keeps the token so its class still reads", () => {
     for (const token of ["stop_sequence", "api_error", "rpc_error", "error"]) {
@@ -86,5 +114,43 @@ describe("stopCause", () => {
     expect(stopCause("provider crashed")).toBe("provider crashed");
     expect(stopCause("  ")).toBeUndefined();
     expect(stopCause(null)).toBeUndefined();
+  });
+
+  it("says in plain words what an ACP stop reason that names its cause means, with the advice that fits it", () => {
+    // no cause carries another reason's actions whole: the advice is per reason, not one shared line
+    const advice: Record<string, RegExp[]> = {
+      refusal: [/again|retry/, /reword/, /switch/],
+      max_tokens: [/continue/, /shorter/],
+      max_turn_requests: [/carry on/, /split/],
+    };
+    for (const [token, own] of Object.entries(advice)) {
+      const cause = stopCause(token)!;
+      expect(cause, token).toContain(`(stop reason: ${token})`);
+      for (const action of own) expect(cause, `${token} advises ${action}`).toMatch(action);
+      for (const [other, others] of Object.entries(advice)) {
+        if (other === token) continue;
+        expect(others.some((action) => !action.test(cause)), `${token} does not read as ${other}`).toBe(true);
+      }
+    }
+    for (const token of ["refusal", "max_tokens", "max_turn_requests"]) {
+      const cause = stopCause(token)!;
+      expect(classifyError({ text: cause })).toEqual({ transient: false, reason: "unknown" });
+      expect(engineFailureKind(cause)).toBeNull();
+    }
+    expect(stopCause("constructor")).toBe("The engine stopped without saying why (stop reason: constructor).");
+  });
+
+  it("names the AI when the caller knows it, and still classifies like the bare token", () => {
+    expect(stopCause("refusal")).toMatch(/^The AI refused\b/);
+    expect(stopCause("refusal", "Gemini")).toMatch(/^Gemini refused to go on with this request \(stop reason: refusal\)\./);
+    expect(stopCause("max_tokens", "OpenCode")).toMatch(/^OpenCode's reply reached its maximum length/);
+    expect(stopCause("refusal", "  ")).toMatch(/^The AI refused\b/);
+    for (const provider of ["Gemini", "Qwen", "OpenCode", "Cursor", "Grok", "DeepSeek", "Cline"]) {
+      for (const token of ["refusal", "max_tokens", "max_turn_requests"]) {
+        const cause = stopCause(token, provider)!;
+        expect(classifyError({ text: cause })).toEqual({ transient: false, reason: "unknown" });
+        expect(engineFailureKind(cause)).toBeNull();
+      }
+    }
   });
 });

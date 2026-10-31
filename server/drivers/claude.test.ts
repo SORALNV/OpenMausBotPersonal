@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR, ensureDirs, instanceConfigs, NATIVE_DIR, type AppConfig } from "../config.ts";
 import { TurnAuthenticationRefusedError, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { BACKGROUND_CALL_TIMEOUT_MS, backgroundCallArgs } from "./claude-background.ts";
+import { BACKGROUND_CALL_TIMEOUT_MS, BACKGROUND_SETTINGS, backgroundCallArgs } from "./claude-background.ts";
 import {
   autoCompactWindow,
   brokerSocketCandidates,
@@ -579,6 +579,50 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect((settled[0] as any).text).toBe("hello from fake claude");
   });
 
+  it("passes on a running tool's heartbeat as tool activity, so a long tool is not taken for a stall", async () => {
+    await create("tool-heartbeat");
+    await instance.adapter.sendTurn({ threadId: "t-heartbeat", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const types = recorder.events.map((e) => e.type);
+    const beat = types.indexOf("item.updated");
+    expect(recorder.events[beat]).toMatchObject({ itemType: "tool" });
+    expect(beat).toBeGreaterThan(types.indexOf("item.started"));
+    expect(beat).toBeLessThan(types.lastIndexOf("item.completed"));
+  });
+
+  it("names the CLI process while a long tool runs, and no process once the turn is over", async () => {
+    const release = join(scratch, "release");
+    await create(undefined, {
+      FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([{ name: "Bash", input: { command: "python3 scrape.py" }, hold: "idle" }]), FAKE_CLAUDE_RELEASE: release,
+    });
+    await instance.adapter.sendTurn({ threadId: "t-engine-pid", text: "scrape" });
+    await recorder.until((e) => e.type === "item.started" && e.itemType === "tool");
+    const pid = instance.adapter.enginePid?.("t-engine-pid");
+    expect(pid).toEqual(expect.any(Number));
+    expect(() => process.kill(pid!, 0), "the CLI running this turn").not.toThrow();
+    writeFileSync(release, "go");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(instance.adapter.enginePid?.("t-engine-pid")).toBeUndefined();
+  });
+
+  it("reports a long Write's input as it streams, after the bot's words and before its tool call", async () => {
+    await create("slow-write", { FAKE_CLAUDE_WRITE_BYTES: "6144", FAKE_CLAUDE_WRITE_STEP_MS: "5" });
+    await instance.adapter.sendTurn({ threadId: "t-slow-write", text: "build a dashboard" });
+    await recorder.until((e) => e.type === "turn.completed", 20_000);
+
+    const types = recorder.events.map((e) => e.type);
+    const started = recorder.events.find((e) => e.type === "item.started") as any;
+    const progress = recorder.events.filter((e) => e.type === "turn.progress") as any[];
+    expect(progress.length, "one report per streamed chunk, before the bus coalesces them").toBeGreaterThan(10);
+    expect(progress.every((e) => e.activity === "write" && e.itemId === started.itemId && e.turnId === started.turnId)).toBe(true);
+    expect(progress.at(-1)).toMatchObject({ file: "index.html" });
+    expect(progress.at(-1).bytes).toBeGreaterThanOrEqual(6144);
+    const intro = recorder.events.findIndex((e: any) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect(types.indexOf("turn.progress")).toBeGreaterThan(intro);
+    expect(types.lastIndexOf("turn.progress")).toBeLessThan(types.indexOf("item.started"));
+  });
+
   it("turns a signed-out CLI into a setup error, not a bot reply", async () => {
     const dump = join(scratch, "signed-out-session.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
@@ -648,7 +692,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-weekly", text: "Hey talk to @Tango" });
     await recorder.until((event) => event.type === "turn.completed");
     const errors = recorder.events.filter((event) => event.type === "runtime.error");
-    expect(errors).toEqual([expect.objectContaining({ message: claudeLimitMessage({ window: "seven_day", resetsAt }), limitResetsAt: resetsAt * 1000 })]);
+    expect(errors).toEqual([expect.objectContaining({ message: claudeLimitMessage({ window: "seven_day", resetsAt }), limitResetsAt: resetsAt * 1000, limit: "engine" })]);
     expect((errors[0] as any).message).toMatch(/^This Claude account has reached its weekly limit, which resets .+\. Until then, /);
     expect(errors[0]).not.toHaveProperty("setup");
     expect(errors[0]).not.toHaveProperty("claudeUpdate");
@@ -664,9 +708,20 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-credits", text: "continue" });
     await recorder.until((event) => event.type === "turn.completed");
     const errors = recorder.events.filter((event) => event.type === "runtime.error");
-    expect(errors).toEqual([expect.objectContaining({ message: claudeLimitMessage({ window: null, resetsAt, credits: true }) })]);
+    expect(errors).toEqual([expect.objectContaining({ message: claudeLimitMessage({ window: null, resetsAt, credits: true }), limit: "credits" })]);
     expect((errors[0] as any).message).toContain("those credits are used up");
     expect(errors[0]).not.toHaveProperty("limitResetsAt");
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "quota" });
+  });
+
+  it("settles a turn its model's own weekly window refused as that model's limit, with that window's reset", async () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 2 * 86_400;
+    const opus = { status: "rejected", resetsAt, rateLimitType: "seven_day_opus", overageStatus: "rejected", isUsingOverage: false };
+    await create("usage-limit", { FAKE_CLAUDE_RATE_LIMIT: JSON.stringify(opus) });
+    await instance.adapter.sendTurn({ threadId: "t-opus-window", text: "continue" });
+    await recorder.until((event) => event.type === "turn.completed");
+    const errors = recorder.events.filter((event) => event.type === "runtime.error");
+    expect(errors).toEqual([expect.objectContaining({ limit: "model", limitResetsAt: resetsAt * 1000 })]);
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "quota" });
   });
 
@@ -1577,6 +1632,44 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(JSON.stringify(seen.argv)).not.toContain("tok-docs");
   });
 
+  // Claude Code advertises no MCP Apps UI extension and keeps tool results to itself, so only OMB's
+  // remote proxy can observe a URL app server.
+  it("mounts a url app server through the proxy and a url server without apps natively, unchanged", async () => {
+    await create();
+    const dump = join(scratch, "app-mcp.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const docs = { type: "http" as const, url: "https://docs.example/mcp", headers: { Authorization: "Bearer tok-docs" } };
+    const draw = { type: "http" as const, url: "https://mcp.excalidraw.com/mcp", headers: { Authorization: "Bearer tok-draw" } };
+    const board = { command: "board-mcp", args: [], env: {} };
+    const agents = { command: process.execPath, args: ["agents-proxy.js"], env: { OMB_HARNESS_URL: "http://127.0.0.1:8799", OMB_COMMS_TOKEN: "comms-fixture" } };
+    await instance.adapter.sendTurn({
+      threadId: "t-app-mcp", text: "hi",
+      integrations: { agents, custom: { docs, draw, board }, mcpApps: { draw: { extension: true }, board: { extension: true } } },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpConfig.mcpServers.docs).toEqual(docs);
+    const proxy = seen.mcpConfig.mcpServers.draw;
+    expect(proxy.args[0]).toContain("mcp-remote-proxy");
+    expect(JSON.parse(proxy.env.OMB_REMOTE_MCP_SERVER)).toEqual(draw);
+    expect(JSON.parse(proxy.env.OMB_REMOTE_MCP_APPS)).toEqual({ server: "draw", harnessUrl: "http://127.0.0.1:8799", token: "comms-fixture", extension: true });
+    const gate = seen.mcpConfig.mcpServers.board;
+    expect(gate.args[0]).toContain("mcp-gate");
+    expect(JSON.parse(gate.env.OMB_GATE_APPS)).toMatchObject({ server: "board", extension: true });
+    expect(JSON.stringify(seen.argv)).not.toContain("tok-draw");
+    expect(JSON.stringify(seen.argv)).not.toContain("comms-fixture");
+  });
+
+  it("observes nothing on a turn that cannot report: no agents capability", async () => {
+    await create();
+    const dump = join(scratch, "app-mcp-no-agents.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const draw = { type: "http" as const, url: "https://mcp.excalidraw.com/mcp", headers: {} };
+    await instance.adapter.sendTurn({ threadId: "t-app-mcp-2", text: "hi", integrations: { custom: { draw }, mcpApps: { draw: { extension: true } } } });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).mcpConfig.mcpServers.draw).toEqual(draw);
+  });
+
   it("keeps a selected url server's whole catalog: Claude Code searches tools itself", async () => {
     await create();
     const dump = join(scratch, "remote-mcp-scoped.json");
@@ -1606,7 +1699,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-auth-settings", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.settings).toEqual({ claudeMdExcludes: [join(homedir(), ".claude", "CLAUDE.md")], apiKeyHelper: settings.apiKeyHelper, env: { ANTHROPIC_BASE_URL: settings.env.ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN: "synthetic-token" } });
+    expect(seen.settings).toEqual({ claudeMdExcludes: [join(homedir(), ".claude", "CLAUDE.md")], apiKeyHelper: settings.apiKeyHelper, env: { ANTHROPIC_BASE_URL: settings.env.ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN: "synthetic-token", ENABLE_TOOL_SEARCH: "true" } });
     expect(seen.argv[seen.argv.indexOf("--setting-sources") + 1]).toBe("project");
     expect(JSON.stringify(seen.argv)).not.toContain("synthetic");
     const settingsPath = seen.argv[seen.argv.indexOf("--settings") + 1];
@@ -1636,6 +1729,71 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(after.settings.env.ANTHROPIC_API_KEY).toBe("synthetic-new");
   });
 
+  it("loads third-party MCP tools on demand and keeps OpenMausBot's own servers loaded", async () => {
+    await create();
+    const dump = join(scratch, "tool-search.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const stdio = (name: string) => ({ command: process.execPath, args: [`/fake/${name}.js`], env: {} });
+    const integrations = {
+      agents: stdio("agents"), browser: stdio("browser"), composio: stdio("composio"), composioOwn: stdio("own-apps"),
+      localComputer: stdio("computer"), phone: stdio("phone"), data: stdio("data"), highlevel: stdio("highlevel"),
+      device: stdio("device"), dweb: { url: "http://127.0.0.1:1" },
+      custom: {
+        shop: { command: "npx", args: ["shop"], env: {} }, docs: { type: "http" as const, url: "https://docs.example.test/mcp", headers: {} },
+        postiz: { type: "http" as const, url: "https://api.postiz.com/mcp-oauth-dynamic", headers: { Authorization: "Bearer pos_fixture" } },
+      },
+    };
+    const mounted = async (threadId: string, preloadBrowserTools: boolean) => {
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", cwd: scratch, preloadBrowserTools, integrations });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      const seen = JSON.parse(readFileSync(dump, "utf8")) as { settings: { env: Record<string, string> }; mcpConfig: { mcpServers: Record<string, { alwaysLoad?: boolean }> } };
+      const servers = Object.entries(seen.mcpConfig.mcpServers);
+      return {
+        toolSearch: seen.settings.env.ENABLE_TOOL_SEARCH,
+        alwaysLoaded: servers.filter(([, server]) => server.alwaysLoad === true).map(([name]) => name).sort(),
+        onDemand: servers.filter(([, server]) => server.alwaysLoad === undefined).map(([name]) => name).sort(),
+      };
+    };
+
+    const browsing = await mounted("t-tool-search", true);
+    expect(browsing.toolSearch).toBe("true");
+    expect(browsing.alwaysLoaded).toEqual(["agents", "browser", "ogb"]);
+    expect(browsing.onDemand).toEqual(["composio", "computer", "data", "device", "docs", "dweb", "highlevel", "own_apps", "phone", "postiz", "shop"]);
+    const other = await mounted("t-tool-search-no-browse", false);
+    expect(other.alwaysLoaded).toEqual(["agents", "ogb"]);
+    expect(other.onDemand).toContain("browser");
+  });
+
+  it("honours a person who turned Claude Code's tool search off, and restarts when they change it", async () => {
+    const account = join(scratch, "account");
+    mkdirSync(account);
+    const path = join(account, "settings.json");
+    writeFileSync(path, JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "false" } }));
+    const dump = join(scratch, "tool-search-off.json");
+    await create(undefined, { FAKE_CLAUDE_DUMP: dump }, { configDir: account });
+    const turn = async (text: string, cwd?: string) => {
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId: "t-tool-search-off", text, ...(cwd ? { cwd } : {}),
+        integrations: { composio: { command: process.execPath, args: ["/fake/composio.js"], env: {} } },
+      });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      return JSON.parse(readFileSync(dump, "utf8")) as { pid: number; settings: { env: Record<string, string> } };
+    };
+
+    // The turn leaves the account's settings out (--setting-sources project), so the choice travels in --settings.
+    const off = await turn("hi");
+    expect(off.settings.env.ENABLE_TOOL_SEARCH).toBe("false");
+    writeFileSync(path, JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "auto" } }));
+    const on = await turn("again");
+    expect(on.settings.env.ENABLE_TOOL_SEARCH).toBe("true");
+    expect(on.pid).not.toBe(off.pid);
+    // The bot's project settings beat the account's.
+    const project = join(scratch, "project-off");
+    mkdirSync(join(project, ".claude"), { recursive: true });
+    writeFileSync(join(project, ".claude", "settings.json"), JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "auto:100" } }));
+    expect((await turn("project", project)).settings.env.ENABLE_TOOL_SEARCH).toBe("auto:100");
+  });
+
   it("does not mix a personal helper/endpoint with an explicitly configured OMB connection", async () => {
     const account = join(scratch, "account");
     mkdirSync(account);
@@ -1645,7 +1803,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-auth-explicit", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.settings).toEqual({ claudeMdExcludes: [join(homedir(), ".claude", "CLAUDE.md")] });
+    expect(seen.settings).toEqual({ claudeMdExcludes: [join(homedir(), ".claude", "CLAUDE.md")], env: { ENABLE_TOOL_SEARCH: "true" } });
     expect(seen.env.ANTHROPIC_API_KEY).toBe("workspace-key");
     expect(seen.env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(readClaudeAuthSettings({ HOME: scratch, CLAUDE_CONFIG_DIR: join(scratch, "other-account") })).toEqual({});
@@ -1815,7 +1973,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     });
     expect(seen.mcpConfig.mcpServers.hosted).toMatchObject({ type: "http", url: "https://example.test/mcp" });
     expect(seen.mcpConfig.mcpServers.ogb.args).not.toContain("evil");
-    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__shop");
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",");
+    expect(allowed).not.toContain("mcp__shop");
+    expect(allowed).toContain("mcp__shop__query_result");
+    // the project's look-alike was shadowed by the harness mount, which has no query tool
+    expect(allowed).not.toContain("mcp__ogb__query_result");
   });
 
   it("mounts a bot's own MCP server behind the result gate", async () => {
@@ -1842,6 +2004,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(Number(shop.env.OMB_GATE_BUDGET)).toBeGreaterThan(0);
     expect(JSON.stringify(seen.argv)).not.toContain("secret");
     expect(seen.mcpConfig.mcpServers.ogb.args[0]).not.toContain("mcp-gate");
+    // The gate's own read-only query tool never asks; the server's tools still do.
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",");
+    expect(allowed).toContain("mcp__shop__query_result");
+    expect(allowed).not.toContain("mcp__shop");
   });
 
   it("mounts bot servers directly when the result budget is turned off", async () => {
@@ -1857,6 +2023,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.mcpConfig.mcpServers.shop).toMatchObject({ command: "npx", args: ["shop"] });
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).not.toContain("query_result");
   });
 
   it("gives each bot server its own result budget, over the app-wide one", async () => {
@@ -2008,10 +2175,12 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       env: { NOTES_TOKEN: "tok-notes" },
     });
     expect(JSON.parse(seen.mcpConfig.mcpServers.constructor.env.OMB_GATE_UPSTREAM)).toMatchObject({ command: "fixture-constructor" });
-    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",");
     expect(allowed).toContain("mcp__agents");
     expect(allowed).not.toContain("mcp__notes");
     expect(allowed).not.toContain("mcp__constructor");
+    // only the gate's own query over held results is pre-allowed
+    expect(allowed.filter((name: string) => name.startsWith("mcp__notes"))).toEqual(["mcp__notes__query_result"]);
     expect(JSON.stringify(seen.argv)).not.toContain("tok-notes");
   });
 
@@ -2780,6 +2949,14 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const second = await instance.adapter.sendTurn({ threadId: "t-team-tools", text: "two" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(dumpedPid(dump)).not.toBe(failedLaunch);
+  });
+
+  it("reports which of the turn's own MCP servers did not connect, and none of OpenMausBot's", async () => {
+    await create(undefined, { FAKE_CLAUDE_MCP_FAILED: "agents,blender,stranger" });
+    const custom = { blender: { command: "/usr/bin/python3", args: ["/srv/blender.py"], env: {} }, notes: { command: "npx", args: ["notes-mcp"], env: {} } };
+    const turn = await instance.adapter.sendTurn({ threadId: "t-custom-failed", text: "one", integrations: { custom } });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
+    expect(recorder.events.filter((e) => e.type === "session.started").map((e) => (e as { mcpFailed?: string[] }).mcpFailed)).toEqual([["blender"]]);
   });
 
   it("books each turn of a retained process at its own cost, not the process's running total", async () => {
@@ -3628,6 +3805,28 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(existsSync(seen.cwd)).toBe(false);
   });
 
+  it("runs every one-off call on Haiku 5.5 without thinking or hooks, by settings, and leaves a chat turn as it was", async () => {
+    await create(undefined, { FAKE_CLAUDE_VERSION: "2.1.296" });
+    const dump = join(scratch, "no-thinking.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const seen = () => JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string | undefined> };
+    for (const call of [() => instance.generateText!("summarize"), () => instance.reviewPermission!("review this request")]) {
+      await call();
+      const { argv, env } = seen();
+      expect(argv[argv.indexOf("--model") + 1]).toBe("claude-haiku-5-5");
+      expect(JSON.parse(argv[argv.indexOf("--settings") + 1]!)).toEqual({ alwaysThinkingEnabled: false, disableAllHooks: true });
+      expect(argv).not.toContain("--effort");
+      expect(env.MAX_THINKING_TOKENS).toBeUndefined();
+    }
+    const turnDump = join(scratch, "own-thinking-turn.json");
+    process.env.FAKE_CLAUDE_DUMP = turnDump;
+    await instance.adapter.sendTurn({ threadId: "t-own-thinking", text: "go", approvalMode: "ask", model: "claude-sonnet-5" });
+    await vi.waitFor(() => expect(existsSync(turnDump)).toBe(true));
+    const turn = JSON.parse(readFileSync(turnDump, "utf8")) as { argv: string[] };
+    expect(turn.argv[turn.argv.indexOf("--model") + 1]).toBe("claude-sonnet-5");
+    expect(turn.argv.join(" ")).not.toContain("alwaysThinkingEnabled");
+  });
+
   it("reads the CLI version before a helper call, so an older CLI gets no --tools", async () => {
     await create(undefined, { FAKE_CLAUDE_VERSION: "2.1.250" });
     const dump = join(scratch, "older-helper.json");
@@ -3646,16 +3845,16 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   });
 
   it("passes only the background flags the installed CLI accepts", () => {
-    const base = { model: "claude-haiku-4-5", outputFormat: "text" as const };
+    const base = { model: "claude-haiku-5-5", outputFormat: "text" as const };
     const cli = (version: [number, number, number]) => (flag: Parameters<typeof claudeCliSupports>[1]) => claudeCliSupports(version, flag);
     expect(backgroundCallArgs({ ...base, supports: cli([2, 1, 296]), isolated: true })).toEqual([
-      "-p", "--model", "claude-haiku-4-5", "--output-format", "text",
+      "-p", "--model", "claude-haiku-5-5", "--output-format", "text", "--settings", BACKGROUND_SETTINGS,
       "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "project",
     ]);
     // OMB_CLAUDE_INHERIT_USER_CONFIG keeps the person's own setup, still without tools
     expect(backgroundCallArgs({ ...base, supports: cli([2, 1, 296]), isolated: false })).not.toContain("--strict-mcp-config");
     expect(backgroundCallArgs({ ...base, supports: cli([1, 0, 100]), isolated: true })).toEqual([
-      "-p", "--model", "claude-haiku-4-5", "--output-format", "text", "--strict-mcp-config",
+      "-p", "--model", "claude-haiku-5-5", "--output-format", "text", "--settings", BACKGROUND_SETTINGS, "--strict-mcp-config",
     ]);
   });
 
@@ -3696,7 +3895,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-4-5-20251001", input: 33, output: 5, cachedInput: 20, costUsd: 0.004 }]]);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--output-format") + 1]).toBe("json");
-    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-haiku-4-5");
+    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-haiku-5-5");
     expect(recorder.events).toEqual([]);
   });
 
@@ -3720,7 +3919,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     });
     const onUsage = vi.fn();
     await expect(instance.generateText!("summarize", { onUsage })).rejects.toThrow("synthetic billed failure");
-    expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-4-5", input: undefined, output: undefined, cachedInput: undefined, costUsd: 0.01 }]]);
+    expect(onUsage.mock.calls).toEqual([[{ model: "claude-haiku-5-5", input: undefined, output: undefined, cachedInput: undefined, costUsd: 0.01 }]]);
   });
 
   it("writes a one-shot with the model a caller names, while permission review keeps its own", async () => {
@@ -3731,13 +3930,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       return seen.argv[seen.argv.indexOf("--model") + 1];
     };
-    await expect(instance.generateText!("summarize", { model: "claude-haiku-5-5" })).resolves.toBe("fake generated text");
-    expect(model()).toBe("claude-haiku-5-5");
-    await expect(instance.generateText!("summarize")).resolves.toBe("fake generated text");
+    await expect(instance.generateText!("summarize", { model: "claude-haiku-4-5" })).resolves.toBe("fake generated text");
     expect(model()).toBe("claude-haiku-4-5");
+    await expect(instance.generateText!("summarize")).resolves.toBe("fake generated text");
+    expect(model()).toBe("claude-haiku-5-5");
     // the contract gives permission review no way to name a model
     await expect(instance.reviewPermission!("review this request")).resolves.toBe("fake generated text");
-    expect(model()).toBe("claude-haiku-4-5");
+    expect(model()).toBe("claude-haiku-5-5");
   });
 
   it.each(["not JSON", '{"type":"assistant"}'])("rejects malformed one-shot output without invented usage (%s)", async result => {

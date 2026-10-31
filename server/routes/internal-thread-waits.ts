@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { canAccessTeam, peerAllowed } from "../peer-roster.ts";
+import { hasAuthority, hasTeamAuthority, peerAllowed } from "../peer-roster.ts";
 import type { BotRecord, TaskRecord } from "../store.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
@@ -44,7 +44,7 @@ export function createInternalThreadWaitRoutes(deps: {
     if (!chief?.chiefOfStaff || chief.hidden) return json(res, 403, { error: "Chief権限が必要です。" });
     if (!input.success) return json(res, 400, { error: "一覧取得、または対象Bot・スレッド・最新の待機トークン・解除理由を指定してください。" });
     const body = input.data;
-    const reachable = deps.bots().filter(bot => !bot.hidden && canAccessTeam(chief, bot.section) && (bot.id === chief.id || peerAllowed(chief, bot)));
+    const reachable = deps.bots().filter(bot => !bot.hidden && hasTeamAuthority(chief, bot.section) && hasAuthority(chief, bot) && (bot.id === chief.id || peerAllowed(chief, bot)));
     const assignments = () => (deps.assignments?.() ?? []).filter(wait => reachable.some(bot => bot.id === wait.botId));
     if (body.toBotId && !reachable.some(bot => bot.id === body.toBotId)) return json(res, 403, { error: "このChiefが管理できるBotを指定してください。" });
     if (body.action === "list") {

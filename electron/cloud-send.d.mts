@@ -84,6 +84,8 @@ export interface CloudSendNotice {
   arrived?: CloudSendArrived;
   /** The one-time move's own line, while there is one; absent from an older desktop. */
   move?: import("./one-home.mjs").OneHomeView;
+  /** On My Cloud's page: a bot moving into a team, while its line shows; absent from an older desktop. */
+  teamMove?: import("./team-move.mjs").TeamMoveView;
 }
 export type CloudSendTold = { at: number; reason: string; failed: number; seen: boolean; sent: CloudSendCounts; final?: boolean } & CloudSendFailure;
 export interface CloudSendArrived extends CloudSendCounts { chats: { conversations: number; messages: number } }
@@ -92,21 +94,29 @@ export interface CloudSendCounts {
   chats: { conversations: number; messages: number } | null;
 }
 
-export interface CloudSendBridge {
-  state(): Promise<CloudSendSnapshot>;
-  refresh(): Promise<CloudSendSnapshot>;
-  send(options?: { keys?: string[]; force?: string[] }): Promise<CloudSendOutcome>;
-  setItem(key: string, on: boolean): Promise<CloudSendSnapshot>;
-  onState(listener: (snapshot: CloudSendSnapshot) => void): () => void;
-}
 export interface CloudSendPageBridge {
   notice(): Promise<CloudSendNotice>;
-  send(): Promise<CloudSendNotice>;
   dismiss(signature: string): Promise<CloudSendNotice>;
   /** The move's Try again, after a day of failing; absent from an older desktop. */
   moveRetry?(): Promise<CloudSendNotice>;
   onNotice(listener: (notice: CloudSendNotice) => void): () => void;
+  /** On My Cloud's page: the teams a bot of its can move into, from the Admin's verified session; absent from an older desktop. */
+  teams?(): Promise<{ teams: Array<{ id: string; name: string; ready: boolean }> }>;
+  /** Moves one bot into one of those teams (a real click). */
+  moveToTeam?(botId: string, teamId: string, name: string): Promise<import("./team-move.mjs").TeamMoveView | null>;
+  teamRetry?(): Promise<import("./team-move.mjs").TeamMoveView | null>;
+  /** Shows that team's page, where the bot now lives. */
+  openTeam?(teamId: string): Promise<void>;
+  /** The switch "Keep this computer's bots on this computer"; absent from an older desktop. */
+  keepHere?(): Promise<KeepHereState>;
+  /** Turns it (a real click on My Cloud's page). */
+  setKeepHere?(on: boolean): Promise<KeepHereState>;
 }
+
+/** The switch "Keep this computer's bots on this computer" (one-home-main.mjs). `shown`: this person has a Cloud of their
+ * own the move applies to; `moved`: this computer's bots live on My Cloud, so turning it on brings them home; `coming`:
+ * they are on their way, past turning back. */
+export interface KeepHereState { shown: boolean; on: boolean; moved: boolean; coming: boolean }
 
 export interface CloudSendSession {
   call(method: string, route: string, body?: unknown): Promise<{ status: number; ok: boolean; body: any }>;
@@ -165,7 +175,6 @@ export function createCloudSend(deps: {
   };
   handoff(what: { kind: string; [key: string]: unknown }): Promise<any>;
   /** Bring newer chats' copy, for a Cloud too old to take chats by row. */
-  bringChats?: (() => Promise<{ conversations: number; messages: number }>) | null;
   store: { read(): unknown; write(value: unknown): void };
   onChange?(snapshot: CloudSendSnapshot): void;
   now?(): number;
@@ -173,6 +182,9 @@ export function createCloudSend(deps: {
   engineWaitMs?: number;
   /** My Cloud's plan disk and the Admin's grow, so a move makes room for the files it carries. */
   space?: { disk(): unknown; grow(sizeGb: number): Promise<unknown> };
+  /** A move of this one bot into a team: its own things only, under the name the team gave it (read when it is added);
+   * `label` names the person beside a file or bot of the same name. */
+  team?: { bot: string; name: string; label: string } | null;
 }): {
   snapshot(): CloudSendSnapshot;
   compare(): Promise<CloudSendSnapshot>;

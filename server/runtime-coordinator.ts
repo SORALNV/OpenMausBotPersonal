@@ -2,12 +2,13 @@ import { join } from "node:path";
 
 import type { BeginTurnRequest, Coordinator, CoordinatorHost, CoordinatorOptions, HandoffOptions, HandoffView, HostTurnResult, LiveHandoffEdge, RoomAddress } from "./coordinator.ts";
 import type { WorkOrigin } from "./peer-provenance.ts";
-import { composeEnvelope, composeReport, composeResume, composeRootTurn, continuationLine, envelopeNote } from "./runtime/envelope.ts";
+import { composeEnvelope, composeQuestion, composeReport, composeResume, composeRootTurn, continuationLine, envelopeNote } from "./runtime/envelope.ts";
 import { Runtime } from "./runtime/runtime.ts";
 import { importLegacyDelegations, importLegacyHandoffs, type LegacyThreadResolver } from "./runtime/import-legacy.ts";
 import { openRuntimeStore, type RuntimeStore } from "./runtime/store.ts";
 import { childrenSince, clip, isTerminal, path } from "./runtime/tree.ts";
 import type { Assignment, EndResult, Origin, Owner, Reply, Requester, RunInput, RunResult, StatusView, TurnRunner } from "./runtime/types.ts";
+import { sameRequest } from "./same-request.ts";
 
 const NOT_RUNNING = "The originating room task is no longer running";
 const WRONG_SPEAKER = "The handoff belongs to a different room speaker";
@@ -93,6 +94,10 @@ export function view(a: Assignment, parent?: Assignment): HandoffView {
   if (a.restart !== undefined) node.restart = a.restart;
   return node;
 }
+
+/** How often a request that joined another looks at it. */
+const JOIN_POLL_MS = 1_000;
+const JOINED_NOTE = "Another teammate asked this a moment ago, so it was answered once, for both of you:";
 
 export class RuntimeCoordinator implements Coordinator {
   private readonly host: CoordinatorHost;
@@ -198,7 +203,7 @@ export class RuntimeCoordinator implements Coordinator {
     const reply: Reply = wanted === "none" ? "none" : root.reply === "poll" ? "poll" : wanted;
     const requester: Requester = { kind: "bot_turn", botId: parent.assignee.botId, threadId: parent.assignee.destination.threadId,
       chief: this.host.chiefOf(address(parent)), ...(parent.id === root.id && root.requester.runId !== undefined ? { runId: root.requester.runId } : {}) };
-    const level = this.host.levelOf(target, address(parent));
+    const level = this.host.levelOf(target, this.project(parent));
     const result = this.runtime.enqueue({
       parentId: parent.id,
       origin: parent.origin,
@@ -207,7 +212,7 @@ export class RuntimeCoordinator implements Coordinator {
         threadId: target.threadId, ...(target.groupId ? { groupId: target.groupId } : {}) } },
       mode, reply, brief: text, rework,
       ...(options.doneWhen ? { doneWhen: options.doneWhen } : {}),
-      levels: { own: level.level },
+      levels: { own: level.level, ...(level.chief !== undefined ? { chief: level.chief } : {}) },
       ...(level.driverKind !== undefined ? { driverKind: level.driverKind } : {}),
       approved: approvalGranted,
       ...(target.groupId && requestBatchKey ? { batchKey: requestBatchKey } : {}),
@@ -290,7 +295,8 @@ export class RuntimeCoordinator implements Coordinator {
     const cards = result.cards && result.cards.ids.length > 0 ? result.cards : undefined;
     const end: EndResult = { ok: result.ok, text: result.text, ...(result.evidence ? { evidence: result.evidence } : {}),
       ...(cards ? { needsInput: { question: cards.question, cards: cards.ids } } : {}),
-      ...(result.cap ? { continue: { note: result.cap.note, ...(result.cap.handoffPath ? { handoffPath: result.cap.handoffPath } : {}) } } : {}) };
+      ...(result.cap ? { continue: { note: result.cap.note, ...(result.cap.handoffPath ? { handoffPath: result.cap.handoffPath } : {}) } } : {}),
+      ...(result.stalled ? { stalled: true } : {}) };
     this.runtime.end(id, end);
   }
 
@@ -508,14 +514,20 @@ export class RuntimeCoordinator implements Coordinator {
   }
 
   private async run(a: Assignment, input: RunInput, signal: AbortSignal): Promise<RunResult> {
+    const first = input.turn === "first" || input.turn === "rerun" ? this.answeredElsewhere(a) : undefined;
+    if (first && input.turn === "first") this.host.joined?.(this.project(a), this.project(first));
+    const answer = first ? await this.joinAnswer(a, first.id, signal) : undefined;
+    if (answer) return answer;
     const parent = a.parentId ? this.store.get(a.parentId) : undefined;
     const node = view(a, parent);
     const resumed = input.turn === "resume";
     const settled = input.settled ?? [];
+    const asked = input.asked ?? [];
     const root = a.parentId === undefined;
     const body = resumed
       ? composeResume(a, this.host.names(node, parent && this.project(parent)),
-        settled.map(child => composeReport(this.readable(child, a, node), this.host.names(view(child, a), node))))
+        settled.map(child => composeReport(this.readable(child, a, node), this.host.names(view(child, a), node))),
+        asked.map(child => composeQuestion(this.readable(child, a, node), this.host.names(view(child, a), node))))
       : root
         ? composeRootTurn(a, { turn: input.turn === "resume" ? "first" : input.turn, restartNote: "", ...(input.answer !== undefined ? { answer: input.answer } : {}),
           ...(input.continuation ? { continuation: input.continuation } : {}) })
@@ -527,7 +539,7 @@ export class RuntimeCoordinator implements Coordinator {
     if (signal.aborted) return { kind: "failed", outcome: "stopped", text: result.text };
     if (result.cap) return { kind: "continue", text: result.text, note: result.cap.note, ...(result.cap.handoffPath ? { handoffPath: result.cap.handoffPath } : {}), ...evidence(result) };
     if (result.cards) return { kind: "needs_input", question: result.cards.question, cards: result.cards.ids, ...evidence(result) };
-    if (!result.ok) return { kind: "failed", outcome: "provider_error", text: result.text, ...evidence(result) };
+    if (!result.ok) return { kind: "failed", outcome: result.stalled ? "stalled" : "provider_error", text: result.text, ...evidence(result) };
     const question = root ? undefined : needsInputQuestion(result.text);
     if (question !== undefined) return { kind: "needs_input", question, ...evidence(result) };
     return { kind: "completed", text: result.text, ...evidence(result) };
@@ -535,6 +547,43 @@ export class RuntimeCoordinator implements Coordinator {
 
   private live(): Assignment[] {
     return this.store.all({ nonTerminal: true });
+  }
+
+  /** The same request to the same bot from another requester (same words, mode, approval level and finish line), asked
+   * earlier and still being answered when this one was asked, whose answer this one's requester may read
+   * (host.shareAnswer): two teammates asking the same thing at the same time get one answer. An answer from before this
+   * request was asked is never reused, as things may have changed since. Rooms keep their own turn order, and a request
+   * still to be answered in this one's conversation could only go on after it: neither is joined. */
+  private answeredElsewhere(a: Assignment): Assignment | undefined {
+    const share = this.host.shareAnswer;
+    if (!share || !a.parentId || a.mode === "notify" || a.rework || a.assignee.destination.groupId !== undefined) return undefined;
+    const mine = this.project(a);
+    // In the order they were asked, each still open when this one was asked.
+    const rows = this.store.all({ openSince: a.createdAt });
+    const at = rows.findIndex(o => o.id === a.id);
+    return rows.slice(0, Math.max(at, 0))
+      .filter(o => o.parentId !== undefined && o.parentId !== a.parentId && !o.rework && o.mode === a.mode
+        && o.level === a.level && o.doneWhen === a.doneWhen
+        && o.assignee.botId === a.assignee.botId && o.assignee.destination.groupId === undefined
+        && (o.status === "completed" || (!isTerminal(o) && o.assignee.destination.threadId !== a.assignee.destination.threadId))
+        && sameRequest(o.brief, a.brief))
+      .find(o => share(this.project(o), mine));
+  }
+
+  /** Waits for the request `firstId` to be answered, keeping this one's turn out of the stall window, and ends with that
+   * answer. Undefined when it ends without one: this request is then worked on as usual. */
+  private async joinAnswer(a: Assignment, firstId: string, signal: AbortSignal): Promise<RunResult | undefined> {
+    this.log(`${a.id} joins ${firstId}: the same request to ${a.assignee.botId}`);
+    // One listener for the whole wait, however long the first takes.
+    const stopped = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+    for (;;) {
+      if (signal.aborted) return { kind: "failed", outcome: "stopped", text: "" };
+      const first = this.store.get(firstId);
+      if (first?.status === "completed") return { kind: "completed", text: `${JOINED_NOTE}\n${first.result.replace(`${JOINED_NOTE}\n`, "")}` };
+      if (!first || isTerminal(first)) return undefined;
+      this.runtime.progress(a.id);
+      await Promise.race([stopped, new Promise<void>(resolve => setTimeout(resolve, JOIN_POLL_MS))]);
+    }
   }
 
   private parkedIn(threadId: string): Assignment | undefined {
@@ -549,8 +598,8 @@ export class RuntimeCoordinator implements Coordinator {
   private readable(child: Assignment, parent: Assignment, parentView: HandoffView): Assignment {
     const problem = this.host.validate(view(child, parent), parentView);
     if (!problem) return child;
-    const { evidence: _evidence, ...rest } = child;
-    return { ...rest, result: `Result withheld: ${problem}` };
+    const { evidence: _evidence, question: _question, ...rest } = child;
+    return { ...rest, result: `${child.question === undefined ? "Result" : "Question"} withheld: ${problem}` };
   }
 
   private project(a: Assignment): HandoffView {

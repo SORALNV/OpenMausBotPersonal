@@ -70,9 +70,11 @@ export class NativeOmpService {
   private readonly formatter: ReplyFormatter;
   private readonly settled: () => void;
   private readonly changed: (threadId: string) => void;
+  private readonly conversationFull: (threadId: string) => boolean;
   private readonly localTurn?: LocalTurn;
 
-  constructor(input: { dir: string; store: Store; open?: (binding: OmpDestination) => NativeOmpTransport; sharedOpen?: (binding: OmpDestination) => NativeOmpTransport; catalog?: ConstructorParameters<typeof NativeOmpSessions>[0]["catalog"]; generate: RelayTextGenerator; formatter: ReplyFormatter; settled: () => void; changed?: (threadId: string) => void; localTurn?: LocalTurn }) {
+  constructor(input: { conversationFull?: (threadId: string) => boolean; dir: string; store: Store; open?: (binding: OmpDestination) => NativeOmpTransport; sharedOpen?: (binding: OmpDestination) => NativeOmpTransport; catalog?: ConstructorParameters<typeof NativeOmpSessions>[0]["catalog"]; generate: RelayTextGenerator; formatter: ReplyFormatter; settled: () => void; changed?: (threadId: string) => void; localTurn?: LocalTurn }) {
+    this.conversationFull = input.conversationFull ?? (() => false);
     this.dir = input.dir; this.store = input.store; this.open = input.open ?? (binding => NativeOmpTransport.connect(binding, { timeoutMs: 90_000 }));
     this.generate = input.generate; this.formatter = input.formatter; this.settled = input.settled; this.changed = input.changed ?? (() => {}); this.localTurn = input.localTurn;
     this.sharedOpen = input.sharedOpen ?? (binding => binding.harness === "deepseek" ? NativeDsh.connect({ ...binding, knownRequestIds: Object.entries(this.ledger).filter(([, receipt]) => receipt.sessionId === binding.expectedSessionId).map(([id]) => id) }) : this.pool.acquire(binding));
@@ -502,6 +504,18 @@ export class NativeOmpService {
     return message;
   }
 
+  permissionsChanged(threadId: string): void {
+    const binding = this.store.botByThread(threadId) && this.binding(this.store.botByThread(threadId)!.id, threadId);
+    if (!binding) return;
+    if (!this.conversationFull(threadId)) { this.consent.delete(threadId); return; }
+    for (const job of [this.active.get(threadId), this.sharedQuestions.get(threadId)]) if (job?.source.text) {
+      for (const [id, pending] of job.cards) if (nativeToolApproval(pending.question) && pending.card.requestMessageId === job.source.id) {
+        this.expire(threadId, job, id); job.questions.delete(pending.nativeId);
+        void this.question(binding, job, pending.question, job);
+      }
+    }
+  }
+
   private hasConsent(threadId: string, requestId: string): boolean {
     const consent = this.consent.get(threadId);
     if (consent && consent.expiresAt <= Date.now()) this.consent.delete(threadId);
@@ -838,7 +852,7 @@ export class NativeOmpService {
         });
       }
       if (!current()) { await surfaceAfterHandover(); return; }
-      const delegated = risk.kind === "high-risk" && this.hasConsent(binding.threadId, reviewer.source.id);
+      const delegated = risk.kind === "high-risk" && (this.hasConsent(binding.threadId, reviewer.source.id) || this.conversationFull(binding.threadId));
       if (risk.kind === "proceed" || delegated) {
         try {
           if (delegated && risk.kind === "high-risk") this.auditPermission(binding, question, risk.reason, job.client!);

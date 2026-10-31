@@ -94,6 +94,8 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "POST", path: /^\/api\/bots$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+$/ },
+  // Display order only; the harness accepts just the bots the device can see.
+  { method: "PUT", path: /^\/api\/bots\/order$/ },
   // Can only file visible bots; cannot alter execution policy.
   { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
@@ -110,6 +112,9 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/secret-cards\/[\w-]+\/provide$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/active-branch$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/compact$/ },
+  // Set me up under a new bot's greeting and the x on its chip: no more than a typed /setup.
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/setup-request$/ },
+  { method: "DELETE", path: /^\/api\/bots\/[\w-]+\/setup-request$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
@@ -155,6 +160,11 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/privacy\/(?:mask|display)$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
+  // An app row's document is transcript data, scoped to its thread. `rpc` reaches only the app's own MCP
+  // server, under the bot's tool selection and approval rules; `context` is bounded text.
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/app$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/apps\/[\w-]+\/rpc$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/apps\/[\w-]+\/context$/ },
   MESSAGE_FILE_ROUTE,
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
@@ -180,6 +190,17 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/live\/call\/end$/ },
   { method: "GET", path: /^\/api\/live\/call$/ },
   { method: "PATCH", path: /^\/api\/live\/settings$/ },
+
+  // The phone's own apps as bot tools: it registers, long-polls for jobs, leases and answers them.
+  { method: "PUT", path: /^\/api\/phones\/self$/ },
+  { method: "GET", path: /^\/api\/phones\/self$/ },
+  { method: "DELETE", path: /^\/api\/phones\/self$/ },
+  { method: "GET", path: /^\/api\/phones\/self\/jobs$/ },
+  { method: "POST", path: /^\/api\/phones\/self\/jobs\/[\w-]+\/(?:lease|result)$/ },
+
+  // The harness records only the owner's activation; a guest's is answered and
+  // dropped.
+  { method: "POST", path: /^\/api\/presence\/active$/ },
 
   // Webhook management stays denied below.
   { method: "GET", path: /^\/api\/routines$/ },

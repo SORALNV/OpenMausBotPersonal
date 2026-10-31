@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { KeyRound, Loader2, LockKeyhole, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 
-import type { CloudLoginsState } from "../../electron/cloud-logins.mjs";
 import type { LoginBots, LoginSummary, OnePasswordStatus, OnePasswordVault } from "../../shared/logins";
 import { t } from "@/lib/i18n";
 import { addLogin, changeLogin, connectOnePassword, deleteLogin, disconnectOnePassword, grantVault, listLogins, refreshOnePassword } from "@/lib/logins";
@@ -21,28 +20,6 @@ const SOURCE_KEYS = {
 
 const ROW_BUTTON = "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50";
 
-type CloudSide = CloudLoginsState["cloud"];
-
-/** The same account on My Cloud: one username on one site, as the Cloud's own Logins counts it. */
-export function loginOnCloud(cloud: CloudSide, login: Pick<LoginSummary, "site" | "username">): boolean | null {
-  if (!cloud) return null;
-  if (!cloud.reachable) return null;
-  return cloud.logins.some((entry) => entry.site === login.site && entry.username.toLowerCase() === login.username.toLowerCase());
-}
-
-/** This computer's Settings with a My Cloud: which logins My Cloud has. They go there by themselves with Keep My Cloud up
- * to date (Settings → MausBot Cloud), straight to the person's own Cloud. */
-function useCloudLogins() {
-  const bridge = window.ogb?.cloudLogins;
-  const [cloud, setCloud] = useState<CloudSide>(null);
-  const refresh = useCallback(async () => {
-    if (!bridge) return;
-    try { setCloud((await bridge.state()).cloud); } catch { setCloud(null); }
-  }, [bridge]);
-  useEffect(() => { void refresh(); }, [refresh]);
-  return { available: Boolean(bridge) && cloud !== null, cloud };
-}
-
 export function LoginsSettings() {
   const { state } = useStore();
   const ownerOrAdmin = useOwnerOrAdmin();
@@ -60,9 +37,6 @@ export function LoginsSettings() {
   const [removeTotp, setRemoveTotp] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const cloudSide = useCloudLogins();
-  const where = (onCloud: boolean | null) => !cloudSide.available ? null
-    : t(onCloud === null ? "settings.logins.where.unknown" : onCloud ? "settings.logins.where.both" : "settings.logins.where.here");
 
   const load = async () => {
     try {
@@ -103,7 +77,6 @@ export function LoginsSettings() {
   return (
     <Card title={t("settings.logins.title")} subtitle={t("settings.logins.subtitle")}>
       <div className="flex flex-col gap-3" aria-busy={logins === null || busy}>
-        {cloudSide.available && <p className="text-[12px] leading-relaxed text-ink-secondary" data-logins-sides>{t("settings.logins.eachSide")}</p>}
         {state.config?.cloudHome === true && <p className="text-[12px] leading-relaxed text-ink-secondary" data-logins-cloud-own>{t("settings.logins.cloudOwn")}</p>}
         {logins === null && !error && <p className="text-[12px] text-ink-secondary">{t("settings.logins.loading")}</p>}
         {logins?.length === 0 && !adding && <p className="text-[12px] leading-relaxed text-ink-secondary">{t("settings.logins.empty")}</p>}
@@ -123,14 +96,11 @@ export function LoginsSettings() {
                       )}
                     </div>
                     <div dir="auto" className="truncate text-[12px] text-ink-secondary">{login.username || t("settings.logins.noUsername")}</div>
-                    {signInHostsLine(login) && <div dir="ltr" className="truncate text-[11.5px] text-ink-tertiary" data-login-hosts>{signInHostsLine(login)}</div>}
-                    <div className="mt-0.5 text-[11.5px] leading-snug text-ink-tertiary">
+                    {signInHostsLine(login) && <div dir="ltr" className="truncate text-[12px] text-ink-tertiary" data-login-hosts>{signInHostsLine(login)}</div>}
+                    <div className="mt-0.5 text-[12px] leading-snug text-ink-tertiary">
                       {[t(SOURCE_KEYS[login.source]), botNames(login.bots),
                         login.lastUsedAt ? t("settings.logins.used", { when: relativeTime(login.lastUsedAt) }) : t("settings.logins.neverUsed")].join(" · ")}
                     </div>
-                    {login.source !== "1password" && where(loginOnCloud(cloudSide.cloud, login)) && (
-                      <div className="text-[11.5px] leading-snug text-ink-tertiary" data-login-where={loginOnCloud(cloudSide.cloud, login) ? "both" : "here"}>{where(loginOnCloud(cloudSide.cloud, login))}</div>
-                    )}
                   </div>
                   {login.source !== "1password" && (
                     <div className="flex shrink-0 gap-1">
@@ -153,7 +123,7 @@ export function LoginsSettings() {
                         await load();
                       }}>
                       {login.hasTotp && (
-                        <label className="flex items-center gap-2 text-[12.5px] text-ink">
+                        <label className="flex items-center gap-2 text-[13px] text-ink">
                           <input type="checkbox" checked={removeTotp} onChange={(event) => setRemoveTotp(event.target.checked)} />
                           {t("settings.logins.removeTotp")}
                         </label>
@@ -190,10 +160,10 @@ export function LoginsSettings() {
             <Plus size={14} />{t("settings.logins.add")}
           </button>
         )}
-        <p className="text-[11.5px] leading-relaxed text-ink-tertiary">{t("settings.logins.limits")}</p>
+        <p className="text-[12px] leading-relaxed text-ink-tertiary">{t("settings.logins.limits")}</p>
         {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
         <OnePasswordConnection status={onePassword} disabled={logins === null} bots={bots} botNames={botNames}
-          onChange={async (next) => { setOnePassword(next); await load(); }} cloud={cloudSide} where={where} />
+          onChange={async (next) => { setOnePassword(next); await load(); }} />
       </div>
     </Card>
   );
@@ -208,7 +178,7 @@ function signInHostsLine(login: LoginSummary): string | null {
 
 function ExactHostChoice({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) {
   return (
-    <label className="flex items-start gap-2 text-[12.5px] leading-snug text-ink">
+    <label className="flex items-start gap-2 text-[13px] leading-snug text-ink">
       <input type="checkbox" name="exactHost" className="mt-[2px]" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       {label}
     </label>
@@ -237,8 +207,8 @@ function VaultAccess({ vault, bots, botNames, disabled, onChange }: {
     <li className="flex flex-col gap-2 py-2" data-vault={vault.title}>
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-medium text-ink">{vault.title}</div>
-          <div className="text-[11.5px] text-ink-tertiary">{t("settings.logins.onePassword.vaultUse", { count: String(vault.items), who: botNames(vault.bots) })}</div>
+          <div className="truncate text-[13px] font-medium text-ink">{vault.title}</div>
+          <div className="text-[12px] text-ink-tertiary">{t("settings.logins.onePassword.vaultUse", { count: String(vault.items), who: botNames(vault.bots) })}</div>
         </div>
         {!editing && (
           <button type="button" className={ROW_BUTTON} disabled={disabled || busy} onClick={() => { setValue(vault.bots); setEditing(true); }}
@@ -259,16 +229,13 @@ function VaultAccess({ vault, bots, botNames, disabled, onChange }: {
   );
 }
 
-function OnePasswordConnection({ status, disabled, bots, botNames, onChange, cloud, where }: {
+function OnePasswordConnection({ status, disabled, bots, botNames, onChange }: {
   status: OnePasswordStatus;
   disabled: boolean;
   bots: ReadonlyArray<{ id: string; name: string }>;
   botNames: (value: LoginBots) => string;
   onChange: (status: OnePasswordStatus) => Promise<void>;
-  cloud: ReturnType<typeof useCloudLogins>;
-  where: (onCloud: boolean | null) => string | null;
 }) {
-  const onCloud = !cloud.cloud ? null : cloud.cloud.reachable ? cloud.cloud.onePassword.connected : null;
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState<"connect" | "refresh" | "disconnect" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -289,11 +256,10 @@ function OnePasswordConnection({ status, disabled, bots, botNames, onChange, clo
       <div className="text-[13px] font-medium text-ink">{t("settings.logins.onePassword.title")}</div>
       {status.connected ? (
         <>
-          <p className="text-[12.5px] leading-snug text-ink-secondary">
+          <p className="text-[13px] leading-snug text-ink-secondary">
             {t("settings.logins.onePassword.connected", { vaults: (status.vaults ?? []).map((vault) => vault.title).join(", ") || "—", count: String(status.items ?? 0) })}
           </p>
           {status.error && <p role="alert" className="text-[12px] text-danger">{status.error}</p>}
-          {where(onCloud) && <p className="text-[12px] text-ink-secondary" data-onepassword-where={onCloud ? "both" : "here"}>{where(onCloud)}</p>}
           {!!status.vaults?.length && (
             <ul className="divide-y divide-hairline/30" aria-label={t("settings.logins.onePassword.vaults")}>
               {status.vaults.map((vault) => <VaultAccess key={vault.id} vault={vault} bots={bots} botNames={botNames} disabled={disabled} onChange={onChange} />)}
@@ -322,7 +288,7 @@ function OnePasswordConnection({ status, disabled, bots, botNames, onChange, clo
           </div>
         </form>
       )}
-      <p className="flex items-start gap-1 text-[11.5px] leading-snug text-ink-tertiary">
+      <p className="flex items-start gap-1 text-[12px] leading-snug text-ink-tertiary">
         <LockKeyhole size={11} aria-hidden="true" className="mt-[3px] shrink-0" /> {t("settings.logins.onePassword.note")}
       </p>
       {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}

@@ -62,6 +62,23 @@ export interface RoutineContextAttachment {
 
 export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "startup";
 
+/** A check a routine runs on each tick before any AI turn, in plain code: `calendar` reads the next 36 hours, `mail`
+ * new inbox mail since the last check, `runs` other routines' finished runs. Nothing new means no AI turn. */
+export type RoutineCheck = "calendar" | "mail" | "runs";
+export const ROUTINE_CHECKS: readonly RoutineCheck[] = ["calendar", "mail", "runs"];
+
+/** What a routine's runs may do. `read-and-draft`: read Gmail and Google Calendar and write reply drafts; every other
+ * tool is refused outright, never turned into a card. Missing means the bot's own level. */
+export type RoutineAccess = "read-and-draft";
+
+/** Where a routine's results go. `brief`: they become rows of the main agent's brief, not chat lines of their own. */
+export type RoutineDelivery = "brief";
+
+/** Why OpenMausBot paused a routine by itself, after its owner left: no AI of theirs is signed in here any more, they
+ * removed every connected app and server, or the plan was cancelled. It turns back on once that changes. */
+export type RoutineHoldCause = "plan_cancelled" | "no_engine" | "no_connections";
+export const ROUTINE_HOLD_CAUSES: readonly RoutineHoldCause[] = ["plan_cancelled", "no_engine", "no_connections"];
+
 /** What a finished run left in the chat it reports to: nothing, because it
  * found nothing to tell; a report waiting for a turn there to end; or the bot
  * message it wrote. */
@@ -81,8 +98,9 @@ export type RoutineRunStatus =
 
 /** Why a run started a second time by itself: its engine stalled, OpenMausBot
  * restarted while it ran, the provider rate-limited it or failed for a moment,
- * or it waited for its engine's usage limit to reset. A run gets one. */
-export type RoutineRetryCause = "stalled" | "restarted" | "rate_limited" | "provider" | "usage_limit";
+ * it waited for its engine's usage limit to reset, or it failed some other way.
+ * A run gets one. */
+export type RoutineRetryCause = "stalled" | "restarted" | "rate_limited" | "provider" | "usage_limit" | "failed";
 
 /** The statuses both failure indicators count: a run that went wrong and has
  * not been acknowledged. */
@@ -102,6 +120,7 @@ export interface Routine {
   prompt: string;
   target: RoutineTarget;
   botId: string;
+  /** The room a "room-goal" runs in; none runs the goal in the bot's own one-on-one chat, a room of one. */
   groupId?: string;
   runOn: RoutineRunOn;
   enabled: boolean;
@@ -114,6 +133,16 @@ export interface Routine {
   continuity?: boolean;
   /** Also run once each time OpenMausBot starts. */
   runOnStartup?: boolean;
+  checks?: RoutineCheck[];
+  access?: RoutineAccess;
+  deliver?: RoutineDelivery;
+  /** When its checks last read everything and found nothing for the AI. */
+  checkedAt?: number;
+  /** A plain sentence while its checks cannot read an app, so a failed read never looks like nothing new. */
+  checkTrouble?: string;
+  /** The next time its checks have something to do on time (a reminder, meeting prep): only this may keep the
+   * computer awake or wake a sleeping Cloud. */
+  wakeAt?: number;
   skippedRuns?: number;
   lastSkippedAt?: number;
   failureStreak?: number;
@@ -121,6 +150,8 @@ export interface Routine {
   weekRuns?: { ok: number; total: number };
   /** A plain sentence when the routine names a path that cannot exist on the computer that runs it. */
   warning?: string;
+  /** Set while OpenMausBot keeps it paused because its owner left; turning it on or off clears it. */
+  heldFor?: RoutineHoldCause;
   attachments?: RoutineContextAttachment[];
   sourceThreadId?: string;
   resultsThreadId?: string;
@@ -146,8 +177,8 @@ export interface RoutineRun {
   status: RoutineRunStatus;
   manual: boolean;
   triggerSource?: RoutineRunTrigger;
-  /** "app": a connected-app event started it; triggerSource is then "webhook" (an outside event). */
-  eventSource?: "app" | "google-chat";
+  /** "app": a connected-app event started it; "wait": a wait's follow-up did. triggerSource is then "webhook" (an outside event). */
+  eventSource?: "app" | "wait" | "google-chat";
   webhookId?: string;
   deliveryId?: string;
   /** Room task created for a team-goal run. */
@@ -167,6 +198,10 @@ export interface RoutineRun {
   cost?: number | null;
   denials?: string[];
   report?: RoutineRunReport;
+  access?: RoutineAccess;
+  deliver?: RoutineDelivery;
+  /** The items its routine's checks handed this run, so they are kept or released once it ends. */
+  checkKey?: string;
   createdAt: number;
   seenAt?: number;
 }
@@ -187,6 +222,10 @@ export interface RoutineInput {
   /** Each run starts with the previous run's report. */
   continuity?: boolean;
   runOnStartup?: boolean;
+  /** `null` explicitly removes them on updates; omission preserves them. */
+  checks?: RoutineCheck[] | null;
+  access?: RoutineAccess | null;
+  deliver?: RoutineDelivery | null;
   attachments?: RoutineContextAttachment[];
   /** Omission preserves routing; null resets it to the bot's main thread. */
   resultsThreadId?: string | null;

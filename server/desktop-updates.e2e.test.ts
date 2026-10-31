@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { HOST_WHILE_UPDATING, LOCAL_VM_UPDATING, LOCAL_VM_UPDATING_PROBLEM, VPS_OUTDATED_HINT } from "./desktop-updates.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -47,7 +48,7 @@ describe.skipIf(process.platform === "win32")("a bot's old desktop after an app 
   let child: ChildProcess | null = null;
   let base = "";
 
-  const vm = (state: Record<string, unknown>) => writeFileSync(stateFile, JSON.stringify(state));
+  const vm = (state: Record<string, unknown>) => writeFileAtomic(stateFile, JSON.stringify(state));
   const readVm = () => JSON.parse(readFileSync(stateFile, "utf8"));
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(base + path, {
@@ -97,14 +98,16 @@ describe.skipIf(process.platform === "win32")("a bot's old desktop after an app 
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
     output = "";
-    const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
+    // Started as the desktop app starts its own server, so this computer really is on offer and must still be withheld.
+    const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href,
+      "--import", pathToFileURL(join(ROOT, "server/testing/desktop-parent.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home, USERPROFILE: home, OMB_DATA_DIR: data,
         APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata"),
         TEMP: home, TMP: home, TMPDIR: home,
         OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: join(home, "static"), OMB_TEST_VM_STATE: stateFile,
-        OMB_USER_DATA: join(home, "user-data"), OMB_EXTRA_PATH: fakeBin,
+        OMB_TEST_DESKTOP_CUA_CONNECTION: join(home, "user-data", "cua-connection.json"), OMB_EXTRA_PATH: fakeBin,
         FAKE_DOCKER_DIR: fakeBin, FAKE_DOCKER_LOG: join(fakeBin, "docker.log"), OMB_TEST_SEALED_PATH: "1",
       }, stdio: ["ignore", "pipe", "pipe"],
     });

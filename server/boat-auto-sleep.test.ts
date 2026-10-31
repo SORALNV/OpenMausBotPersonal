@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hostTimeout } from "./testing/host-timeout.ts";
+
 const INCLUDED = "box_omb_included-relay-token";
 const OWN = "boat_own-key";
 const botId = "auto-sleep-test";
@@ -15,10 +17,10 @@ let base = "";
 let state = "ready";
 /** Status the stub answers a stop with; a 2xx archives the computer. */
 let stopStatus = 200;
-const requests: Array<{ method: string; path: string; auth: string; command?: string }> = [];
+const requests: Array<{ method: string; path: string; auth: string; command?: string; at: number }> = [];
 
 const stops = () => requests.filter(request => request.method === "POST" && request.path.endsWith("/stop"));
-const waitFor = async (accept: () => boolean, ms = 5_000) => {
+const waitFor = async (accept: () => boolean, ms = hostTimeout(5_000)) => {
   const end = Date.now() + ms;
   while (!accept()) {
     if (Date.now() > end) throw new Error(`timed out: ${JSON.stringify(requests)}`);
@@ -33,7 +35,7 @@ beforeAll(async () => {
     req.on("data", chunk => { raw += chunk; });
     req.on("end", () => {
       const body = raw ? JSON.parse(raw) : {};
-      requests.push({ method: req.method ?? "GET", path: url.pathname, auth: String(req.headers.authorization ?? ""), command: body.command });
+      requests.push({ method: req.method ?? "GET", path: url.pathname, auth: String(req.headers.authorization ?? ""), command: body.command, at: Date.now() });
       const send = (status: number, payload: unknown) => {
         res.writeHead(status, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify(payload));
@@ -139,7 +141,8 @@ describe("a cloud computer goes to sleep after its idle window", () => {
     expect(requests).toEqual([]);
     busy = false;
     state = "archived";
-    await new Promise(resolve => setTimeout(resolve, 1_800));
+    // The first quiet look starts a full window; the look after it finds the computer asleep and lets its timer go.
+    await waitFor(() => !power.awake());
     expect(stops()).toEqual([]);
     expect(requests.map(request => request.method)).toEqual(["GET"]);
   });
@@ -148,11 +151,13 @@ describe("a cloud computer goes to sleep after its idle window", () => {
     stopStatus = 503;
     await powerFor({});
     power.used(botId);
-    await waitFor(() => stops().length === 1);
-    expect(logs[0]).toMatch(/^cloud computer auto-sleep-test: could not go to sleep, retrying in 1 min: boat sleep failed: Cloud computers are not available right now\.$/);
-    await new Promise(resolve => setTimeout(resolve, 1_500));
-    expect(stops()).toHaveLength(2);
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-    expect(stops()).toHaveLength(2);
+    await waitFor(() => stops().length === 3 && logs.length === 3, hostTimeout(10_000));
+    for (const line of logs) {
+      expect(line).toBe("cloud computer auto-sleep-test: could not go to sleep, retrying in 1 min: boat sleep failed: Cloud computers are not available right now.");
+    }
+    const [first, second, third] = stops().map(stop => stop.at);
+    // A Node timer may fire up to a millisecond before its delay by Date.now().
+    expect(second! - first!).toBeGreaterThanOrEqual(1_000 - 5);
+    expect(third! - second!).toBeGreaterThanOrEqual(2_000 - 5);
   });
 });

@@ -21,6 +21,7 @@ export interface AcpOneShotInput {
   pickAuthMethod: (methods: Array<{ id?: string }>) => string | null;
   authRequired: boolean | "if-requested";
   loginNote: string;
+  clientCapabilitiesMeta?: Record<string, unknown>;
   configure?: (ctx: { request: (method: string, params: unknown, timeoutMs?: number) => Promise<any>; sessionId: string; session: any }) => Promise<void>;
   options?: TextGenerationOptions;
   timeoutMs?: number;
@@ -33,7 +34,7 @@ export function runAcpOneShot(input: AcpOneShotInput): Promise<string> {
   const name = input.displayName;
   if (signal?.aborted) return Promise.reject(new Error(`${name} background call aborted`));
   return new Promise<string>((resolve, reject) => {
-    const child = input.spawn(input.command, input.argv, { cwd: input.cwd, env: input.env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = input.spawn(input.command, input.argv, { cwd: input.cwd, env: input.env, stdio: ["pipe", "pipe", "pipe"], botWork: true });
     let settled = false;
     let buffer = "";
     let received = 0;
@@ -143,7 +144,11 @@ export function runAcpOneShot(input: AcpOneShotInput): Promise<string> {
       const init = await request("initialize", {
         protocolVersion: 1,
         clientInfo: { name: "openmausbot_memory", version: "1" },
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+          ...(input.clientCapabilitiesMeta ? { _meta: input.clientCapabilitiesMeta } : {}),
+        },
       });
       const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
       const methodId = input.pickAuthMethod(methods);

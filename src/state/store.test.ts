@@ -1041,6 +1041,17 @@ describe("config status frames", () => {
     expect(status.anthropic).toEqual({ configured: true, everyClaudeBot: false });
   });
 
+  it("keeps every saved key's hint through a live config update, so a masked key never empties", () => {
+    const status = configStatusFromFrame({
+      openai: { configured: true, last4: "a1b2" },
+      box: { configured: true, last4: "c3d4" },
+      savedKeys: { ttsKey: { configured: true, last4: "e5f6" }, openaiLiveKey: { configured: false } },
+    } as ConfigStatusFrame);
+    expect(status.openai).toEqual({ configured: true, last4: "a1b2" });
+    expect(status.box).toEqual({ configured: true, last4: "c3d4" });
+    expect(status.savedKeys).toEqual({ ttsKey: { configured: true, last4: "e5f6" }, openaiLiveKey: { configured: false } });
+  });
+
   it("keeps thread capacity and room timeout with the existing config fields", () => {
     expect(
       configStatusFromFrame({
@@ -1635,6 +1646,27 @@ describe("browser profile announcements", () => {
     });
     expect(next.bots[0]?.browserProfile).toBe(profile);
     expect(next.bots[0]?.messages).toBe(messages);
+  });
+});
+
+describe("phone grant announcements", () => {
+  const granted: Bot = {
+    id: "phone-bot", threadId: "phone-thread", name: "Pepper", title: "", description: "",
+    notifications: true, color: "green", unread: false,
+    modelSelection: { instanceId: "codex", model: "default" }, phoneApps: { location: "read" },
+    messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
+  };
+  const { messages, phoneApps: _old, ...announcement } = granted;
+
+  it("clears a stale grant when a complete frame omits it", () => {
+    const next = reducer({ ...initialState, bots: [granted] }, { type: "botPatched", bot: announcement });
+    expect(next.bots[0]?.phoneApps).toBeUndefined();
+    expect(next.bots[0]?.messages).toBe(messages);
+  });
+
+  it("clears it on the thread-snapshot path too", () => {
+    const next = reducer({ ...initialState, bots: [{ ...granted, awaitingThreadSnapshot: true }] }, { type: "botPatched", bot: { ...announcement, messages } });
+    expect(next.bots[0]?.phoneApps).toBeUndefined();
   });
 });
 
@@ -2504,6 +2536,14 @@ describe("activity panel", () => {
     expect(reducer(suggested, { type: "showFiles", suggest: [] }).filesSuggest).toBeNull();
     expect(reducer(suggested, { type: "showTeamMap" })).toMatchObject({ activeView: "team-map", filesSuggest: null });
   });
+
+  it("a pinned web panel replaces the main view like the team map, and chat comes back", () => {
+    const open = { ...initialState, activityOpen: true, computerOpen: true, settingsOpen: true };
+    const panel = reducer(open, { type: "showWebPanel", id: "panel-1" });
+    expect(panel).toMatchObject({ activeView: "web-panel", webPanelId: "panel-1", activityOpen: false, computerOpen: false, settingsOpen: false });
+    expect(reducer(panel, { type: "showTeamMap" })).toMatchObject({ activeView: "team-map", webPanelId: "panel-1" });
+    expect(reducer(panel, { type: "showChat" }).activeView).toBe("chat");
+  });
 });
 
 describe("live config frames", () => {
@@ -2520,6 +2560,12 @@ describe("live config frames", () => {
     const automaticRecovery = { enabled: true, backup: { instanceId: "backup", model: "fixture-model" } };
     expect(configStatusFromFrame({ ...baseFrame, automaticRecovery }).automaticRecovery).toEqual(automaticRecovery);
     expect(configStatusFromFrame({ ...baseFrame, automaticRecovery: { enabled: false } }).automaticRecovery).toEqual({ enabled: false });
+  });
+
+  it("keeps a Team Cloud's team through live config refreshes, so its people stay in the @ list", () => {
+    const team = { id: "team-acme", name: "Acme", cloudPage: "https://cloud.example.test/cloud" };
+    expect(configStatusFromFrame({ ...baseFrame, team }).team).toEqual(team);
+    expect(configStatusFromFrame(baseFrame)).not.toHaveProperty("team");
   });
 
   it("keeps an OMB Cloud home's flag through live config refreshes, and adds none elsewhere", () => {
@@ -3030,6 +3076,15 @@ describe("notifications feed", () => {
     expect(state.notifications.every((n) => n.read)).toBe(true);
   });
 
+  it("marks the entries a conversation read elsewhere, and only those", () => {
+    let state = reducer(initialState, {
+      type: "notificationsHydrated",
+      notifications: [entry("n1", 1), entry("n2", 2), entry("n3", 3)],
+    });
+    state = reducer(state, { type: "notificationsRead", ids: ["n1", "n3", "gone"] });
+    expect(state.notifications.filter((n) => n.read).map((n) => n.id)).toEqual(["n3", "n1"]);
+  });
+
   it("toggleNotifications closes the other docked panels, and vice versa", () => {
     let state = reducer(initialState, { type: "toggleComputer", open: true });
     expect(state.computerOpen).toBe(true);
@@ -3087,5 +3142,35 @@ describe("a routine's answer and its broadcast", () => {
     state = reducer(state, { type: "routinePatched", routine: paused });
     expect(state.routines).toEqual([resumed]);
     expect(reducer(state, { type: "routinePatched", routine: { ...resumed, failureStreak: 1 } }).routines[0]).toMatchObject({ failureStreak: 1 });
+  });
+});
+
+describe("fleet order from the server", () => {
+  const bot = (id: string): Bot => ({
+    id,
+    threadId: `${id}-thread`,
+    name: id,
+    title: "",
+    description: "",
+    notifications: false,
+    color: "green",
+    unread: false,
+    modelSelection: { instanceId: "acp", model: "fake" },
+    messages: [],
+  });
+  const hydrated = reducer(initialState, { type: "hydrate", bots: [bot("a"), bot("b"), bot("c"), bot("d")], groups: [], computerControl: {} });
+  const ids = (state: AppState) => state.bots.map((candidate) => candidate.id);
+
+  it("applies a bots.order frame as a stable partial reorder", () => {
+    expect(ids(reducer(hydrated, { type: "botsOrdered", botIds: ["d", "c", "b", "a"] }))).toEqual(["d", "c", "b", "a"]);
+    // Only c and a move, into the positions they already share; b and d stay put.
+    const partial = reducer(hydrated, { type: "botsOrdered", botIds: ["c", "a"] });
+    expect(ids(partial)).toEqual(["c", "b", "a", "d"]);
+    expect(partial.bots[0]).toBe(hydrated.bots[2]);
+  });
+
+  it("ignores ids it does not know and leaves an unchanged order alone", () => {
+    expect(ids(reducer(hydrated, { type: "botsOrdered", botIds: ["ghost", "b", "a"] }))).toEqual(["b", "a", "c", "d"]);
+    expect(reducer(hydrated, { type: "botsOrdered", botIds: ["a", "b", "c", "d"] })).toBe(hydrated);
   });
 });

@@ -8,8 +8,10 @@ const EVERYDAY_PREFIXES: Record<string, readonly string[]> = {
   "the chat and the composer": [
     "chat.", "composer.", "attach.", "toolStep.", "approval.", "question.", "signIn.", "limits.", "call.", "task.", "room.",
   ],
-  "Today, notifications and alerts": ["today.", "attention.", "notifications.", "error.", "readyBots.", "app.loading."],
+  "notifications and alerts": ["attention.", "notifications.", "error.", "readyBots.", "app.loading."],
   "the sidebar and the switcher": ["sidebar."],
+  "the rail of Clouds and its ＋": ["rail."],
+  "a place's color, in Settings": ["placeLook."],
   "the bot panel": [
     "botPanel.", "botSettings.simple.", "botAccess.tools.", "botAccess.browser.", "memory.learnFromRooms.", "memory.upkeep.",
   ],
@@ -18,14 +20,15 @@ const EVERYDAY_PREFIXES: Record<string, readonly string[]> = {
     "computer.screen.", "vm.cloud.", "browser.",
   ],
   "MausBot Cloud: buying it, setting it up, moving to it and sharing with it": [
-    "cloudBuy.", "cloudIntro.", "cloudTrial.", "cloudSetup.", "cloudIntent.", "cloudNotice.", "cloudHowTo.", "cloudScene.", "cloudProPopup.",
-    "cloudCredit.", "cloudPower.", "cloudSignIn.", "cloudAdd.", "cloudHome.", "cloudPhone.", "cloudAccount.", "cloudMove.", "pro.", "lending.",
-    "files.",
+    "cloudBuy.", "cloudIntro.", "cloudTrial.", "cloudCancel.", "cloudSetup.", "cloudIntent.", "cloudNotice.", "cloudHowTo.", "cloudProPopup.",
+    "cloudCredit.", "cloudPower.", "cloudSignIn.", "cloudAdd.", "cloudHome.", "cloudPhone.", "cloudAccount.", "pro.", "lending.",
+    "files.", "usageMeter.", "roomCard.",
   ],
   "routines and automations": ["routines.", "automations."],
   "the team map": ["canvas.", "mapComputer.", "canvasComputers."],
   "Apps": ["apps.", "connectors."],
   "the Settings pages Simple mode shows": ["settings.section.", "settings.group.", "settings.mcpCalls.", "settings.logins."],
+  "the Usage page and its traces": ["trace.", "usage.page."],
 };
 
 const EVERYDAY_KEYS: Record<string, readonly string[]> = {
@@ -61,7 +64,8 @@ type Word = { word: string; pattern: RegExp; say: string };
 const INTERNAL_WORDS: readonly Word[] = [
   { word: "engine", pattern: /\bengines?\b/i, say: "AI" },
   { word: "instance", pattern: /\binstances?\b/i, say: "AI account" },
-  { word: "server", pattern: /(?<!(?:Discord|Slack|MCP) )\bservers?\b/i, say: "the app, or the Cloud when it is hosted" },
+  // "Your own server" is the person's own word for a computer they run OpenMausBot on (the rail's ＋).
+  { word: "server", pattern: /(?<!(?:Discord|Slack|MCP|own) )\bservers?\b/i, say: "the app, the Cloud when it is hosted, or your own server" },
   { word: "Composio", pattern: /composio/i, say: "connected apps" },
   { word: "Cloud computer", pattern: /\bcloud computers?\b/i, say: "cloud desktop" },
   { word: "VPS", pattern: /\bVPS\b/, say: "your own machine" },
@@ -80,10 +84,9 @@ const ALLOWED: Record<string, string> = {
   "sidebar.servers": "the switcher's own Servers list, renamed with the one-workspace switcher",
   "sidebar.switchServer": "the switcher's own Servers list, renamed with the one-workspace switcher",
   "sidebar.switchServerError": "points at the app menu's Server menu",
+  "sidebar.update.howOther": "a server added from the app menu's Server menu: its update is for whoever runs it, not this app",
+  "sidebar.update.howOtherRestart": "a server added from the app menu's Server menu: its update is for whoever runs it, not this app",
   "cloudPhone.step1": "points at the app menu's Server menu, entry by entry",
-  "cloudMove.thisServer": "the name a self-hosted destination gets when it has none of its own",
-  "lending.viaAccess": "points at the Settings → Servers page by its label",
-  "lending.viaAccessTerminal": "points at the Settings → Servers page by its label",
   "botAccess.tools.syntax": "the tool names people type, such as mcp:SERVER:NAME",
 };
 
@@ -116,7 +119,7 @@ describe("everyday screens", () => {
       "Start the cloud computer", "Self-hosted VPS", "Create Local VM", "Choose a workspace",
     ]) expect(wordsIn(bad), bad).not.toEqual([]);
     for (const good of [
-      "Switch this bot to another AI", "Pick a Discord server", "Post in your Slack servers", "Copy to {server}",
+      "Switch this bot to another AI", "Pick a Discord server", "Post in your Slack servers", "Copy to {server}", "Add your own server",
       "Run `openmausbot server start`", "Open the Cloud", "Start the cloud desktop", "Your MCP servers", "Add MCP server", "Private desktop",
     ]) expect(wordsIn(good), good).toEqual([]);
   });

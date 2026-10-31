@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cloudRequestSignature } from "./cloud-home.ts";
 import {
   CLOUD_IDLE_ACTIVITY_MS, CLOUD_IDLE_AWAKE_MS, CLOUD_IDLE_WORK_MS, CLOUD_POWER_PATH, CLOUD_POWER_SLEEP_PATH, CLOUD_SLEEP_PENDING_MS,
-  countsAsActivity, createCloudPower, wokeFromSleep, type CloudPowerProbes,
+  countsAsActivity, createCloudPower, wakeCode, wokeFromSleep, WOKE_BY_MS, type CloudPowerProbes,
 } from "./cloud-power.ts";
 import { createCloudSignedRoutes } from "./routes/cloud-signed.ts";
 import { SessionRegistry } from "./sessions.ts";
@@ -139,6 +139,40 @@ describe("the sleep handshake", () => {
   });
 });
 
+describe("what woke the home", () => {
+  it("is the first request after a boot or a resume, its kind and whether it was a background one, never more of it", () => {
+    const h = home();
+    expect(h.power.report().wokeBy).toBeNull();
+    h.power.arrived("/api/events", {});
+    h.power.arrived("/api/bots", {});
+    expect(h.power.report().wokeBy).toEqual({ by: "events", background: true });
+    h.pass(CLOUD_IDLE_AWAKE_MS);
+    h.power.prepareSleep();
+    // Suspended, then resumed for a request: noticed by the request itself, before the clock tick does.
+    h.jump(33_000);
+    h.power.arrived("/.well-known/openmausbot/environment", { "x-omb-background": "1" });
+    expect(h.power.sleeping()).toBe(false);
+    expect(h.power.report()).toMatchObject({ wokeAt: h.now(), wokeBy: { by: "version", background: true } });
+    h.power.arrived("/api/threads", {});
+    expect(h.power.report().wokeBy, "only the first one").toEqual({ by: "version", background: true });
+    // Resumed, and nothing reached it for a while: whatever comes later did not wake it.
+    h.pass(CLOUD_IDLE_AWAKE_MS);
+    h.jump(3600_000);
+    h.power.tick();
+    h.pass(WOKE_BY_MS + 5_000);
+    h.power.arrived("/api/bots", {});
+    expect(h.power.report().wokeBy).toBeNull();
+  });
+
+  it("names each kind of request by its path alone", () => {
+    const paths = ["/api/events", "/api/sync/changes", "/api/shared-computers/abc/poll", "/.well-known/openmausbot/environment", "/api/phones/self/jobs",
+      "/api/presence/active", "/api/auth/session", "/api/auth/pair", "/pair", "/api/cloud/pairing", "/api/health", "/hooks", "/mcp-oauth/callback",
+      "/api/bots/b1/read", "/", "/assets/index.js"];
+    expect(paths.map(wakeCode)).toEqual(["events", "sync", "lending", "version", "phone", "presence", "session", "pair", "pair", "admin", "health", "webhook",
+      "sign-in", "api", "page", "page"]);
+  });
+});
+
 describe("waking from a sleep the machine was stopped for", () => {
   it("is not a startup once, and only after a sleep", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "omb-cloud-power-"));
@@ -237,5 +271,22 @@ describe("the Admin's signed power routes", () => {
     const url = new URL(CLOUD_POWER_PATH, "http://localhost");
     const req = Object.assign(new PassThrough(), { method: "GET", url: CLOUD_POWER_PATH, headers: {}, socket: { remoteAddress: "127.0.0.1" } }) as unknown as IncomingMessage;
     expect(await handle({ req, res: {} as ServerResponse, url, path: url.pathname, method: "GET" })).toBe(false);
+  });
+});
+
+describe("a Team Cloud", () => {
+  it("never sleeps: the Admin's sleep request is refused as busy with the team, however idle it is", () => {
+    let clock = START;
+    const dataDir = mkdtempSync(join(tmpdir(), "omb-cloud-power-team-"));
+    dirs.push(dataDir);
+    const power = createCloudPower({ dataDir, team: true, now: () => clock, broadcast: () => {}, probes: {
+      turn: () => false, run: () => false, liveCall: () => false, computer: () => false, maintenance: () => false, nextDueAt: () => null,
+    } });
+    powers.push(power);
+    for (let left = CLOUD_IDLE_AWAKE_MS; left > 0; left -= 5_000) { clock += 5_000; power.tick(); }
+    expect(power.report()).toMatchObject({ idle: true, busy: [] });
+    expect(power.prepareSleep()).toEqual({ ok: false, busy: ["team"] });
+    expect(power.sleeping()).toBe(false);
+    expect(existsSync(join(dataDir, "cloud-sleep.json"))).toBe(false);
   });
 });

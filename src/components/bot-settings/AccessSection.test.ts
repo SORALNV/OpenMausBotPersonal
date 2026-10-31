@@ -105,7 +105,7 @@ describe("owner tool selection status", () => {
 
   it("shows corrupt saved restrictions as a blocked setup, never all tools", () => {
     const corrupt = render(makeBot({ toolScope: { allow: "native:*" } } as unknown as Partial<Bot>));
-    expect(corrupt).toContain("Invalid saved selection. This bot cannot start until it is repaired.");
+    expect(corrupt).toContain("This bot&#x27;s saved tool selection is damaged, so the bot can&#x27;t start. Choose its tools again to fix it.");
     expect(corrupt).toContain('role="alert"');
   });
 
@@ -341,7 +341,7 @@ describe("AccessSection per-app scopes", () => {
     expect(html).toMatch(/<span class="min-w-0 text-\[13px\] text-ink">HighLevel</);
     expect(html).not.toContain("not connected");
     // Tool-by-tool grants are Composio's list; HighLevel is scoped by read/write only.
-    expect([...html.matchAll(/truncate font-mono text-\[12\.5px\] text-ink">([^<]*)</g)].map((match) => match[1])).toEqual(["gmail"]);
+    expect([...html.matchAll(/truncate font-mono text-\[13px\] text-ink">([^<]*)</g)].map((match) => match[1])).toEqual(["gmail"]);
   });
 
   it("leaves HighLevel out while it is not connected", () => {

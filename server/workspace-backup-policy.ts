@@ -1,6 +1,7 @@
 import { readlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseStoredConfig } from "./config.ts";
+import { inSecretFolder } from "./secret-folder.ts";
 
 // Connection sections stay on the destination whole: a restored URL must never redirect an API key kept from that device.
 const PORTABLE_CONFIG_KEYS = [
@@ -35,6 +36,7 @@ export function restoredWorkspaceConfig(portable: unknown, destination: unknown)
 
 export function excludedWorkspaceAuthPath(path: string): boolean {
   if (/^private(?:\/|$)/.test(path)) return true;
+  if (inSecretFolder(path)) return true;
   if (/^command-allowlist\.json(?:$|\.\d+\.[0-9a-f-]+\.tmp$)/.test(path)) return true;
   if (/^mcp-oauth\.json(?:$|\.\d+\.[0-9a-f-]+\.tmp$)/.test(path)) return true;
   // Saved website logins and their key never leave the computer they were saved on, nor does the key sealing webhook secrets.
@@ -43,6 +45,8 @@ export function excludedWorkspaceAuthPath(path: string): boolean {
   if (/^(?:highlevel\.json\.enc|highlevel-key)(?:$|\.\d+\.[0-9a-f-]+\.tmp$)/.test(path)) return true;
   // A Cloud home's connected-apps installation: its connected accounts belong to it, so a copy would share them.
   if (/^connected-apps-installation\.json(?:$|\.\d+\.[0-9a-f-]+\.tmp$)/.test(path)) return true;
+  // A Team Cloud member's own installation, keys and sign-ins: theirs, never in the team's backup.
+  if (/^people-connections(?:\/|$)/.test(path)) return true;
   return /^(?:(?:providers|caddy|chrome-profile|\.agent-browser)(?:\/|$)|workspace-credentials\.json$|external-runtimes\.json$|browser-engine-key$)/.test(path) ||
     /^(?:config\.json|webhooks\.json|workspace-credentials\.json|external-runtimes\.json|browser-engine-key|sessions\.json|tunnel-account\.json)\.\d+(?:\.[0-9a-f-]+)?\.tmp$/.test(path) ||
     /^(?:vm-home|vm-homes\/[^/]+)\/\.browser-profiles(?:\/|$)/.test(path);

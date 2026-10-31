@@ -12,6 +12,7 @@ import type { ShareOutcome } from "../composio-share.ts";
 import { parseHighLevelConnection, type HighLevelConnection } from "../highlevel/store.ts";
 import { parseMcpOAuthRecord, type McpOAuthRecord } from "../mcp-oauth-store.ts";
 import type { McpRunsOn } from "../mcp-registry.ts";
+import type { RequestAuth } from "../request-auth.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
 const SLUG = /^[a-z0-9_][a-z0-9_-]{0,80}$/u;
@@ -30,13 +31,18 @@ export interface ConnectionsAnswer {
   engines: string[];
   /** Programs a command-line MCP server may start that this server has. */
   commands: string[];
+  /** False on a server with no connected-apps service of MausBot's: connected apps through that service can't move here. */
+  managedApps?: false;
 }
 
 export type Adopted = { ok: true; outcome: "adopted" | "kept" } | { ok: false; status: number; error: string };
 
 export interface CloudConnectionRouteDeps {
-  /** Only a Cloud home takes connections. */
+  /** Only a Cloud home takes connections, and a server of one person's own from that person's session (`ownHome`). */
   cloudHome: boolean;
+  ownHome?(auth: RequestAuth): boolean;
+  /** A Team Cloud: a person's own connections (a share, a sign-in, HighLevel) are refused with one plain line. */
+  personalRefusal?: (what: string) => string | null;
   list(): Promise<ConnectionsAnswer>;
   adoptShare(code: string): Promise<ShareOutcome>;
   adoptOwn(apiKey: string, userId: string): Promise<ShareOutcome>;
@@ -50,14 +56,14 @@ export interface CloudConnectionRouteDeps {
 }
 
 export function createCloudConnectionRoutes(deps: CloudConnectionRouteDeps): RouteHandler {
-  return async ({ req, res, url, path, method, json, readBody }) => {
+  return async ({ req, res, url, path, method, auth, json, readBody }) => {
     if (path !== "/api/cloud-connections" && !path.startsWith("/api/cloud-connections/")) return PASS;
     res.setHeader("cache-control", "no-store");
     if (path === "/api/cloud-connections") {
       if (method !== "GET") return json(res, 405, { error: "method not allowed" });
       return json(res, 200, await deps.list());
     }
-    if (!deps.cloudHome) return json(res, 404, { error: "not found" });
+    if (!deps.cloudHome && deps.ownHome?.(auth) !== true) return json(res, 404, { error: "not found" });
     if (path === "/api/cloud-connections/held-keys") {
       if (method !== "PUT") return json(res, 405, { error: "method not allowed" });
       const asked = z.object({ for: z.array(z.string().regex(/^[\w.:-]{1,128}$/u)).max(20) }).safeParse(await readBody(req, 4096));
@@ -68,6 +74,8 @@ export function createCloudConnectionRoutes(deps: CloudConnectionRouteDeps): Rou
     if (path !== "/api/cloud-connections/connected-apps" && path !== "/api/cloud-connections/highlevel" && !signIn) return json(res, 404, { error: "not found" });
     if (method !== (path === "/api/cloud-connections/connected-apps" ? "POST" : "PUT")) return json(res, 405, { error: "method not allowed" });
     if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+    const refused = deps.personalRefusal?.(signIn ? signIn[1]! : path === "/api/cloud-connections/highlevel" ? "HighLevel" : "these apps");
+    if (refused) { req.resume(); return json(res, 403, { error: refused }); }
     const body = await readBody(req, 64 * 1024);
     const replaces = url.searchParams.get("replaces");
     if (replaces !== null && !DIGEST.test(replaces)) return json(res, 400, { error: "replaces is a sign-in's digest" });

@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { augmentedPath } from "../env-path.ts";
-import { ChatToolSessionError, mountChatTools, type ChatToolSession } from "./chat-mcp-tools.ts";
+import { ChatToolSessionError, mountChatTools, trimmedToolsNotice, type ChatToolSession } from "./chat-mcp-tools.ts";
 import type { ToolScope } from "../../shared/tool-scope.ts";
+import { catalogServer, CUA_DRIVER_WINDOWS_TOOLS, syntheticToolNames } from "../testing/cua-driver-tools.ts";
 import { startFakeHttpMcp } from "../testing/fake-http-mcp-server.ts";
 import { whopLikeCatalog } from "../testing/whop-like-catalog.ts";
+import { wideSchema } from "../testing/oversized-tool-schema.ts";
+import { schemaBytes, toolSchemaProfile } from "../tool-schema-profile.ts";
 
 const killProbe = vi.hoisted(() => ({ override: false, stopped: false, budgets: [] as number[] }));
 vi.mock("../procs.ts", async (importOriginal) => {
@@ -188,6 +191,24 @@ describe("Chat MCP session", () => {
     await session.execute(name, { url: "https://example.com" }, f.controller.signal);
     const calls = f.read().calls.filter((call) => call.method === "tools/call").map((call) => call.params?.arguments);
     expect(calls).toEqual([dropped ? {} : { url: " " }, { url: "https://example.com" }]);
+  });
+
+  it("shows a model behind Moonshot each schema fitted to its limit, and still checks calls against the full one", async () => {
+    const full = wideSchema(110);
+    const f = fixture("", full);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const plain = await f.mount();
+      expect(plain.definitions[0]!.function.parameters).toEqual(full);
+      const session = await mountChatTools({ custom: { audit: f.server } }, f.controller.signal, false, undefined, undefined, toolSchemaProfile("moonshot"));
+      sessions.push(session);
+      const [definition] = session.definitions;
+      expect(schemaBytes(definition!.function.parameters)).toBeLessThanOrEqual(12_000);
+      expect(definition!.function.description).toContain("OpenMausBot shortened this tool's parameters to fit Kimi's size limit");
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^chat-mcp: audit: kept only the top-level fields of tool "write"'s parameters/));
+      expect(() => session.validate("audit_write", { field_000: { label: 5 } })).toThrow("input schema");
+      expect(() => session.validate("audit_write", { field_000: { label: "five" } })).not.toThrow();
+    } finally { warn.mockRestore(); }
   });
 
   it("starts servers with the widened PATH rather than the bare one the desktop shell inherits", async () => {
@@ -571,6 +592,90 @@ describe("Chat MCP tool directory", () => {
   });
 });
 
+describe("Chat MCP tool limit", () => {
+  const CORE_COMPUTER = ["click", "double_click", "right_click", "drag", "scroll", "type_text", "press_key", "hotkey", "set_value",
+    "launch_app", "list_apps", "list_windows", "get_window_state", "get_desktop_state", "get_screen_size", "zoom", "invoke_menu"];
+  function catalog(names: readonly string[]) {
+    const { dir, server } = catalogServer(names);
+    dirs.push(dir);
+    return server;
+  }
+  async function mount(integrations: NonNullable<Parameters<typeof mountChatTools>[0]>) {
+    const controller = new AbortController();
+    controllers.push(controller);
+    const session = await mountChatTools(integrations, controller.signal, true);
+    sessions.push(session);
+    return { session, names: session.definitions.map((tool) => tool.function.name) };
+  }
+  const windowsTurn = (agents: number, more: Partial<NonNullable<Parameters<typeof mountChatTools>[0]>> = {}) => ({
+    localComputer: { ...catalog(CUA_DRIVER_WINDOWS_TOOLS), scope: "local-computer" as const },
+    browser: catalog(syntheticToolNames("agent_browser", 32)),
+    agents: catalog(syntheticToolNames("agent", agents)),
+    composio: catalog(syntheticToolNames("router", 7)),
+    data: catalog(syntheticToolNames("table", 5)),
+    ...more,
+  });
+
+  it.each([42, 47])("fits a Windows turn with %i agents tools: every agents tool, the screen tools, and one browser", async (agents) => {
+    const { session, names } = await mount(windowsTurn(agents));
+    expect(session.skipped).toEqual([]);
+    expect(session.trimmed).toEqual([]);
+    expect(names.length + 1).toBeLessThanOrEqual(128);
+    expect(names).toEqual(expect.arrayContaining(syntheticToolNames("agents_agent", agents)));
+    expect(names).toEqual(expect.arrayContaining(CORE_COMPUTER.map((tool) => `computer_${tool}`)));
+    expect(names.filter((name) => /^computer_(?:browser_|get_browser_state$|page$)/.test(name))).toEqual([]);
+    expect(names.filter((name) => /^computer_(?:start_recording|set_config|get_config|check_for_update|install_ffmpeg|set_agent_cursor_motion)$/.test(name))).toEqual([]);
+    expect(names.filter((name) => name.startsWith("browser_"))).toHaveLength(32);
+  });
+
+  it("lists the computer's own browser tools when the turn has no built-in browser", async () => {
+    const { names } = await mount({ localComputer: { ...catalog(CUA_DRIVER_WINDOWS_TOOLS), scope: "local-computer" } });
+    expect(names).toEqual(expect.arrayContaining(["computer_browser_navigate", "computer_get_browser_state", "computer_click"]));
+    expect(names).not.toContain("computer_install_ffmpeg");
+  });
+
+  it("caps built-ins that still overflow instead of failing the turn, keeping the agents server whole and saying what was left out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { session, names } = await mount(windowsTurn(51, {
+        composio: catalog(syntheticToolNames("router", 14)),
+        highlevel: catalog(syntheticToolNames("crm", 20)),
+        device: catalog(syntheticToolNames("phone", 23)),
+      }));
+      expect(names).toHaveLength(127);
+      expect(names).toEqual(expect.arrayContaining(syntheticToolNames("agents_agent", 51)));
+      expect(names).toEqual(expect.arrayContaining(CORE_COMPUTER.map((tool) => `computer_${tool}`)));
+      expect(names.filter((name) => name.startsWith("data_"))).toEqual(["data_table_1", "data_table_2"]);
+      expect(session.skipped).toEqual([]);
+      expect(session.trimmed).toEqual([{ server: "data", listed: 2, of: 5 }, { server: "highlevel", listed: 0, of: 20 }, { server: "device", listed: 0, of: 23 }]);
+      expect(trimmedToolsNotice(session.trimmed)).toBe(`"data" listed 2 of 5 tools, "highlevel" listed 0 of 20 tools, "device" listed 0 of 23 tools to fit the model's 128-tool limit; the rest are left out of this turn.`);
+      expect(trimmedToolsNotice([])).toBeUndefined();
+    } finally { warn.mockRestore(); }
+  });
+
+  it("gives the agents server its whole list before a computer mounted ahead of it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { session, names } = await mount({ localComputer: catalog(syntheticToolNames("vm", 100)), agents: catalog(syntheticToolNames("agent", 51)) });
+      expect(names).toEqual([...syntheticToolNames("computer_vm", 76), ...syntheticToolNames("agents_agent", 51)]);
+      expect(session.trimmed).toEqual([{ server: "computer", listed: 76, of: 100 }]);
+    } finally { warn.mockRestore(); }
+  });
+
+  it("still skips a configured server that does not fit beside the built-ins, leaving room for ask_user", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const fits = await mount(windowsTurn(42, { custom: { notes: catalog(syntheticToolNames("note", 13)) } }));
+      expect(fits.names).toHaveLength(127);
+      expect(fits.session.skipped).toEqual([]);
+      const over = await mount(windowsTurn(42, { custom: { notes: catalog(syntheticToolNames("note", 14)) } }));
+      expect(over.names).toHaveLength(114);
+      expect(over.session.skipped).toEqual([{ server: "notes", reason: "MCP tool count exceeds the 128-tool limit" }]);
+      expect(over.session.trimmed).toEqual([]);
+    } finally { warn.mockRestore(); }
+  });
+});
+
 describe("Chat MCP startup budgets", () => {
   /** Lets real I/O run, the faked clock standing still, until `condition`. */
   async function untilReal(condition: () => boolean): Promise<void> {
@@ -713,6 +818,20 @@ describe("Chat MCP schema validation", () => {
     expect(() => session.validate("audit_write", { owner: 1, repo: "hello" })).toThrow("input schema");
   });
 
+  it("accepts Google MCP's x-google-enum-descriptions annotation and still enforces the enum", async () => {
+    const toolSchema = {
+      type: "object",
+      properties: {
+        value: { type: "string", enum: ["METRIC", "IMPERIAL"], "x-google-enum-descriptions": ["Metric units.", "Imperial units."] },
+      },
+      required: ["value"],
+    };
+    const f = fixture("", toolSchema);
+    const session = await f.mount();
+    expect(() => session.validate("audit_write", { value: "METRIC" })).not.toThrow();
+    expect(() => session.validate("audit_write", { value: "KELVIN" })).toThrow("input schema");
+  });
+
   it.each([
     ["email", "user@example.com", "invalid"],
     ["uri", "https://example.com/path", "not a uri"],
@@ -729,6 +848,7 @@ describe("Chat MCP schema validation", () => {
     { type: "object", properties: {value:{$ref:"https://example.invalid/private-schema"}} },
     { type: "object", properties: {value:{type:"string",unrecognizedAssertion: true}} },
     { type: "object", properties: {value:{type:"string","x-mcp-header": 5}} },
+    { type: "object", properties: {value:{type:"string","x-google-enum-descriptions": "not a list"}} },
   ])("refuses schemas it cannot validate instead of silently weakening them %#", async (toolSchema) => {
     const f = fixture("", toolSchema);
     await expectSkipped(f, /schema could not be validated/);

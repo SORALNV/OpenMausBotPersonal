@@ -14,6 +14,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { hostTimeout } from "./testing/host-timeout.ts";
 import { ownTurnText } from "./testing/room-handoff-agent.ts";
+import { withAnswer } from "./testing/your-computer.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RERUN_NOTE = "OpenMausBot restarted while your previous turn here was running";
@@ -440,12 +441,13 @@ itHost("T7 queues a root on the computer seat at the wait ceiling and continues 
       driver: "claudeAgent", config: { cli: join(ROOT, "server/testing/fake-claude-cli.ts") },
       environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_DUMP: dumpFile, FAKE_CLAUDE_SLOW_FINISH_GATE: finishFile },
     } } }));
-    const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
+    const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href,
+      "--import", pathToFileURL(join(ROOT, "server/testing/desktop-parent.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata"),
         TEMP: home, TMP: home, TMPDIR: home, OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: ui, OMB_TEST_VM_STATE: stateFile,
-        OMB_USER_DATA: join(home, "user-data"), OMB_COMPUTER_CALL_WAIT_MS: "4000", OMB_COMPUTER_CALL_ACT_WITHIN_MS: "1000",
+        OMB_TEST_DESKTOP_CUA_CONNECTION: join(home, "user-data", "cua-connection.json"), OMB_COMPUTER_CALL_WAIT_MS: "4000", OMB_COMPUTER_CALL_ACT_WITHIN_MS: "1000",
         OMB_COMPUTER_WAIT_MAX_MS: String(CEILING_MS),
       }, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -461,12 +463,13 @@ itHost("T7 queues a root on the computer seat at the wait ceiling and continues 
     const { task: held } = await apiOk("POST", `/api/bots/${holder.id}/tasks`, {});
     await apiOk("POST", `/api/bots/${holder.id}/messages`, { text: "Hold the screen slowly.", threadId: held.threadId });
     await until(() => taskOf(holder.id, held.threadId), (task) => task?.busy === true);
-    expect(await gate(await dumpFor(holder.id))).toEqual({ held: false, helpOpen: false });
+    // On Auto the person is asked once before each turn first uses their computer.
+    expect(await withAnswer(base, held.threadId, gate(await dumpFor(holder.id)))).toEqual({ held: false, helpOpen: false });
     const { bot: waiter } = await apiOk("POST", "/api/bots", { name: "Seat Waiter" });
     const { task: wait } = await apiOk("POST", `/api/bots/${waiter.id}/tasks`, {});
     await apiOk("POST", `/api/bots/${waiter.id}/messages`, { text: "T7-JOB: use the screen too.", threadId: wait.threadId });
     await until(() => taskOf(waiter.id, wait.threadId), (task) => task?.busy === true);
-    const contested = await gate(await dumpFor(waiter.id));
+    const contested = await withAnswer(base, wait.threadId, gate(await dumpFor(waiter.id)));
     expect(contested.held).toBe(true);
     const root = (await until(() => roots().find((row) => row.assignee?.destination?.threadId === wait.threadId), (row) => row?.status === "queued"))!;
     expect(root).toMatchObject({ status: "queued", executions: 1, continuation: { note: expect.stringContaining(SEAT_FREE), count: 1 } });
@@ -480,7 +483,7 @@ itHost("T7 queues a root on the computer seat at the wait ceiling and continues 
     const { task: wait2 } = await apiOk("POST", `/api/bots/${second.id}/tasks`, {});
     await apiOk("POST", `/api/bots/${second.id}/messages`, { text: "T7-JOB-2: use the screen as well.", threadId: wait2.threadId });
     await until(() => taskOf(second.id, wait2.threadId), (task) => task?.busy === true);
-    expect((await gate(await dumpFor(second.id))).held).toBe(true);
+    expect((await withAnswer(base, wait2.threadId, gate(await dumpFor(second.id)))).held).toBe(true);
     const root2 = (await until(() => roots().find((row) => row.assignee?.destination?.threadId === wait2.threadId), (row) => row?.status === "queued"))!;
     expect(root2).toMatchObject({ status: "queued", executions: 1, continuation: { note: expect.stringContaining(SEAT_FREE), count: 1 } });
     expect(root2.createdAt).toBeGreaterThan(root.createdAt);
@@ -724,3 +727,96 @@ it("T11 does not rerun a cut turn that already pushed: the root ends with what i
     rmSync(home, { recursive: true, force: true });
   }
 }, hostTimeout(90_000));
+
+const STALL_CLOCK = { OMB_TEST_STALL_CLOCK: "1" };
+
+type CardState = { status?: string; stopped?: boolean; resumed?: boolean };
+type StallFixture = {
+  dataDir: string;
+  clive: { id: string };
+  roots(): Array<{ status: string; outcome?: string; executions: number; cards?: string[] }>;
+  messages(threadId: string): Promise<Array<{ id: string; kind: string; tool?: { name: string }; secret?: CardState; connector?: CardState; signIn?: CardState }>>;
+  turns(botId: string): Array<{ planKey?: string }>;
+  open(name: string): void;
+  script(botId: string, ...entries: unknown[]): void;
+  say(botId: string, threadId: string, text: string): Promise<unknown>;
+  said(threadId: string, text: string): Promise<number>;
+};
+
+const stallOverCards = async (f: StallFixture, job: string, ids: string[]) => {
+  const marker = join(f.dataDir, "stall-turns");
+  writeFileSync(marker, "now");
+  try { await expect.poll(() => f.roots()[0]?.status, { timeout: 20_000 }).not.toBe("running"); } finally { rmSync(marker, { force: true }); }
+  expect(f.roots()[0]).toMatchObject({ status: "failed", outcome: "stalled", executions: 1 });
+  expect(f.roots()[0]!.cards).toBeUndefined();
+  expect((await f.messages(job)).filter((message) => message.kind === "activity" && message.tool?.name.startsWith("error:")).map((message) => message.tool!.name))
+    .toEqual(["error: no activity for 20 minutes — the turn was stopped"]);
+  const cards = (await f.messages(job)).filter((message) => ids.includes(message.id));
+  expect(cards.map((message) => (message.secret ?? message.connector ?? message.signIn)?.stopped)).toEqual(ids.map(() => true));
+};
+
+const answerStartsNothing = async (f: StallFixture, job: string) => {
+  f.open("c0");
+  f.script(f.clive.id, { key: "C-AFTER", match: ["AFTER-ANSWER"], reply: "AFTER-ANSWER-DONE: hello back." });
+  await f.say(f.clive.id, job, "AFTER-ANSWER: hello after the card was answered.");
+  await expect.poll(() => f.roots().map((row) => row.status), { timeout: 30_000 }).toEqual(["failed", "completed"]);
+  expect(f.roots().map((row) => [row.outcome, row.executions])).toEqual([["stalled", 1], ["done", 1]]);
+  expect(await f.said(job, "AFTER-ANSWER-DONE")).toBe(1);
+  expect(f.turns(f.clive.id).map((record) => record.planKey)).toEqual(["C-AFTER"]);
+};
+
+it("T12 a turn the watchdog stops after it posted a credential card fails as stalled and stops the card", () => scenario(async (f) => {
+  f.script(f.clive.id, { key: "C0", match: ["T12-JOB"], steps: [{ tool: "request_credential", arguments: { credential_id: "xaiApiKey", reason: "T12 fixture model" } }],
+    gateFile: f.gate("c0"), reply: "T12-LATE: never shown." });
+  const job = f.clive.activeTaskId;
+  await f.say(f.clive.id, job, "T12-JOB: set up the Grok model; ask me for the key you need.");
+  await expect.poll(async () => (await f.messages(job)).find((message: { kind: string }) => message.kind === "secret")?.id, { timeout: 30_000 }).toBeTruthy();
+  const card = (await f.messages(job)).find((message: { kind: string }) => message.kind === "secret");
+  await stallOverCards(f, job, [card.id]);
+  expect((await f.api("PUT", "/api/config", { xai: { key: "xai-fixture-key" } })).status).toBe(200);
+  const provided = await f.api("POST", `/api/bots/${f.clive.id}/secret-cards/${card.id}/provided`, { threadId: job });
+  expect(provided.status, JSON.stringify(provided.body)).toBe(200);
+  expect(provided.body).toEqual({ provided: true, resumed: false });
+  await answerStartsNothing(f, job);
+}, { fake: STALL_CLOCK }), hostTimeout(60_000));
+
+it("T12 a turn the watchdog stops after it posted connector cards fails as stalled and stops the cards", async () => {
+  const composio = await composioStub();
+  try {
+    await scenario(async (f) => {
+      expect((await f.api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+      f.script(f.clive.id, { key: "C0", match: ["T12C-JOB"], readyFile: f.ready("c0"), gateFile: f.gate("c0"), reply: "T12C-LATE: never shown." });
+      const job = f.clive.activeTaskId;
+      await f.say(f.clive.id, job, "T12C-JOB: wire up my mail and chat.");
+      await expect.poll(() => existsSync(f.ready("c0")), { timeout: 30_000 }).toBe(true);
+      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t12-resume-key-0001", items: ["gmail", "slack"] }, f.token("composio"));
+      expect(requested.status, JSON.stringify(requested.body)).toBe(200);
+      const [gmail, slack] = requested.body.messageIds as string[];
+      await stallOverCards(f, job, [gmail, slack]);
+      composio.connect("gmail");
+      composio.connect("slack");
+      expect((await f.api("GET", `/api/bots/${f.clive.id}/connector-cards/${gmail}/status?threadId=${job}`)).body).toMatchObject({ connected: true });
+      expect((await f.api("GET", `/api/bots/${f.clive.id}/connector-cards/${slack}/status?threadId=${job}`)).body).toMatchObject({ connected: true });
+      await answerStartsNothing(f, job);
+      const cards = (await f.messages(job)).filter((message: { kind: string }) => message.kind === "connector").map((message: { connector: CardState }) => message.connector);
+      expect(cards.map((connector: CardState) => [connector.status, connector.stopped, connector.resumed])).toEqual([["connected", true, undefined], ["connected", true, undefined]]);
+    }, { env: composio.env, fake: STALL_CLOCK });
+  } finally {
+    await composio.close();
+  }
+}, hostTimeout(90_000));
+
+it("T12 a turn the watchdog stops after it posted a sign-in card fails as stalled and stops the card", () => scenario(async (f) => {
+  await browserPlace(f);
+  f.script(f.clive.id, { key: "C0", match: ["T12S-JOB"], steps: [{ tool: "request_sign_in", arguments: { site: "https://example.com/dashboard", reason: "The dashboard is behind a login." } }],
+    gateFile: f.gate("c0"), reply: "T12S-LATE: never shown." });
+  const job = f.clive.activeTaskId;
+  await f.say(f.clive.id, job, "T12S-JOB: check my example.com dashboard.");
+  await expect.poll(async () => (await f.messages(job)).find((message: { kind: string }) => message.kind === "signin")?.id, { timeout: 30_000 }).toBeTruthy();
+  const card = (await f.messages(job)).find((message: { kind: string }) => message.kind === "signin");
+  await stallOverCards(f, job, [card.id]);
+  const done = await f.api("POST", `/api/bots/${f.clive.id}/sign-in-cards/${card.id}/done`, { threadId: job });
+  expect(done.status, JSON.stringify(done.body)).toBe(200);
+  expect(done.body).toEqual({ done: true, resumed: false });
+  await answerStartsNothing(f, job);
+}, { fake: STALL_CLOCK }), hostTimeout(60_000));

@@ -109,11 +109,13 @@ describe("OpenCode 2.x section", () => {
       XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"),
       FAKE_ACP_MODELS_LIST: "v2",
       FAKE_ACP_MODELS: "openrouter/deepseek/deepseek-chat,opencode/longcat-2.5-preview-free",
+      FAKE_ACP_VARIANTS: JSON.stringify({ "openrouter/deepseek/deepseek-chat": { options: [{ value: "high", name: "High" }] } }),
     }, join(ROOT, "server", "testing", "fake-acp-cli.ts"));
     expect(catalog.options.map((option) => option.id)).toEqual([
       "openrouter/deepseek/deepseek-chat", "opencode/longcat-2.5-preview-free",
     ]);
-    expect(section("### OpenCode")).toContain("OpenMausBot reads the model list from an ACP session on both OpenCode 1.x and 2.x.");
+    expect(catalog.options.map((option) => option.variants)).toEqual([[{ id: "high", label: "High" }], undefined]);
+    expect(section("### OpenCode")).toContain("OpenMausBot reads the model list from an ACP session on both OpenCode 1.x and 2.x, and each model's effort levels the same way");
     expect(section("## OpenCode 2.x")).not.toContain("picker shows only OpenCode's free models");
   });
 });
@@ -159,7 +161,7 @@ describe("OpenCode config file", () => {
 });
 
 describe("Keys exported on a server", () => {
-  const exported = ["OPENROUTER_API_KEY", "FIREWORKS_API_KEY", "DEEPSEEK_API_KEY"];
+  const exported = ["OPENROUTER_API_KEY", "FIREWORKS_API_KEY", "TOGETHER_API_KEY"];
 
   it("reach every engine, as the page warns", () => {
     // Every engine filters its inherited environment through these two lists (or stripWorkspaceCredentialEnv).

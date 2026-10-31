@@ -6,6 +6,10 @@ export interface McpServerSummary {
   name: string;
   enabled: boolean;
   delegated?: { bots: { id: string; tools: string[] }[] };
+  /** The bot whose own server this is. */
+  bot?: string;
+  /** The bots it is off for, because it doesn't start for them. */
+  offFor?: string[];
 }
 
 let cached: { servers: McpServerSummary[] | null; error: boolean } = { servers: null, error: false };
@@ -21,7 +25,7 @@ const subscribe = (listener: () => void) => {
 export function updateMcpServers(servers: McpServerSummary[]): void {
   generation += 1;
   inflight = null;
-  cached = { servers: servers.map(({ name, enabled, delegated }) => ({ name, enabled: Boolean(enabled), ...(delegated ? { delegated: structuredClone(delegated) } : {}) })), error: false };
+  cached = { servers: servers.map(({ name, enabled, bot, offFor, delegated }) => ({ name, enabled: Boolean(enabled), ...(delegated ? { delegated: structuredClone(delegated) } : {}), ...(bot ? { bot } : {}), ...(offFor?.length ? { offFor } : {}) })), error: false };
   for (const listener of listeners) listener();
 }
 
@@ -53,6 +57,11 @@ export function useMcpServers(): { servers: McpServerSummary[] | null; error: bo
     void loadMcpServers(true);
   }, []);
   return { ...current, refresh: () => loadMcpServers(true) };
+}
+
+/** The servers a bot can be given: every bot's, and its own. */
+export function mcpServersOfBot(all: McpServerSummary[], botId: string): McpServerSummary[] {
+  return all.filter((server) => !server.bot || server.bot === botId);
 }
 
 export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined, botId?: string): McpServerSummary[] {

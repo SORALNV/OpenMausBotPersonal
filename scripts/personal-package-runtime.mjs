@@ -1,8 +1,8 @@
 import { assertPersonalAppIdentity, setPersonalAppIdentity } from "./personal-app-identity.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { withPersonalSigning } from "./personal-signing.mjs";
@@ -45,7 +45,9 @@ if (preserveLauncher) {
   rmSync(launcher, { recursive: true });
   run("/usr/bin/ditto", [installed, launcher]);
 }
-withPersonalSigning(join(repo, ".privacy-dev/personal-signing"), ({ identity, keychain }) => {
+const signingDir = process.env.OMB_PERSONAL_SIGNING_DIR ? resolve(process.env.OMB_PERSONAL_SIGNING_DIR) : join(repo, ".privacy-dev/personal-signing");
+if (process.env.OMB_PERSONAL_SIGNING_DIR && !existsSync(signingDir)) throw new Error("The requested existing signing identity is missing");
+withPersonalSigning(signingDir, ({ identity, keychain }) => {
   for (const app of [runtime, launcher]) {
     setPersonalAppIdentity(app);
     run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);

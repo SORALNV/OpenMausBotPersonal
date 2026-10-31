@@ -1,188 +1,139 @@
-import { useEffect, useMemo, useState } from "react";
-import { AppWindow, FileText, Image as ImageIcon } from "lucide-react";
+import { AppWindow, Brain, FileText, Folder, Globe, Zap } from "lucide-react";
+import { useMemo } from "react";
 
 import { t } from "@/lib/i18n";
-import type { LocaleKey } from "@/locales";
-import { fetchMemoryDoc, MEMORY_INDEX } from "@/lib/memory";
-import { useStore, type Bot } from "@/state/store";
-import { SkillReviewDialog, useManagedSkills } from "../bot-settings/SkillsSection";
-import { botLibraryItems, isPageItem, memoryEntries, type LibraryItem } from "./library-items";
-import type { PageId } from "./page-registry";
-import { Card, LabelAction, LinkRow, NoteRow, rowCls, SwitchRow } from "./rows";
+import { usePageOpener } from "@/lib/page-open";
+import { shortPath } from "@/lib/short-path";
+import { SIDEBAR_INLINE, useMediaQuery } from "@/lib/use-media-query";
+import { useStore, visibleMessages, type Bot, type Message } from "@/state/store";
+import { AttachedFileChip } from "../AttachmentPreview";
+import { recentChangedFiles, sharedFileReferences } from "../ComputerFilesPane";
+import { useDesktopCapabilities } from "../DesktopCapabilities";
+import { useManagedSkills } from "../bot-settings/SkillsSection";
+import type { SimplePageId } from "./page-registry";
+import { Card, CardLabel, NavRow } from "./rows";
+import { panelMemoryNotes } from "./memory-notes";
+import { useMemoryDoc } from "./use-memory-doc";
 
-export type LibraryFilter = "all" | "memories" | "files" | "pages" | "skills";
+export interface LibraryItems {
+  pages: Array<{ messageId: string; title: string; url: string }>;
+  apps: Array<{ messageId: string; title: string }>;
+  shared: Array<NonNullable<ReturnType<ReturnType<typeof sharedFileReferences>["get"]>>>;
+  unshared: string[];
+}
 
-const FILTERS: ReadonlyArray<readonly [LibraryFilter, LocaleKey]> = [
-  ["all", "botPanel.library.all"],
-  ["memories", "botPanel.library.memories"],
-  ["files", "botPanel.library.files"],
-  ["pages", "botPanel.library.pages"],
-  ["skills", "botSettings.simple.skills"],
-];
+/** What the bot made in the open conversation, newest first: its live published pages, its apps, and its files. */
+export function libraryItems(bot: Bot, messages: readonly Message[] = visibleMessages(bot)): LibraryItems {
+  const pages: LibraryItems["pages"] = [];
+  const apps: LibraryItems["apps"] = [];
+  const seenPages = new Set<string>();
+  for (const message of [...messages].reverse()) {
+    const page = message.publishedPage;
+    if (page?.state === "live" && page.url && !seenPages.has(page.url)) {
+      seenPages.add(page.url);
+      pages.push({ messageId: message.id, title: page.title || page.url, url: page.url });
+    }
+    if (message.kind === "app" && message.app?.doc) apps.push({ messageId: message.id, title: message.app.title });
+  }
+  const references = sharedFileReferences(bot);
+  const shared: LibraryItems["shared"] = [];
+  const seenFiles = new Set<string>();
+  for (const reference of references.values()) {
+    if (seenFiles.has(reference.file.path)) continue;
+    seenFiles.add(reference.file.path);
+    shared.push(reference);
+  }
+  const unshared = recentChangedFiles(bot).filter((path) => !references.has(path));
+  return { pages, apps, shared, unshared };
+}
 
-const MEMORIES_SHOWN = 5;
+const fileName = (path: string) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
-const dateLabel = (at: number) => new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-export function LibraryTab({ bot, onOpen }: { bot: Bot; onOpen: (page: PageId) => void }) {
+export function LibraryTab({ bot, onOpen }: { bot: Bot; onOpen: (page: SimplePageId) => void }) {
   const { dispatch } = useStore();
-  const [filter, setFilter] = useState<LibraryFilter>("all");
-  const [memory, setMemory] = useState<{ botId: string; entries: string[] } | null>(null);
-  const [memoryError, setMemoryError] = useState(false);
+  const { capabilities } = useDesktopCapabilities();
+  const openPage = usePageOpener();
+  const phone = !useMediaQuery(SIDEBAR_INLINE, true);
   const skills = useManagedSkills(bot);
-  const memoryOn = bot.memoryEnabled !== false;
-  const items = useMemo(() => botLibraryItems(bot), [bot]);
-  const files = items.filter((item) => !isPageItem(item));
-  const pages = items.filter(isPageItem);
-  const shows = (part: LibraryFilter) => filter === "all" || filter === part;
-
-  useEffect(() => {
-    if (!memoryOn) return;
-    let cancelled = false;
-    setMemoryError(false);
-    fetchMemoryDoc(bot.id, MEMORY_INDEX)
-      .then((doc) => { if (!cancelled) setMemory({ botId: bot.id, entries: memoryEntries(doc.text) }); })
-      .catch(() => { if (!cancelled) setMemoryError(true); });
-    return () => { cancelled = true; };
-  }, [bot.id, memoryOn]);
-
-  const entries = memory?.botId === bot.id ? memory.entries : null;
-  const openItem = (item: LibraryItem) => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: item.messageId });
-  const manage = (page: PageId) => (
-    <LabelAction data-panel-action={page} onClick={() => onOpen(page)}>{t("botPanel.library.manage")}</LabelAction>
+  const memory = useMemoryDoc(bot);
+  const { pages, apps, shared, unshared } = useMemo(() => libraryItems(bot), [bot]);
+  const showInChat = (messageId: string) => {
+    dispatch({ type: "focusMessage", threadId: bot.threadId, messageId });
+    if (phone) dispatch({ type: "toggleSettings", open: false });
+  };
+  const skillsOn = skills.skills.filter((skill) => skill.enabled).length;
+  const notes = memory.docs ? panelMemoryNotes(memory.docs).length : null;
+  const memoryValue = bot.memoryEnabled === false ? t("botPanel.memory.off")
+    : notes === null ? (memory.error ? t("botPanel.memory.nothingYet") : undefined)
+    : notes === 0 ? t("botPanel.memory.nothingYet")
+    : notes === 1 ? t("botPanel.memory.note") : t("botPanel.memory.notes", { count: notes });
+  const keeps = (
+    <Card anchor="keeps">
+      <NavRow data-panel-page="memory" icon={Brain} title={t("botPanel.memoryRow")} value={memoryValue} onClick={() => onOpen("memory")} />
+      <NavRow
+        data-panel-page="skills"
+        icon={Zap}
+        title={t("botSettings.simple.skills")}
+        value={skills.loading ? undefined : skillsOn > 0 ? skillsOn : t("botPanel.none")}
+        onClick={() => onOpen("skills")}
+      />
+      <NavRow
+        data-panel-page="folder"
+        icon={Folder}
+        title={t("computer.files.folder")}
+        value={bot.cwd ? shortPath(bot.cwd, capabilities.host?.homeDir) : t("botPanel.folder.private")}
+        onClick={() => onOpen("folder")}
+      />
+    </Card>
   );
-  const counted = (key: LocaleKey, count: number | null) => (count ? `${t(key)} · ${count}` : t(key));
 
+  if (pages.length + apps.length + shared.length + unshared.length === 0) {
+    return (
+      <div data-panel-tabpanel="library">
+        <p data-panel-empty="library" className="px-3 py-7 text-center text-[13px] leading-[18px] text-ink-tertiary">
+          {t("botPanel.library.empty")}
+        </p>
+        {keeps}
+      </div>
+    );
+  }
   return (
     <div data-panel-tabpanel="library">
-      <div role="group" aria-label={t("botSettings.simple.library")} className="mt-[18px] flex flex-wrap gap-1.5">
-        {FILTERS.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            data-library-filter={id}
-            aria-pressed={filter === id}
-            onClick={() => setFilter(id)}
-            className={filter === id
-              ? "rounded-full bg-ink px-[11px] py-[5px] text-[12.5px] font-medium text-panel"
-              : "rounded-full bg-ink/[0.04] px-[11px] py-[5px] text-[12.5px] text-ink-secondary hover:text-ink"}
-          >
-            {t(label)}
-          </button>
-        ))}
-      </div>
-
-      {shows("memories") && (
-        <Card label={counted("botPanel.library.memories", entries?.length ?? null)} action={manage("memory")} anchor="memories">
-          {!memoryOn ? (
-            <NoteRow>{t("botPanel.library.memoryOff", { name: bot.name })}</NoteRow>
-          ) : memoryError ? (
-            <NoteRow>{t("botPanel.library.memoryError")}</NoteRow>
-          ) : entries === null ? (
-            <NoteRow>{t("common.checking")}</NoteRow>
-          ) : entries.length === 0 ? (
-            <NoteRow>{t("botPanel.library.memoryEmpty", { name: bot.name })}</NoteRow>
-          ) : (
-            <>
-              {entries.slice(0, MEMORIES_SHOWN).map((entry, index) => (
-                <div key={`${index}:${entry}`} data-library-memory className="px-3.5 py-2.5 text-[13px] leading-[1.45] text-ink">{entry}</div>
-              ))}
-              {entries.length > MEMORIES_SHOWN && (
-                <LinkRow data-panel-link="memory" onClick={() => onOpen("memory")}>
-                  {t("botPanel.library.memoryMore", { count: entries.length - MEMORIES_SHOWN })}
-                </LinkRow>
-              )}
-            </>
-          )}
-        </Card>
-      )}
-
-      {shows("files") && (
-        files.length === 0 ? (
-          <Card label={t("botPanel.library.files")} anchor="files">
-            <NoteRow>{t("botPanel.library.filesEmpty", { name: bot.name })}</NoteRow>
-          </Card>
-        ) : (
-          <section data-panel-card="files">
-            <div className="mx-1 mb-2 mt-5 text-[12.5px] text-ink-secondary">{counted("botPanel.library.files", files.length)}</div>
-            <div className="grid grid-cols-2 gap-2">
-              {files.map((item) => {
-                const Icon = item.kind === "image" ? ImageIcon : FileText;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    data-library-item={item.messageId}
-                    title={t("botSettings.simple.libraryOpen", { name: item.name })}
-                    onClick={() => openItem(item)}
-                    className="flex min-w-0 flex-col gap-2 rounded-xl border border-ink/[0.04] bg-ink/[0.03] p-2.5 text-left hover:bg-ink/[0.05]"
-                  >
-                    <span className="flex h-16 items-center justify-center rounded-lg bg-ink/[0.04] text-ink-secondary">
-                      <Icon size={22} strokeWidth={1.6} aria-hidden="true" />
-                    </span>
-                    <span className="truncate text-[12.5px] font-medium text-ink">{item.name}</span>
-                    <span className="text-[11.5px] text-ink-tertiary">{dateLabel(item.at)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )
-      )}
-
-      {shows("pages") && (
-        <Card label={t("botPanel.library.pagesTitle")} anchor="pages">
-          {pages.length === 0 ? (
-            <NoteRow>{t("botPanel.library.pagesEmpty", { name: bot.name })}</NoteRow>
-          ) : pages.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              data-library-item={item.messageId}
-              title={t("botSettings.simple.libraryOpen", { name: item.name })}
-              onClick={() => openItem(item)}
-              className={`${rowCls} w-full text-left hover:bg-ink/[0.03]`}
-            >
-              <AppWindow size={15} className="shrink-0 text-ink-secondary" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{item.name}</span>
-              <span className="shrink-0 text-[12px] text-ink-tertiary">{dateLabel(item.at)}</span>
-            </button>
+      {pages.length > 0 && (
+        <Card label={t("botPanel.library.pages")} anchor="pages">
+          {pages.map((page) => (
+            <NavRow key={page.url} data-panel-row="page" icon={Globe} title={<span className="block truncate">{page.title}</span>} hint={<span className="block truncate">{page.url}</span>} onClick={() => openPage(page.url)} />
           ))}
         </Card>
       )}
-
-      {shows("skills") && (
-        <Card label={counted("botSettings.simple.skills", skills.skills.length)} action={manage("skills")} anchor="skills">
-          {!skills.loading && skills.skills.length === 0 ? (
-            <NoteRow>{t("botSettings.simple.noSkills")}</NoteRow>
-          ) : skills.skills.map((skill) => (
-            <SwitchRow
-              key={skill.name}
-              data-panel-row={`skill:${skill.name}`}
-              title={skill.name}
-              hint={skill.description || skill.source}
-              label={t("botSettings.simple.skillToggle", { name: skill.name })}
-              color={bot.color}
-              checked={skill.enabled}
-              disabled={Boolean(skills.working)}
-              onChange={() => void skills.toggle(skill)}
-            />
+      {apps.length > 0 && (
+        <Card label={t("botPanel.library.apps")} anchor="apps">
+          {apps.map((app) => (
+            <NavRow key={app.messageId} data-panel-row="app" icon={AppWindow} title={<span className="block truncate">{app.title}</span>} onClick={() => showInChat(app.messageId)} />
           ))}
-          {skills.error && !skills.reviewing && <NoteRow tone="warn">{skills.error}</NoteRow>}
-          <LinkRow data-panel-link="skills" onClick={() => onOpen("skills")}>{t("botPanel.library.writeCommand")}</LinkRow>
         </Card>
       )}
-
-      {skills.reviewing && (
-        <SkillReviewDialog
-          skill={skills.reviewing.skill}
-          text={skills.reviewing.text}
-          error={skills.error}
-          working={skills.working === skills.reviewing.skill.name}
-          onCancel={() => skills.setReviewing(null)}
-          onEnable={() => void skills.enableReviewed()}
-        />
+      {shared.length + unshared.length > 0 && (
+        <section data-panel-card="files">
+          <CardLabel>{t("botPanel.library.files")}</CardLabel>
+          <ul className="flex flex-col gap-1.5">
+            {shared.map((reference) => (
+              <li key={`${reference.message.messageId}:${reference.file.path}`} className="min-w-0">
+                <AttachedFileChip file={reference.file} message={reference.message} linked={reference.file.linked} className="w-full max-w-none" />
+              </li>
+            ))}
+            {unshared.map((path) => (
+              <li key={path} title={t("computer.files.notSharedHint")} className="flex min-w-0 items-center gap-2 rounded-lg border border-hairline/40 px-2.5 py-2">
+                <FileText size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{fileName(path)}</span>
+                <span className="shrink-0 text-[11px] text-ink-tertiary">{t("computer.files.notShared")}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
+      <p className="mt-3 text-center text-[12px] text-ink-tertiary">{t("botPanel.library.scope")}</p>
+      {keeps}
     </div>
   );
 }

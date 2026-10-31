@@ -17,7 +17,7 @@ const dirs: string[] = [], services: NativeOmpService[] = [];
 beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
 afterEach(() => { services.splice(0).forEach(service => service.close()); dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); vi.restoreAllMocks(); });
 
-function fixture() {
+function fixture(conversationFull?: (threadId: string) => boolean) {
   const dir = mkdtempSync(join(tmpdir(), "omb-native-omp-test-")); dirs.push(dir);
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const bot = store.createBot({ name: "Synthetic Pi" });
@@ -35,7 +35,7 @@ function fixture() {
   const formatter = vi.fn(async (_input: Parameters<import("./direct-thread-bridge.ts").ReplyFormatter["format"]>[0]) => "短い回答");
   const localTurn = vi.fn(async (_input: { botId: string; threadId: string; text: string; source: import("./store.ts").Message; signal: AbortSignal }) => "OMB管理の結果です。");
   const create = () => {
-    const service = new NativeOmpService({ dir, store, generate, localTurn, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: formatter }, settled });
+    const service = new NativeOmpService({ conversationFull, dir, store, generate, localTurn, open, sharedOpen: binding => NativeOmpCollab.connect(binding, { timeoutMs: 90000 }), formatter: { format: formatter }, settled });
     services.push(service); return service;
   };
   const service = create();
@@ -162,8 +162,8 @@ it("a detached shared connector is replaced before the next explicit BOT input",
   expect(next.submit).toHaveBeenCalledWith(expect.any(String), "切断後の明示入力");
 });
 
-function reviewingFixture() {
-  const f = fixture(); f.service.close();
+function reviewingFixture(conversationFull?: (threadId: string) => boolean) {
+  const f = fixture(conversationFull); f.service.close();
   writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, approvalPolicy: "mediator" }] }), { mode: 0o600 });
   let finish!: (value: { requestId: string; sessionId: string; sessionFile: string; text: string }) => void;
   const client = Object.assign(new EventEmitter(), {
@@ -848,4 +848,24 @@ it("does not let an older formatter overwrite a late local display instruction",
   await vi.waitFor(()=>expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===reply.id)?.text).toBe("新しい箇条書き表示"));
   old("古い短縮表示");await Promise.resolve();await Promise.resolve();
   expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===reply.id)?.text).toBe("新しい箇条書き表示");expect(reply.nativeOmp?.originalText).toBe("加工しない元の回答");
+});
+
+
+it("a conversation Full grant covers BOT permissions live and revocation asks again", async () => {
+  let full = false;
+  const f = reviewingFixture(() => full);
+  await vi.waitFor(() => expect(f.client.submit).toHaveBeenCalledOnce());
+  f.generate.mockResolvedValue('{"highRisk":true,"reason":"架空サービスの再起動"}');
+  const question = (id: string) => ({ id, method: "select", title: "Allow tool: bash\nCommand: sudo systemctl restart fixture", options: ["Approve", "Deny"] });
+  f.client.emit("question", question("pending-first"));
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission")).toBe(true));
+  full = true; f.service.permissionsChanged(f.bot.threadId);
+  await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("pending-first", { value: "Approve" }));
+  f.client.emit("question", question("already-full"));
+  await vi.waitFor(() => expect(f.client.answerUi).toHaveBeenCalledWith("already-full", { value: "Approve" }));
+  full = false; f.service.permissionsChanged(f.bot.threadId);
+  f.client.emit("question", question("after-ask"));
+  await vi.waitFor(() => expect(f.store.messagesFor(f.bot.threadId).some(m => m.card?.requestType === "permission" && !m.card.answered && !m.card.dismissed)).toBe(true));
+  expect(f.client.answerUi).toHaveBeenCalledTimes(2);
+  f.complete();
 });

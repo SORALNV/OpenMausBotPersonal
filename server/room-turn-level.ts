@@ -3,7 +3,7 @@ import type { ApprovalMode } from "../shared/approval-mode.ts";
 
 export type RoomTurnLevels = ReturnType<typeof createRoomTurnLevels>;
 
-export function createRoomTurnLevels() {
+export function createRoomTurnLevels(current?: (threadId: string) => ApprovalMode | undefined) {
   const levels = new Map<string, { level: ApprovalMode }>();
   const key = (threadId: string, botId: string) => `${threadId}\u0000${botId}`;
   return {
@@ -16,7 +16,7 @@ export function createRoomTurnLevels() {
       };
     },
     forRequest(threadId: string, botId: string, own: () => ApprovalMode): ApprovalMode {
-      return levels.get(key(threadId, botId))?.level ?? own();
+      return current?.(threadId) ?? levels.get(key(threadId, botId))?.level ?? own();
     },
   };
 }

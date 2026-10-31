@@ -28,10 +28,19 @@ export interface EnvironmentDescriptor {
     lendingDetails?: true;
     /** A Cloud home with lending on: a lent computer may open the device link and lend its internet connection. */
     deviceLink?: true;
+    /** A personal Cloud home with lending on: a lent computer may lend its Chrome to the bots here. Never a team Cloud. */
+    myChromeLink?: true;
+    /** A lent computer may say it takes run_command's timeout_seconds; only then does this server send it. */
+    commandTimeouts?: true;
+    /** A lent computer may say it takes edit_file, append_file and delete_file; only then does this server send them. */
+    fileEdits?: true;
     /** A person's own OMB Cloud home. */
     cloudHome?: true;
-    /** A Cloud home that takes the one-time move from the person's computer: by-row chats, the manifest, the chats and
-     * credentials checks, and lines its owner wrote there stamped as the owner's. */
+    /** A team's Cloud home: `label` is the team's name. */
+    cloudTeam?: true;
+    /** A Cloud home, or a server one person owns, that takes the one-time move from that person's computer: by-row chats,
+     * the manifest, the chats and credentials checks, and lines its owner wrote there stamped as the owner's. Whether a
+     * session is that person, /api/auth/session says (`own`). */
     move?: 1;
     /** Who can update the server: the desktop app that runs it, or the operator. */
     selfUpdate: "desktop-managed" | "operator";
@@ -119,19 +128,22 @@ export function serverVersion(root = SERVER_ROOT): string {
   return "unknown";
 }
 
-export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean }): EnvironmentDescriptor {
+export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean; cloudHome?: boolean; cloudTeam?: boolean; ownHome?: boolean; label?: string }): EnvironmentDescriptor {
   return {
     environmentId: input.environmentId,
-    label: process.env.OMB_ENVIRONMENT_LABEL?.trim() || hostname(),
+    label: input.label?.trim() || process.env.OMB_ENVIRONMENT_LABEL?.trim() || hostname(),
     platform: process.platform,
     version: serverVersion(),
     capabilities: {
       remoteSessions: true,
       // Never advertise a protocol this server would refuse.
       // lendingDetails: a lent computer may say its platform, and this server remembers what was lent to it.
-      ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const } : {}),
+      ...(input.sharedComputers === true ? { sharedComputers: true as const, lendingDetails: true as const, commandTimeouts: true as const, fileEdits: true as const } : {}),
       ...(input.sharedComputers === true && input.cloudHome === true ? { deviceLink: true as const } : {}),
+      ...(input.sharedComputers === true && input.cloudHome === true && input.cloudTeam !== true ? { myChromeLink: true as const } : {}),
       ...(input.cloudHome === true ? { cloudHome: true as const, move: 1 as const } : {}),
+      ...(input.ownHome === true && input.cloudHome !== true ? { move: 1 as const } : {}),
+      ...(input.cloudHome === true && input.cloudTeam === true ? { cloudTeam: true as const } : {}),
       selfUpdate: input.desktopManaged ? "desktop-managed" : "operator",
       emailSignIn: input.emailSignIn === true,
       jobs: true,

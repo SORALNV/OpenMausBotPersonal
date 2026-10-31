@@ -136,7 +136,7 @@ describe("Automations page", () => {
   it("lists each automation as one sentence with a plain status line and a switch", () => {
     const html = markup(createElement(RoutinesPage, { onBack: vi.fn(), onOpenRoom: vi.fn() }));
     expect(html).toContain("Every day at 6:30 AM, Runner summarises my inbox and calendar".replace("my inbox", "your inbox"));
-    expect(html).toMatch(/Working · last ran [^<]+ · next: [^<]+/);
+    expect(html).toMatch(/On · last ran [^<]+ · next: [^<]+/);
     expect(html).not.toMatch(/Latest: |Not run yet|runs OK this week|Run logs/);
   });
 
@@ -149,9 +149,8 @@ describe("Automations page", () => {
     expect(html).toContain("Sign in</button>");
   });
 
-  it("opens one simple panel from a sentence", () => {
-    const sentence = [...buttons(page()).keys()].find((label) => label.startsWith("Every day at 6:30"))!;
-    click(buttons(page()).get(sentence));
+  it("opens one simple panel from its name", () => {
+    click(buttons(page()).get("Morning brief"));
     expect(page().find(named("AutomationPanel"))!.props.automation).toMatchObject({ id: routine.id, kind: "schedule" });
   });
 
@@ -298,13 +297,29 @@ describe("routine editor", () => {
   it("shows a saved startup choice when the simple editor opens", () => {
     const html = editor({ ...routine, runOnStartup: true });
     expect(html).toContain('aria-expanded="true"');
-    expect(html).toMatch(/<input type="checkbox" aria-label="Also run when OpenMausBot starts"[^>]*checked[^>]*>/);
+    expect(html).toMatch(/<input type="checkbox" aria-label="Also run when MausBot starts"[^>]*checked[^>]*>/);
   });
 
   it("offers Remember the last run for a repeating routine, off unless the routine has it", () => {
     expect(editor(routine)).toMatch(/<input type="checkbox" aria-label="Remember the last run"(?![^>]*checked)[^>]*>/);
     expect(editor({ ...routine, continuity: true })).toMatch(/<input type="checkbox" aria-label="Remember the last run"[^>]*checked[^>]*>/);
     expect(editor(routine)).toContain("Each run starts with the previous run&#x27;s report");
+  });
+
+  it("schedules a goal in the bot's own chat when no group is chosen", () => {
+    const ownGoal: Routine = { ...routine, id: "own-goal", name: "Ship the fix", target: "room-goal", groupId: undefined, resultsThreadId: undefined };
+    const html = editor(ownGoal);
+    expect(html).toContain("Where it runs");
+    expect(html).toMatch(/<option value="" selected="">Just the bot, in its own chat<\/option>/);
+    expect(html).toContain("The bot works on the goal in its own chat until it is done.");
+    expect(html).toContain("Runner");
+    expect(html).not.toContain("Create a group from the sidebar first");
+
+    fixture.values = [];
+    const props = { seed: { kind: "routine" as const, at: Date.now() + 3_600_000, durationMinutes: 30, botIds: [bot.id], routine: ownGoal }, bots: [bot], onClose: vi.fn(), onSavedCall: vi.fn() };
+    click(buttons(capture(() => EventEditor(props))).get("Save"));
+    const [, init] = fixture.api.mock.calls.at(-1) as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ target: "room-goal", botId: bot.id, groupId: null });
   });
 
   it("hides Remember the last run for a one-time routine", () => {

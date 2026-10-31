@@ -11,14 +11,13 @@ import {
 } from "node:fs";
 import { link, open, unlink } from "node:fs/promises";
 import { join, extname } from "node:path";
+import { FILE_MAX_BYTES } from "../shared/upload-limits.ts";
 import { DATA_DIR } from "./config.ts";
 
+export { FILE_MAX_BYTES } from "../shared/upload-limits.ts";
 export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-
-/** Below Cloudflare's transport ceiling; a local inbox, not unbounded storage. */
-export const FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 export const DEFAULT_ATTACHMENTS_MAX_BYTES = 512 * 1024 * 1024;
 /** A person's own Cloud is the only home of everything their computers held, on a volume a move grows to fit. */
@@ -29,7 +28,7 @@ export function attachmentsMaxBytes(env: NodeJS.ProcessEnv = process.env): numbe
   const raw = env.OMB_ATTACHMENTS_MAX_BYTES?.trim();
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
-  return env.OMB_CLOUD_ROLE === "home" ? CLOUD_HOME_ATTACHMENTS_MAX_BYTES : DEFAULT_ATTACHMENTS_MAX_BYTES;
+  return env.OMB_CLOUD_ROLE === "home" || env.OMB_CLOUD_ROLE === "team" ? CLOUD_HOME_ATTACHMENTS_MAX_BYTES : DEFAULT_ATTACHMENTS_MAX_BYTES;
 }
 
 /** Never evict: prompts refer to attachment paths, so at this ceiling a new upload gets an explicit 507. */
@@ -215,8 +214,12 @@ class AttachmentReservation {
   }
 
   private reserveAtLeast(required: number, preferred: number): void {
-    const used = committedBytes();
-    const available = ATTACHMENTS_MAX_BYTES - used - reservedAttachmentBytes;
+    let available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+    if (available < required) {
+      // People free space by deleting attachments outside the app, which the cache never sees.
+      invalidateAttachmentAccounting();
+      available = ATTACHMENTS_MAX_BYTES - committedBytes() - reservedAttachmentBytes;
+    }
     if (available < required) {
       throw statusError(
         507,

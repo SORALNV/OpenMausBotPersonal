@@ -7,13 +7,13 @@ import { useBotEditor } from "./BotEditorContext";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
-import { mcpServersForBot, useMcpServers } from "@/lib/mcp-servers";
+import { mcpServersForBot, mcpServersOfBot, useMcpServers } from "@/lib/mcp-servers";
 import { placeFacts, placeViewFor, usePlaceSeat } from "@/lib/place-view";
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "../DesktopCapabilities";
 import { CloudBackendPicker } from "../CloudBackendPicker";
-import { ConfirmDialog } from "../ConfirmDialog";
 import { Switch } from "../SettingsPrimitives";
+import { PhoneAppsCard } from "./PhoneAppsCard";
 import { ProposalStatus } from "./ProposalStatus";
 import { ToolSelectionCard } from "./ToolSelectionCard";
 import { useCloudPlan } from "../ProIntroduction";
@@ -27,6 +27,8 @@ import {
   type ConnectorVerb,
 } from "@/lib/connector-grants";
 import { inputCls } from "./field";
+import { openKeySettings } from "../keys/key-focus";
+import { KeysLink } from "../keys/KeysLink";
 import type { ConnectorScope, ConnectorScopes } from "../../../shared/connector-scopes";
 import type { useBotSettingsDerived } from "./useBotSettingsDerived";
 
@@ -34,17 +36,12 @@ import type { useBotSettingsDerived } from "./useBotSettingsDerived";
  * Claude keeps sessions per project folder, so the server pins each task's folder on its first turn. PATCHed directly,
  * not via updateBot: the server validates the path, and a rejected folder must not stick in local state.
  */
-export function WorkingFolder({ bot }: { bot: Bot }) {
+export function useWorkingFolder(bot: Pick<Bot, "id" | "cwd">) {
   const { request: api } = useBotEditor();
-  const { capabilities } = useDesktopCapabilities();
-  const home = capabilities.host.homeDir;
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const canPick = Boolean(window.ogb?.pickFolder);
-  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
-  const pinned = task?.cwd;
-  const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
 
   const save = async (cwd: string | null) => {
     setSaving(true);
@@ -62,6 +59,16 @@ export function WorkingFolder({ bot }: { bot: Bot }) {
     const chosen = await window.ogb?.pickFolder?.(bot.cwd);
     if (chosen) void save(chosen);
   };
+  return { draft, setDraft, error, saving, canPick, save, pick };
+}
+
+export function WorkingFolder({ bot }: { bot: Bot }) {
+  const { capabilities } = useDesktopCapabilities();
+  const home = capabilities.host.homeDir;
+  const { draft, setDraft, error, saving, canPick, save, pick } = useWorkingFolder(bot);
+  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
+  const pinned = task?.cwd;
+  const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
 
   return (
     <div className="rounded-xl bg-card p-4">
@@ -70,7 +77,7 @@ export function WorkingFolder({ bot }: { bot: Bot }) {
       <ProposalStatus bot={bot} kind="chief" />
       {canPick ? (
         <div className="mt-3 flex items-center gap-2">
-          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
+          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[13px] text-ink" title={bot.cwd}>
             {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">{t("botAccess.folder.private")}</span>}
           </div>
           <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
@@ -91,7 +98,8 @@ export function WorkingFolder({ bot }: { bot: Bot }) {
           }}
         >
           <input
-            className={cn(inputCls, "font-mono text-[12.5px]")}
+            className={cn(inputCls, "font-mono text-[13px]")}
+            aria-label={t("botAccess.folder.title")}
             placeholder={t("botAccess.folder.placeholder")}
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
@@ -117,7 +125,8 @@ export function WorkingFolder({ bot }: { bot: Bot }) {
  */
 export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {
   const { dispatch } = useStore();
-  const { servers, error, refresh } = useMcpServers();
+  const { servers: all, error, refresh } = useMcpServers();
+  const servers = all ? mcpServersOfBot(all, bot.id) : null;
   const mounted = new Set((servers ? mcpServersForBot(servers, bot.mcpServers, bot.id) : []).map((server) => server.name));
   const usesAll = bot.mcpServers == null;
 
@@ -157,7 +166,9 @@ export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpS
           {servers.map((server) => (
             <div key={server.name} className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate font-mono text-[12.5px] text-ink">{server.name}</div>
+                <div className="truncate font-mono text-[13px] text-ink">{server.name}</div>
+                {!server.enabled && <div className="text-[12px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
+                {server.enabled && server.offFor?.includes(bot.id) && <div className="text-[12px] text-ink-secondary">{t("mcp.offFor", { bots: bot.name })}</div>}
                 {server.delegated ? <div className="text-[11.5px] text-ink-secondary">Managerへの委任で管理・{server.delegated.bots.find(entry => entry.id === bot.id)?.tools.length ?? 0}ツール</div> : !server.enabled && <div className="text-[11.5px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
               </div>
               <Switch
@@ -239,10 +250,6 @@ function ConnectorToolsGrants({
   const [tools, setTools] = useState<Record<string, ToolListing[]> | null>(null);
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [lastExplicit, setLastExplicit] = useState<Record<string, string[]>>({});
-  /**
-   * The first grant creates the grants record, which limits every other connected app to no tools: confirm it first.
-   */
-  const [confirmFirstGrant, setConfirmFirstGrant] = useState<{ slug: string; tools: "*" | string[] } | null>(null);
 
   useEffect(() => {
     if (!openSlug || tools || toolsError) return;
@@ -267,7 +274,7 @@ function ConnectorToolsGrants({
   };
 
   const apply = (slug: string, next: { tools: "*" | string[] } | null) => {
-    const value = withServiceGrant(record, slug, next);
+    const value = withServiceGrant(record, slug, next, slugs);
     if (value === undefined) return;
     patch({ connectorTools: value });
   };
@@ -280,18 +287,10 @@ function ConnectorToolsGrants({
       return;
     }
     setLastExplicit((prev) => ({ ...prev, [slug]: next }));
-    if (!recordExists) {
-      setConfirmFirstGrant({ slug, tools: next });
-      return;
-    }
     apply(slug, { tools: next });
   };
 
   const allForService = (slug: string) => {
-    if (!recordExists) {
-      setConfirmFirstGrant({ slug, tools: "*" });
-      return;
-    }
     const selected = selectedFor(slug);
     if (selected.length) setLastExplicit((prev) => ({ ...prev, [slug]: selected }));
     apply(slug, { tools: "*" });
@@ -304,13 +303,13 @@ function ConnectorToolsGrants({
   };
 
   if (!slugs.length) {
-    return <div className="mt-3 text-[11.5px] text-ink-secondary">{t("botAccess.grants.noApps")}</div>;
+    return <div className="mt-3 text-[12px] text-ink-secondary">{t("botAccess.grants.noApps")}</div>;
   }
 
   return (
     <div className="mt-3">
       <div className="text-[12px] font-medium text-ink">{t("botAccess.grants.header")}</div>
-      <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("botAccess.grants.hint")}</div>
+      <div className="mt-0.5 text-[12px] text-ink-secondary">{t("botAccess.grants.hint")}</div>
       <div className="mt-2 divide-y divide-hairline/40 overflow-hidden rounded-lg border border-hairline/40">
         {slugs.map((slug) => {
           const access = connectorServiceAccess(record, slug);
@@ -344,8 +343,8 @@ function ConnectorToolsGrants({
                 className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-control/60"
               >
                 {open ? <ChevronDown size={14} className="shrink-0 text-ink-secondary" /> : <ChevronRight size={14} className="shrink-0 text-ink-secondary" />}
-                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{slug}</span>
-                <span className="shrink-0 text-[11.5px] text-ink-secondary">
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink">{slug}</span>
+                <span className="shrink-0 text-[12px] text-ink-secondary">
                   {!access.editable
                     ? t("botAccess.grants.custom")
                     : access.level === "all"
@@ -358,7 +357,7 @@ function ConnectorToolsGrants({
               {open && (
                 <div className="border-t border-hairline/40 bg-inset/40 px-3 py-3">
                   {!access.editable ? (
-                    <div className="text-[11.5px] leading-relaxed text-ink-secondary">
+                    <div className="text-[12px] leading-relaxed text-ink-secondary">
                       {t("botAccess.grants.uneditable")}
                     </div>
                   ) : (
@@ -368,7 +367,7 @@ function ConnectorToolsGrants({
                           type="button"
                           onClick={() => (isAll ? leaveAllForService(slug) : allForService(slug))}
                           className={cn(
-                            "rounded-full px-2.5 py-1 text-[11.5px] font-medium",
+                            "rounded-full px-2.5 py-1 text-[12px] font-medium",
                             isAll ? "bg-accent/15 text-accent-text" : "bg-control text-ink hover:bg-raised-hover",
                           )}
                         >
@@ -378,19 +377,14 @@ function ConnectorToolsGrants({
                           <button
                             type="button"
                             onClick={() => patch({ connectorTools: null })}
-                            className="rounded-full bg-control px-2.5 py-1 text-[11.5px] font-medium text-ink hover:bg-raised-hover"
+                            className="rounded-full bg-control px-2.5 py-1 text-[12px] font-medium text-ink hover:bg-raised-hover"
                           >
                             {t("botAccess.grants.allApps")}
                           </button>
                         )}
                       </div>
-                      {!recordExists && (
-                        <div className="mt-2 text-[11px] leading-relaxed text-ink-secondary">
-                          {t("botAccess.grants.firstGrantWarning")}
-                        </div>
-                      )}
                       {toolsError ? (
-                        <div className="mt-2 text-[11.5px] text-ink-secondary">
+                        <div className="mt-2 text-[12px] text-ink-secondary">
                           {t("botAccess.grants.loadError")}{" "}
                           <button
                             type="button"
@@ -405,9 +399,9 @@ function ConnectorToolsGrants({
                           </button>
                         </div>
                       ) : tools === null ? (
-                        <div className="mt-2 text-[11.5px] text-ink-secondary">{t("botAccess.grants.loading")}</div>
+                        <div className="mt-2 text-[12px] text-ink-secondary">{t("botAccess.grants.loading")}</div>
                       ) : serviceTools.length === 0 ? (
-                        <div className="mt-2 text-[11.5px] text-ink-secondary">{t("botAccess.grants.noListing")}</div>
+                        <div className="mt-2 text-[12px] text-ink-secondary">{t("botAccess.grants.noListing")}</div>
                       ) : (
                         <>
                           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -421,10 +415,6 @@ function ConnectorToolsGrants({
                                   onClick={() => {
                                     const next = [...new Set([...selected, ...names])];
                                     setLastExplicit((prev) => ({ ...prev, [slug]: next }));
-                                    if (!recordExists) {
-                                      setConfirmFirstGrant({ slug, tools: next });
-                                      return;
-                                    }
                                     apply(slug, { tools: next });
                                   }}
                                   className="rounded-full bg-control px-2.5 py-1 text-[11px] text-ink hover:bg-raised-hover"
@@ -454,7 +444,7 @@ function ConnectorToolsGrants({
                                     className="mt-0.5"
                                   />
                                   <span className="min-w-0 flex-1">
-                                    <span className="block truncate font-mono text-[11.5px] text-ink" title={tool.name}>{tool.name}</span>
+                                    <span className="block truncate font-mono text-[12px] text-ink" title={tool.name}>{tool.name}</span>
                                     {tool.description && (
                                       <span className="block truncate text-[11px] text-ink-secondary" title={tool.description}>
                                         {tool.description}
@@ -465,7 +455,7 @@ function ConnectorToolsGrants({
                               );
                             })}
                             {matches.length === 0 && (
-                              <div className="px-1.5 py-2 text-[11.5px] text-ink-secondary">{t("botAccess.grants.noMatches")}</div>
+                              <div className="px-1.5 py-2 text-[12px] text-ink-secondary">{t("botAccess.grants.noMatches")}</div>
                             )}
                           </div>
                         </>
@@ -478,19 +468,6 @@ function ConnectorToolsGrants({
           );
         })}
       </div>
-      <ConfirmDialog
-        open={confirmFirstGrant !== null}
-        title={t("botAccess.grants.firstGrantTitle", { service: confirmFirstGrant?.slug ?? "" })}
-        body={t("botAccess.grants.firstGrantBody", { service: confirmFirstGrant?.slug ?? "" })}
-        confirmLabel={t("botAccess.grants.saveGrant")}
-        onCancel={() => setConfirmFirstGrant(null)}
-        onConfirm={() => {
-          const pending = confirmFirstGrant;
-          setConfirmFirstGrant(null);
-          if (!pending) return;
-          apply(pending.slug, { tools: pending.tools });
-        }}
-      />
     </div>
   );
 }
@@ -511,7 +488,7 @@ function ResearchCard({ bot, patch }: { bot: Bot; patch: (patch: { xResearch: bo
         <div className="text-[15px] font-medium text-ink">{t("research.title")}</div>
         <div className="mt-0.5 text-[13px] text-ink-secondary">{line}</div>
         {!available && !connecting && (
-          <button type="button" className="ui-button mt-2" onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}>
+          <button type="button" className="ui-button mt-2" onClick={() => dispatch(openKeySettings("treg"))}>
             {t("research.openKeys")}
           </button>
         )}
@@ -531,8 +508,8 @@ function RecordStepsRow({ on, browserOn, myChrome, onChange }: { on: boolean; br
   return (
     <div className="mt-3 flex items-center justify-between gap-4 border-t border-hairline/40 pt-3">
       <div>
-        <div className="text-[13.5px] font-medium text-ink">{t("botAccess.recordSteps.title")}</div>
-        <div className="mt-0.5 text-[12.5px] text-ink-secondary">
+        <div className="text-[14px] font-medium text-ink">{t("botAccess.recordSteps.title")}</div>
+        <div className="mt-0.5 text-[13px] text-ink-secondary">
           {!browserOn ? t("botAccess.recordSteps.needsBrowser") : on ? t("botAccess.recordSteps.on") : t("botAccess.recordSteps.off")}
           {browserOn && on && myChrome ? ` ${t("botAccess.recordSteps.myChrome")}` : ""}
         </div>
@@ -583,10 +560,10 @@ export function VpsAliasField({ bot }: { bot: Bot }) {
   return (
     <div className="mt-3 rounded-lg bg-inset p-3">
       <div className="text-[13px] text-ink">{t("botAccess.cloud.server")}</div>
-      <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+      <div className="mt-0.5 text-[12px] text-ink-secondary">
         {defaultAlias
           ? t("botAccess.cloud.serverDefault", { alias: defaultAlias })
-          : t("botAccess.cloud.serverNoDefault")}
+          : t("botAccess.cloud.serverNoDefault")} <KeysLink id="vps" />
       </div>
       <form
         className="mt-2 flex items-center gap-2"
@@ -596,7 +573,7 @@ export function VpsAliasField({ bot }: { bot: Bot }) {
         }}
       >
         <input
-          className={cn(inputCls, "font-mono text-[12.5px]")}
+          className={cn(inputCls, "font-mono text-[13px]")}
           placeholder={defaultAlias || t("botAccess.cloud.serverPlaceholder")}
           value={value}
           aria-label={t("botAccess.cloud.server")}
@@ -623,7 +600,7 @@ export function CloudPreference({ bot, patch }: { bot: Bot; patch: ReturnType<ty
   return (
     <>
       {!bot.computer && (
-        <div className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-secondary">
+        <div className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[12px] leading-relaxed text-ink-secondary">
           <span className="font-medium text-ink">{t("botAccess.cloud.autoTitle")}</span>{" "}
           {t("botAccess.cloud.autoDescription")}
         </div>
@@ -638,7 +615,7 @@ export function CloudPreference({ bot, patch }: { bot: Bot; patch: ReturnType<ty
         <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
           <div className="min-w-0">
             <div className="text-[13px] text-ink">{t("botAccess.cloud.startVps")}</div>
-            <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+            <div className="mt-0.5 text-[12px] text-ink-secondary">
               {t("botAccess.cloud.startVpsDescription")}
             </div>
           </div>
@@ -653,7 +630,7 @@ export function CloudPreference({ bot, patch }: { bot: Bot; patch: ReturnType<ty
   );
 }
 
-export type AccessPart = "worksOn" | "folder" | "apps" | "xResearch" | "mcp" | "tools" | "browser" | "webhooks" | "always";
+export type AccessPart = "worksOn" | "folder" | "apps" | "phone" | "xResearch" | "mcp" | "tools" | "browser" | "webhooks" | "always";
 
 export function AccessSection({
   bot,
@@ -772,6 +749,7 @@ export function AccessSection({
         )}
       </div>}
 
+      {shows("phone") && <PhoneAppsCard bot={bot} patch={patch} />}
       {shows("mcp") && <McpServersCard bot={bot} patch={patch} />}
       {shows("tools") && <ToolSelectionCard key={bot.id} bot={bot} engineKind={derived.engine?.driverKind} />}
 
@@ -839,7 +817,7 @@ export function AccessSection({
                 >
                   {webhook.enabled ? t("botAccess.webhooks.active") : t("botAccess.webhooks.paused")}
                 </span>
-                <span className="shrink-0 text-[11.5px] tabular-nums text-ink-secondary">
+                <span className="shrink-0 text-[12px] tabular-nums text-ink-secondary">
                   {t("botAccess.webhooks.deliveries", { count: webhook.deliveryCount })}
                 </span>
               </div>
@@ -858,7 +836,7 @@ export function AccessSection({
           <div className="mt-3 divide-y divide-hairline/40 overflow-hidden rounded-lg border border-hairline/40">
             {alwaysAllow.map((entry) => (
               <div key={entry} className="flex items-center justify-between gap-3 px-3 py-2">
-                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{entry}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink">{entry}</span>
                 <button
                   type="button"
                   aria-label={t("botAccess.always.remove", { entry })}
@@ -900,13 +878,13 @@ function ConnectorScopesControl({ connectedSlugs, labels = {}, scopes, onChange 
       <Switch checked={limited} aria-label={t("botAccess.scopes.limitLabel")} onClick={() => onChange(limited ? null : { apps: {} })} />
     </div>
     {limited && <div className="mt-2 flex flex-col divide-y divide-hairline/20 rounded-lg bg-inset">
-      {!slugs.length && <div className="px-3 py-2 text-[11.5px] text-ink-secondary">{t("botAccess.scopes.empty")}</div>}
+      {!slugs.length && <div className="px-3 py-2 text-[12px] text-ink-secondary">{t("botAccess.scopes.empty")}</div>}
       {slugs.map((slug) => <div key={slug} className="flex flex-wrap items-center justify-between gap-3 px-3 py-1.5">
-        <span className="min-w-0 text-[13px] text-ink">{labels[slug] ?? slug}{!connectedSlugs.includes(slug) && <span className="ml-2 text-[10.5px] text-ink-secondary">{t("botAccess.scopes.notConnected")}</span>}</span>
+        <span className="min-w-0 text-[13px] text-ink">{labels[slug] ?? slug}{!connectedSlugs.includes(slug) && <span className="ml-2 text-[11px] text-ink-secondary">{t("botAccess.scopes.notConnected")}</span>}</span>
         <div className="flex shrink-0 gap-0.5 rounded-md bg-card p-0.5" role="group" aria-label={t("botAccess.scopes.accessLabel", { app: slug })}>
           {([[null, t("botAccess.scopes.off"), t("botAccess.scopes.offHint")], ["read", t("botAccess.scopes.read"), t("botAccess.scopes.readHint")], ["write", t("botAccess.scopes.readWrite"), t("botAccess.scopes.readWriteHint")]] as const).map(([value, label, hint]) =>
             <button key={label} type="button" title={hint} aria-pressed={(scopes?.apps[slug] ?? null) === value} onClick={() => setScope(slug, value)}
-              className={cn("rounded px-2 py-0.5 text-[11.5px] font-medium", (scopes?.apps[slug] ?? null) === value ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink")}>{label}</button>)}
+              className={cn("rounded px-2 py-0.5 text-[12px] font-medium", (scopes?.apps[slug] ?? null) === value ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink")}>{label}</button>)}
         </div>
       </div>)}
     </div>}

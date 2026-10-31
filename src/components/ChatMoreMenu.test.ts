@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => {
   vi.stubGlobal("window", {});
   return {
     advanced: false,
+    threadsChosen: true,
     menus: [] as { ariaLabel: string; items: SidebarMenuItem[]; placement?: string; openOnHover?: boolean; trigger: string }[],
     dispatch: vi.fn(),
     inspectorOpen: false,
@@ -19,6 +20,7 @@ vi.mock("@/state/store", async (importOriginal) => {
   return { ...original, useStore: () => ({ state: { ...original.initialState, inspectorOpen: fixture.inspectorOpen }, dispatch: fixture.dispatch }) };
 });
 vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => fixture.advanced, setAdvancedMode: vi.fn() }));
+vi.mock("@/lib/thread-preferences", () => ({ useShowThreads: () => fixture.advanced && fixture.threadsChosen }));
 vi.mock("@/lib/chat-find", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/chat-find")>(),
   requestChatFind: fixture.find,
@@ -32,7 +34,7 @@ vi.mock("./SidebarPopoverMenu", async (importOriginal) => ({
   },
 }));
 
-const { ChatMoreMenu, ChatHeaderMenu } = await import("./ChatMoreMenu");
+const { ChatMoreMenu, ChatHeaderMenu, ChatShareMenu } = await import("./ChatMoreMenu");
 afterAll(() => vi.unstubAllGlobals());
 
 const task = (threadId: string, title: string, at: number, extra: Partial<Task> = {}): Task => ({
@@ -60,18 +62,21 @@ const keys = (items: SidebarMenuItem[]) => items.map((item) => item.key);
 
 beforeEach(() => {
   fixture.advanced = false;
+  fixture.threadsChosen = true;
   fixture.inspectorOpen = false;
   fixture.dispatch.mockClear();
   fixture.find.mockClear();
 });
 
 describe("ChatMoreMenu, the round ⋯ for the bot panel", () => {
-  it("is a round 32px button labelled More", () => {
+  it("is a round 32px button labelled More, on the raised surface in Simple mode", () => {
     const menu = menuOf(createElement(ChatMoreMenu, { bot }));
     expect(menu.ariaLabel).toBe("More");
     expect(menu.placement).toBeUndefined();
     expect(menu.trigger).toContain('data-testid="chat-more"');
-    expect(menu.trigger).toMatch(/class="[^"]*\bsize-8\b[^"]*\brounded-full\b[^"]*\bbg-raised\/50\b/);
+    expect(menu.trigger).toMatch(/class="[^"]*\bsize-8\b[^"]*\brounded-full\b[^"]*\bbg-composer\b[^"]*\bring-inset\b/);
+    fixture.advanced = true;
+    expect(menuOf(createElement(ChatMoreMenu, { bot })).trigger).toMatch(/class="[^"]*\bsize-8\b[^"]*\brounded-full\b[^"]*\bbg-raised\/50\b/);
   });
 
   it("offers threads in Simple mode, and Usage and the Inspector unlocked", () => {
@@ -103,6 +108,13 @@ describe("ChatMoreMenu, the round ⋯ for the bot panel", () => {
     expect(fixture.dispatch).toHaveBeenCalledWith({ type: "switchTask", botId: "pepper", threadId: "main" });
   });
 
+  it("lists every thread, however many there are", () => {
+    const many = { ...bot, tasks: Array.from({ length: 20 }, (_, i) => task(`t${i}`, `Thread ${i}`, i)) };
+    const threads = menuOf(createElement(ChatMoreMenu, { bot: many })).items.find((item) => item.key === "threads")!;
+    expect(threads.value).toBe("20");
+    expect(threads.submenu!.map((item) => item.label)).toEqual(Array.from({ length: 20 }, (_, i) => `Thread ${19 - i}`));
+  });
+
   it("leaves All threads out while the bot has one thread", () => {
     const single = { ...bot, threadId: "main", tasks: [task("main", "Our chat", 1), task("routine", "Morning digest", 5, { routineRunId: "run-1" })] };
     expect(keys(menuOf(createElement(ChatMoreMenu, { bot: single })).items)).toEqual(["find", "new-thread", "copy", "download", "activity", "inspector"]);
@@ -132,6 +144,13 @@ describe("ChatMoreMenu, the round ⋯ for the bot panel", () => {
   });
 });
 
+describe("ChatShareMenu, the bot panel's Share", () => {
+  it("copies or downloads the conversation, in those words", () => {
+    const menu = menuOf(createElement(ChatShareMenu, { bot, className: "" }));
+    expect(menu.items.map((item) => [item.key, item.label])).toEqual([["copy", "Copy conversation"], ["download", "Download conversation"]]);
+  });
+});
+
 describe("ChatHeaderMenu, Advanced mode's header ⋯", () => {
   it("keeps main's items, trigger and hover menu below the header", () => {
     fixture.advanced = true;
@@ -140,11 +159,19 @@ describe("ChatHeaderMenu, Advanced mode's header ⋯", () => {
     expect(menu.items.find((item) => item.key === "inspector")).toMatchObject({ separatorBefore: true });
     expect(menu.items.every((item) => !item.disabled && item.heading !== "In Advanced mode")).toBe(true);
     expect(menu).toMatchObject({ placement: "below", openOnHover: true });
-    expect(menu.trigger).toMatch(/data-testid="chat-more" class="flex rounded-md p-1.5 hover:bg-raised/);
+    expect(menu.trigger).toMatch(/data-testid="chat-more" class="flex size-8 items-center justify-center rounded-full /);
   });
 
   it("has no thread items even if rendered by ChatMoreMenu in Advanced mode", () => {
     fixture.advanced = true;
     expect(keys(menuOf(createElement(ChatMoreMenu, { bot })).items)).not.toContain("threads");
+  });
+
+  it("lists the threads when the Threads setting hides them from the sidebar", () => {
+    fixture.advanced = true;
+    fixture.threadsChosen = false;
+    const items = menuOf(createElement(ChatHeaderMenu, { bot })).items;
+    expect(keys(items)).toEqual(expect.arrayContaining(["new-thread", "threads"]));
+    expect(items.find((item) => item.key === "threads")!.submenu).toHaveLength(3);
   });
 });
