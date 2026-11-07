@@ -36,6 +36,7 @@ const LINES: Record<string, number> = {
   "server/composio.ts": 1345,
   "electron/main.mjs": 3383,
   "shared/wire.ts": 1004,
+  "server/drivers/agents-catalog.ts": 1017,
   "server/vps-computer.ts": 1369,
   "scripts/mcp-server.ts": 1414,
   "server/boat.ts": 1258,
