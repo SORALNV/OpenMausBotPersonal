@@ -3,6 +3,8 @@
 /** Which tools a conversation is shown, the same on every one of its turns. Presentation only: the server still
  * authenticates and scopes every call. */
 export interface CatalogProfile {
+  /** The owner enabled a native harness delegation tool; this does not select the Bot's model. */
+  nativeConnect?: boolean;
   skillAuthoring: boolean;
   sharedComputers: boolean;
   voiceNotes: boolean;
@@ -31,6 +33,7 @@ export interface CatalogProfile {
 /** Everything is off unless the harness says "1". */
 export function catalogProfileFromEnv(env: NodeJS.ProcessEnv): CatalogProfile {
   return {
+    ...(env.OMB_NATIVE_CONNECT === "1" ? { nativeConnect: true } : {}),
     skillAuthoring: env.OMB_SKILL_AUTHORING_ENABLED === "1",
     sharedComputers: env.OMB_SHARED_COMPUTERS_ENABLED === "1",
     voiceNotes: env.OMB_VOICE_NOTES === "1",

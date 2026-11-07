@@ -70,6 +70,7 @@ Use only mapped, tested commands:
 - [Automatic cleanup of idle bot-created threads](bot-thread-cleanup.md)
 - [Personal fixed native Codex threads](direct-codex.md)
 - [Personal OhMyPi NativeConnect over SSH](native-omp.md)
+- [Antigravity CLI NativeConnect offline qualification](native-antigravity.md)
 - [Proactive routines and the brief](proactive-routines.md)
 - [Waits: tell me when, with no AI while waiting](waits.md)
 - [A new Cloud's first hour](first-hour.md)

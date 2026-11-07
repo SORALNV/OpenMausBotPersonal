@@ -12,6 +12,12 @@ the destination's tools. A connector adapts the harness's existing input,
 history and approval interfaces. Replacing the harness requires a corresponding
 connector rather than changing this definition.
 
+The [Antigravity CLI connector](verification/native-antigravity.md) is an
+optional delegation tool for the ordinary conversational Bot. It preserves
+that Bot's model, role, memory and OMB tools, delegates only selected tasks,
+and retains one native conversation per OMB thread. It does not replace the
+Bot's brain or provide the shared TUI semantics described below.
+
 ## Standard OhMyPi TUI
 
 The optional `connection: "shared-tui"` binding uses unmodified OhMyPi v18.12.5

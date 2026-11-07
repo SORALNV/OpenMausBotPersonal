@@ -18,6 +18,7 @@ import {
 export interface YourComputerBus {
   store: Store;
   notify?: (notification: Notification | null) => void;
+  alwaysAllowed?: () => boolean;
 }
 
 export const YOUR_COMPUTER_WAITING =
@@ -74,6 +75,7 @@ export function askToUseYourComputer(
   owner: { threadId: string; generation: string },
   call?: YourComputerCall,
 ): Promise<void> {
+  if (bus.alwaysAllowed?.() === true) return Promise.resolve();
   const { store } = bus;
   const { key, params } = yourComputerQuestion(call);
   const title = yourComputerText(key, params);

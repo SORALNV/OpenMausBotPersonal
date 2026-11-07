@@ -187,6 +187,11 @@ export async function callTool(called: string, input: Json, context: ToolCallCon
   const member = agentsCallMember(name, args);
   const { botId: BOT_ID, threadId: THREAD_ID, depth: DEPTH } = context;
   const { api, apiResponse } = context.client;
+  if (name === "native_connect") {
+    if (Object.keys(args).some(key => !["action", "prompt"].includes(key)) || !["run", "status"].includes(String(args.action))) return { text: "NativeConnectの入力が不正です。", isError: true };
+    const { ok, body } = await apiResponse("/api/internal/native-connect", { method: "POST", body: JSON.stringify(args) });
+    return { text: JSON.stringify(body), ...(!ok ? { isError: true } : {}) };
+  }
   if (name === "vm_exec") {
     const { ok, body } = await apiResponse("/api/internal/vm-exec", {
       method: "POST",
