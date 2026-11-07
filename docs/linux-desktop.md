@@ -21,7 +21,7 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 The local preview does **not** give the bot control of this computer by itself. On Xorg, local control requires both
 the global **Enable local control** choice and assigning a bot to **This computer**; every action still enters the
 approval flow. On Wayland, local control is disabled and legacy opt-ins are cleared automatically. Automatic Wayland
-helper installation, Linux dictation, and ARM64 remain unavailable and fail closed; follow their
+helper installation, native on-device dictation, and ARM64 remain unavailable and fail closed; follow their
 progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29) and the safety hold in
 [issue #345](https://github.com/milind-soni/OpenMausBot/issues/345). Bundled
 CUA supply-chain work is tracked in [issue #113](https://github.com/milind-soni/OpenMausBot/issues/113). Xorg is tracked in
@@ -84,6 +84,35 @@ chmod +x release/OpenMausBot-*-x86_64.AppImage
 ```
 
 For a downloaded release AppImage, use `OpenMausBot.AppImage` in place of the versioned path above.
+
+### Arch Linux and EndeavourOS (AppImage)
+
+Arch-based distributions are not an official target, but the release AppImage runs there. A minimal Arch
+install lacks the FUSE helper and some desktop libraries the AppImage needs, so install them first:
+
+```sh
+sudo pacman -S --needed fuse3 gtk3 nss alsa-lib libcups mesa
+chmod +x OpenMausBot.AppImage
+./OpenMausBot.AppImage
+```
+
+A full desktop install (for example EndeavourOS with KDE or GNOME) usually has all of these already, and
+`--needed` skips the ones that are present. This was checked with the v0.1.138 AppImage on a current Arch
+Linux image (fuse3 3.18, gtk3 3.24, mesa 26.2): the app opens to the welcome screen.
+
+### Updating
+
+The app checks for updates in the background and downloads them by itself. Nothing restarts until you click
+**Restart to update**.
+
+- **Debian package.** The click asks for your password once, in the system's own prompt, installs the update with
+  `apt-get` (so new dependencies are resolved) and reopens OpenMausBot. The downloaded file is copied to a
+  root-only folder and checked against the checksum in the update feed first; a file that does not match is
+  refused and nothing is installed. Closing the prompt leaves the update ready to try again. If the session cannot
+  show a prompt (SSH, no desktop, no `pkexec`), the app falls back to copying the `sudo apt-get install` command
+  and opening a terminal, and says why. Set `OMB_UPDATE_INSTALL=terminal` to always use the terminal.
+- **AppImage.** The update replaces the AppImage when you restart; no password is needed.
+- **rpm and pacman packages** still use the terminal hand-off.
 
 ### Bundled bot browser on Ubuntu 24.04
 
@@ -168,8 +197,10 @@ Installed `.deb` and AppImage builds include the certified **Cua Driver 0.19.3**
 On GNOME Xorg, open Settings, choose **Enable local control (Beta)**, wait for **Ready**, then explicitly assign a bot
 to **This computer**. No driver download, terminal command, `chmod`, or daemon setup is required. The owned daemon
 starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created. OpenMausBot also
-uses Electron software rendering on Linux to avoid the reproduced NVIDIA/libGLES GPU-process failure that could
-leave an invisible focused app window receiving input.
+uses Electron software rendering when the NVIDIA driver is loaded, to avoid the reproduced NVIDIA/libGLES
+GPU-process failure that could leave an invisible focused app window receiving input. Other GPUs keep hardware
+acceleration, because software rendering costs about a CPU core while the window animates. Set `OMB_LINUX_GPU=off`
+to force software rendering or `OMB_LINUX_GPU=on` to force the GPU.
 
 Cua actions use a private logical cursor. With the decorative overlay disabled, `move_cursor` does not move the
 user's physical pointer; approved click and typing actions still target the requested window, while the user's own
@@ -266,3 +297,8 @@ file OpenMausBot-*-x86_64.AppImage
 
 Run it from a terminal once to collect the startup output. Do not install `libfuse2` just for this AppImage; the
 package is built with the static runtime.
+
+If it prints `No suitable fusermount binary found on the $PATH` or `Cannot mount AppImage, please check your FUSE
+setup`, install the distribution's FUSE 3 package (`fuse3` on Ubuntu, Debian and Arch). If it then names a missing
+`lib*.so` file, install the desktop libraries listed under
+[Arch Linux and EndeavourOS](#arch-linux-and-endeavouros-appimage), or your distribution's packages for them.

@@ -1,6 +1,7 @@
+import { userErrorThrown } from "./user-errors.ts";
 import { z } from "zod";
 import { profilePatchSchema, fitsOnOneLine } from "./bot-profile.ts";
-import { EFFORT_LEVELS } from "../shared/wire.ts";
+import { EFFORT_LEVELS, MAUS_COLOR_NAMES } from "../shared/wire.ts";
 import { isModelVariant } from "./contracts.ts";
 import { normalizeCronSchedule } from "../shared/routine-schedule.ts";
 import { parseToolScope, type ToolScope } from "../shared/tool-scope.ts";
@@ -20,9 +21,10 @@ export const botDefaultModelSchema = z.object({
 
 // Preferences only: consent flags, live grants, bot IDs and execution state can never be replayed as permission grants.
 export const botDefaultsProfileSchema = profilePatchSchema.extend({
-  name: z.string().max(100).refine(fitsOnOneLine, "name must fit on one line").optional(),
-  section: z.string().trim().max(60).optional(),
-  color: z.enum(["green", "blue", "red", "orange", "purple", "cyan", "pink", "yellow", "teal", "coral"]).optional(),
+  name: z.string({ error: "name must be a string" }).max(100, { error: "name must be at most 100 characters" })
+    .refine(fitsOnOneLine, "name must fit on one line").optional(),
+  section: z.string({ error: "section must be a string" }).trim().max(60, { error: "section must be at most 60 characters" }).optional(),
+  color: z.enum(MAUS_COLOR_NAMES).optional(),
   mascotExpression: z.string().max(60).nullable().optional(),
   modelSelection: botDefaultModelSchema.optional(),
   computer: z.enum(["cloud", "vm", "local", "browser", "off"]).nullable().optional(),
@@ -106,20 +108,31 @@ export type BotDefaultsProfile = NewBotDefaults["profile"];
 export type BotRoutineTemplate = NewBotDefaults["routines"][number];
 export type BotSkillTemplate = NewBotDefaults["skills"][number];
 
+/** The first thing wrong, as one sentence: a field's own message, else which field is not valid. */
+function settingsError(error: z.ZodError): Error {
+  const issue = error.issues[0];
+  if (!issue) return userErrorThrown("serverError.botDefaults.invalid");
+  if (issue.code === "too_big" && issue.path[0] === "name") return userErrorThrown("serverError.botDefaults.nameLength");
+  if (issue.code === "too_big" && issue.path[0] === "section") return userErrorThrown("serverError.botDefaults.sectionLength");
+  if (issue.code === "unrecognized_keys") return new Error(`unsupported bot field: ${issue.keys[0] ?? "unknown"}`);
+  const field = issue.path.join(".");
+  return new Error(field && issue.message.startsWith(String(issue.path[0])) ? issue.message : `${field || "the bot"} is not valid`);
+}
+
 export function resolveBotCreationDefaults(saved: NewBotDefaults | undefined, body: Record<string, unknown>) {
   if (body.useDefaults !== undefined && typeof body.useDefaults !== "boolean") {
     throw Object.assign(new Error("useDefaults must be true or false"), { status: 400 });
   }
   const template = newBotDefaultsSchema.parse(body.useDefaults === false ? {} : saved ?? {});
   const checked = botDefaultsProfileSchema.safeParse(body.settings === undefined ? {} : body.settings);
-  if (!checked.success) throw Object.assign(new Error(checked.error.message), { status: 400 });
+  if (!checked.success) throw Object.assign(settingsError(checked.error), { status: 400 });
   const explicit = checked.data;
   const profile = { ...template.profile, ...explicit };
   for (const key of ["name", "title", "description", "modelSelection", "section"] as const) {
     if (Object.hasOwn(body, key)) Object.assign(profile, { [key]: key === "section" && body[key] === null ? "" : body[key] });
   }
   const resolved = botDefaultsProfileSchema.safeParse(profile);
-  if (!resolved.success) throw Object.assign(new Error(resolved.error.message), { status: 400 });
+  if (!resolved.success) throw Object.assign(settingsError(resolved.error), { status: 400 });
   if (!resolved.data.name?.trim()) delete resolved.data.name;
   return { ...template, profile: resolved.data };
 }

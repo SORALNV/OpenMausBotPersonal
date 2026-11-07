@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname, uptime } from "node:os";
 import { join } from "node:path";
 
@@ -68,6 +68,62 @@ function isBootIdentity(value) {
   return value === null || (typeof value === "string" && normalizeBootId(value) === value);
 }
 
+/**
+ * Containers on one host share its boot id, and each runs in a pid namespace of its own, where pids start again from 1:
+ * a new container's server is often given the very pid its dead predecessor recorded. A pid means something only in
+ * the namespace it was read in, so Linux records name theirs.
+ */
+let cachedPidNamespace;
+
+function readPidNamespace() {
+  if (process.platform !== "linux") return null;
+  try {
+    return /^pid:\[([1-9][0-9]{0,19})\]$/.exec(readlinkSync("/proc/self/ns/pid"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function pidNamespace() {
+  if (cachedPidNamespace === undefined) cachedPidNamespace = readPidNamespace();
+  return cachedPidNamespace;
+}
+
+function isPidNamespace(value) {
+  return value === null || (typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value));
+}
+
+/** Linux: when a process started, in clock ticks since boot (/proc/<pid>/stat field 22); null when unreadable. */
+function processStartTicks(pid) {
+  if (process.platform !== "linux") return null;
+  let stat;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    return null;
+  }
+  // Field 2, the command name, is in parentheses and may itself hold spaces and parentheses.
+  const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+  return Number.isSafeInteger(ticks) && ticks >= 0 ? ticks : null;
+}
+
+function isStartTicks(value) {
+  return value === null || (Number.isSafeInteger(value) && value >= 0);
+}
+
+/** Who this process is beyond its pid: its pid namespace and when it started, so a reused pid is never taken for it. */
+function processIdentity() {
+  return { ns: pidNamespace(), start: processStartTicks(process.pid) };
+}
+
+/** Unless the record provably predates this boot, one made in another pid namespace belongs to another container. */
+function fromAnotherPidNamespace(record) {
+  const current = bootSession();
+  if (current !== null && typeof record.boot === "string" && record.boot !== current) return false;
+  const ns = pidNamespace();
+  return ns !== null && typeof record.ns === "string" && record.ns !== ns;
+}
+
 function ownerPredatesThisBoot(owner) {
   const current = bootSession();
   if (current !== null && typeof owner.boot === "string") return owner.boot !== current;
@@ -83,13 +139,15 @@ function ownerIsAlive(owner) {
 
 /** macOS renames the host on another network, so the same boot session (random per boot) also proves this machine. */
 function sameMachine(record) {
+  if (fromAnotherPidNamespace(record)) return false;
   if (record.host === hostname()) return true;
   const boot = bootSession();
   return boot !== null && typeof record.boot === "string" && record.boot === boot;
 }
 
-function otherMachineAdvice(path) {
-  return ` If OpenMausBot is not running on another computer that shares this folder, quit OpenMausBot, delete ${JSON.stringify(path)} and start again.`;
+function otherMachineAdvice(path, t) {
+  if (t) return t("native.boot.sharedFolderAdvice", { path: JSON.stringify(path) });
+  return ` If OpenMausBot is not running on another computer or container that shares this folder, quit OpenMausBot, delete ${JSON.stringify(path)} and start again.`;
 }
 
 function isLeaseOwner(value) {
@@ -107,7 +165,9 @@ function isLeaseOwner(value) {
     && value.createdAt > 0
     // Optional so an older build's lease stays readable during an upgrade.
     && (value.boot === undefined || isBootIdentity(value.boot))
-    && (value.uptime === undefined || (Number.isInteger(value.uptime) && value.uptime >= 0));
+    && (value.uptime === undefined || (Number.isInteger(value.uptime) && value.uptime >= 0))
+    && (value.ns === undefined || isPidNamespace(value.ns))
+    && (value.start === undefined || isStartTicks(value.start));
 }
 
 function isReaperOwner(value, targetToken) {
@@ -179,14 +239,20 @@ function parseWmiDateTime(value) {
   return ms - offsetMinutes * 60 * 1000;
 }
 
+/** Windows: when a process started, in ms since the epoch; null when it has exited or neither probe can read it. */
 function processCreationTimeMs(pid) {
   if (process.platform !== "win32") return null;
+  return wmicCreationTimeMs(pid) ?? cimCreationTimeMs(pid);
+}
+
+/** A Windows probe's stdout, its window hidden; throws when it fails or runs past `timeout`. */
+function windowsOutput(file, args, timeout) {
+  return execFileSync(file, args, { encoding: "utf8", timeout, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function wmicCreationTimeMs(pid) {
   try {
-    const output = execFileSync(
-      "wmic",
-      ["process", "where", `ProcessId=${pid}`, "get", "CreationDate", "/format:csv"],
-      { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
-    );
+    const output = windowsOutput("wmic", ["process", "where", `ProcessId=${pid}`, "get", "CreationDate", "/format:csv"], 5_000);
     for (const line of output.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -202,8 +268,31 @@ function processCreationTimeMs(pid) {
   return null;
 }
 
-/** Windows reuses pids within a boot: a process created after the lease cannot be its original owner. */
+/**
+ * Windows 11 no longer installs wmic, and without a creation time every reused pid reads as the lease's owner, so
+ * the lease can never be recovered. Windows PowerShell ships with every Windows; named by full path, never via PATH.
+ */
+function cimCreationTimeMs(pid) {
+  const powershell = join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  try {
+    const output = windowsOutput(powershell, [
+      "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if ($p) { ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }`,
+    ], 15_000);
+    const ms = Number(output.trim());
+    return output.trim() && Number.isSafeInteger(ms) && ms > 0 ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pids are reused within a boot: a process that started at another moment, or after the lease, is not its owner. */
 function ownerIdentityMatches(owner) {
+  if (process.platform === "linux") {
+    if (!Number.isSafeInteger(owner.start) || typeof owner.ns !== "string" || owner.ns !== pidNamespace()) return true;
+    const started = processStartTicks(owner.pid);
+    return started === null || started === owner.start;
+  }
   if (process.platform !== "win32") return true;
   const created = processCreationTimeMs(owner.pid);
   if (created === null) return true;
@@ -255,6 +344,7 @@ function claimReaperAuthority(leasePath, expected) {
       createdAt: Date.now(),
       boot: bootSession(),
       uptime: uptimeMs(),
+      ...processIdentity(),
       targetToken: expected.token,
     };
     if (publishRecord(
@@ -318,13 +408,13 @@ function prepareDataDir(dataDir, legacyDataDir) {
   return join(dataDir, LEASE_NAME);
 }
 
-function assertNoLiveDelegatedChild(dataDir) {
+function assertNoLiveDelegatedChild(dataDir, t) {
   const childLeasePath = join(dataDir, DELEGATED_CHILD_DIR, LEASE_NAME);
   const child = readOwner(childLeasePath);
   if (!child) return;
   if (!sameMachine(child)) {
     throw leaseError(
-      `This OpenMausBot data directory still has a delegated server on another machine. Delegated server lease: ${JSON.stringify(childLeasePath)}.${otherMachineAdvice(childLeasePath)}`,
+      `This OpenMausBot data directory still has a delegated server on another machine. Delegated server lease: ${JSON.stringify(childLeasePath)}.${otherMachineAdvice(childLeasePath, t)}`,
     );
   }
   if (ownerIsAlive(child)) {
@@ -393,7 +483,7 @@ function validateChildDelegation(dataDir, encoded) {
 
 function acquireDataDirLeaseInternal(dataDir, options = {}) {
   const leasePath = prepareDataDir(dataDir, options.legacyDataDir);
-  if (options.guardDelegatedChild !== false) assertNoLiveDelegatedChild(dataDir);
+  if (options.guardDelegatedChild !== false) assertNoLiveDelegatedChild(dataDir, options.t);
   const owner = {
     version: 1,
     pid: process.pid,
@@ -402,6 +492,7 @@ function acquireDataDirLeaseInternal(dataDir, options = {}) {
     createdAt: Date.now(),
     boot: bootSession(),
     uptime: uptimeMs(),
+    ...processIdentity(),
   };
   const candidatePath = `${leasePath}.candidate-${owner.pid}-${owner.token}`;
   try {
@@ -427,7 +518,7 @@ function acquireDataDirLeaseInternal(dataDir, options = {}) {
       if (!current) continue;
       if (!sameMachine(current)) {
         throw leaseError(
-          `This OpenMausBot data directory is already owned by a process on another machine. Lease record: ${JSON.stringify(leasePath)}.${otherMachineAdvice(leasePath)}`,
+          `This OpenMausBot data directory is already owned by a process on another machine. Lease record: ${JSON.stringify(leasePath)}.${otherMachineAdvice(leasePath, options.t)}`,
         );
       }
       if (ownerIsAlive(current)) {
@@ -472,6 +563,37 @@ function acquireDataDirLeaseInternal(dataDir, options = {}) {
 
 export function acquireDataDirLease(dataDir, options = {}) {
   return acquireDataDirLeaseInternal(dataDir, options);
+}
+
+/**
+ * For a data directory only one machine or container uses at a time (a Cloud home's volume, which its launcher holds
+ * locked: server/cloud-home-start.ts), where a record another one wrote can never belong to a live process: removes every
+ * lease, delegated-child lease and recovery record held by another machine or container and returns their holders.
+ * Records from this one are left as they are: acquireDataDirLease() refuses a live one and recovers a dead one. Never
+ * for a folder several computers share.
+ */
+export function clearRecordsFromOtherMachines(dataDir) {
+  validateDataDir(dataDir);
+  let entries;
+  try {
+    entries = readdirSync(dataDir);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw leaseError("OpenMausBot cannot read its data directory.", error);
+  }
+  const paths = [
+    join(dataDir, LEASE_NAME),
+    join(dataDir, DELEGATED_CHILD_DIR, LEASE_NAME),
+    ...entries.filter((name) => name.startsWith(`${LEASE_NAME}.reap-`)).map((name) => join(dataDir, name)),
+  ];
+  const cleared = [];
+  for (const path of paths) {
+    const record = readOwner(path);
+    if (!record || sameMachine(record)) continue;
+    unlinkExact(path, "OpenMausBot could not remove the data-directory record another machine left.");
+    cleared.push({ path, host: record.host, pid: record.pid });
+  }
+  return cleared;
 }
 
 export function acquireDataDirLeaseForProcess(dataDir, environment = process.env) {

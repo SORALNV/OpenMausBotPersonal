@@ -2,6 +2,7 @@
 import React, { useEffect, useId, useMemo, useRef } from 'react'
 
 import { MASCOT_BODIES } from "../../shared/mascot-bodies"
+import { mascotLabel } from "@/lib/mascot-names"
 import {
   EXPRESSIONS,
   EXPRESSION_COUNT,
@@ -14,11 +15,10 @@ import {
   mouthFrame,
   type Ring,
 } from "./cursor-face-data"
-import { GLYPH_EASE_MS, MOTION, VIEW_SPAN, bodyTransform, faceTravelUnits, morphUnitsPerMs, nextMascotFrame, type BodyMotion } from "./mascot-motion"
+import { GLYPH_EASE_MS, MOTION, VIEW_SPAN, bodyTransform, faceTravelUnits, frameFloorMs, morphUnitsPerMs, nextFrameAt, nextMascotFrame, type BodyMotion } from "./mascot-motion"
 import { mascotClock, usePrefersReducedMotion, type MascotTicket } from "./mascot-clock"
 
-export { MOTION, bodyTransform }
-export type { BodyMotion }
+export { MOTION, bodyTransform, type BodyMotion }
 export {
   EXPRESSIONS,
   EXPRESSION_COUNT,
@@ -903,6 +903,7 @@ export interface CursorAvatarProps {
   paused?: boolean
   silhouette?: CursorSilhouette
   gradient?: [string, string, string]
+  picture?: string | null
   eyeColor?: string
   title?: string | null
   className?: string
@@ -936,7 +937,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       autoExpression = true,
       paused = false,
       silhouette = DEFAULT_SILHOUETTE,
-      gradient = DEFAULT_GRADIENT,
+      gradient = DEFAULT_GRADIENT, picture,
       eyeColor = "#ffffff",
       title,
       className,
@@ -956,7 +957,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     const confettiLayer = useRef<SVGGElement | null>(null)
     const glyphLayer = useRef<SVGGElement | null>(null)
     const ticket = useRef<MascotTicket | null>(null)
-    const wake = () => ticket.current?.wake()
+    const wake = () => ticket.current?.wake(nextFrameAt(performance.now(), frameFloorMs(engine.current.props.sizePx)))
 
     const reduced = usePrefersReducedMotion()
     const motionStrength = motion ?? (reduced ? 0 : 1)
@@ -1237,7 +1238,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     }, [])
 
     const dimension = typeof size === 'number' ? `${size}px` : size
-    const label = title === undefined ? `${silhouette.name} mascot` : title
+    const label = title === undefined ? mascotLabel(silhouette.name) : title
     const body = silhouette.body.replace(/\{\{GRADIENT\}\}/g, `url(#${uid}-grad)`)
 
     return (
@@ -1269,8 +1270,8 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
           <g ref={trailLayer} />
           <g ref={bodyGroup}>
           <g ref={bodyContent}>
-          <g transform={silhouette.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />
-          <g clipPath={`url(#${uid}-clip)`}>
+          {picture ? <image href={picture} x="-15" y="-15" width={VIEW_SPAN} height={VIEW_SPAN} preserveAspectRatio="none" /> : <g transform={silhouette.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />}
+          <g clipPath={`url(#${uid}-clip)`} visibility={picture ? 'hidden' : undefined}>
             <g transform={anchorTransform(silhouette.anchor)}>
               <path ref={eye0} fill={eyeColor} />
               <path ref={eye1} fill={eyeColor} />
@@ -1306,15 +1307,9 @@ function displayed(e: { current: Ring[]; target: Ring[]; morph: number }): Ring[
   )
 }
 
-function displayedMouth(e: { currentMouth: number[]; targetMouth: number[]; morph: number }) {
-  const m = clamp(e.morph, 0, 1)
-  return e.currentMouth.map((v, i) => v + (e.targetMouth[i] - v) * m)
-}
-
-function displayedGaze(e: { currentGaze: number[]; targetGaze: number[]; morph: number }) {
-  const m = clamp(e.morph, 0, 1)
-  return e.currentGaze.map((v, i) => v + (e.targetGaze[i] - v) * m)
-}
+const towards = (from: number[], to: number[], morph: number) => from.map((v, i) => v + (to[i] - v) * clamp(morph, 0, 1))
+const displayedMouth = (e: { currentMouth: number[]; targetMouth: number[]; morph: number }) => towards(e.currentMouth, e.targetMouth, e.morph)
+const displayedGaze = (e: { currentGaze: number[]; targetGaze: number[]; morph: number }) => towards(e.currentGaze, e.targetGaze, e.morph)
 
 function blinkScale(e: { blinkStart: number | null }, now: number) {
   if (e.blinkStart === null) return 1

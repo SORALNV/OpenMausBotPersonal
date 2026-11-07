@@ -1,13 +1,16 @@
 // Providers such as Grok narrate before tools.
 import { useEffect, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 export function TurnNarrationRun({
   label,
+  title,
   forceOpen = false,
   children,
 }: {
   label: string;
+  title?: string;
   forceOpen?: boolean;
   children: React.ReactNode;
 }) {
@@ -23,7 +26,7 @@ export function TurnNarrationRun({
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          title={open ? "Hide progress messages" : "Show progress messages"}
+          title={title ?? t(open ? "chat.narration.hide" : "chat.narration.show")}
           className="ui-pill"
         >
           <Check size={13} className="text-success" />

@@ -3,7 +3,7 @@ import { AudioLines, ChevronRight } from "lucide-react";
 
 import { formatCallDuration } from "../../shared/live-call";
 import { callRecordIsPartial, callRecordLines } from "@/lib/call-record";
-import { t } from "@/lib/i18n";
+import { intlLocale, t } from "@/lib/i18n";
 import type { Message } from "@/state/store";
 import { CallLineItem, CallSheet } from "./CallSheet";
 
@@ -31,7 +31,7 @@ export function CallRecordRow({ message, transcript, botName, threadId, busy, ha
         role="group"
         data-testid="call-record"
         aria-label={t("chat.callRecord.label", { title, duration })}
-        title={new Date(call.endedAt).toLocaleString()}
+        title={new Date(call.endedAt).toLocaleString(intlLocale())}
         onClick={() => setOpen(true)}
         className="mx-auto flex w-fit max-w-[min(32rem,90%)] cursor-pointer flex-col items-center gap-1 rounded-2xl border border-hairline/40 bg-panel px-4 py-2 text-[13px] text-ink-secondary transition-colors hover:border-hairline hover:bg-raised"
       >
@@ -47,7 +47,7 @@ export function CallRecordRow({ message, transcript, botName, threadId, busy, ha
           <ChevronRight size={13} aria-hidden="true" className="-mr-1 shrink-0 text-ink-tertiary" />
         </button>
         {lines.length > 0 && (
-          <ul className="flex max-w-full min-w-0 flex-col gap-0.5 text-[12.5px]">
+          <ul className="flex max-w-full min-w-0 flex-col gap-0.5 text-[13px]">
             {lines.map((line) => <CallLineItem key={line.id} line={line} busy={busy} />)}
           </ul>
         )}

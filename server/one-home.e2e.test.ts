@@ -71,8 +71,8 @@ it("a new buyer: every phase, the app killed at each one, ends with home on My C
   await turn(local, ember, "Hello Ember.");
   const old = (await local("POST", "/api/bots", { name: "Old" })).body.bot as { id: string };
   expect((await local("PATCH", `/api/bots/${old.id}`, { soul: "Retired soon." })).status).toBe(200);
-  // Ember and Old went to My Cloud once before, with Send everything; Old was then deleted there.
-  const earlier = await fx.call<{ result: { bots: string[] } }>("cloud-send:send", "local", { keys: [`bot:${ember.id}`, `bot:${old.id}`] });
+  // Ember and Old went to My Cloud once before, with an older app's Send everything; Old was then deleted there.
+  const earlier = await fx.olderSend({ keys: [`bot:${ember.id}`, `bot:${old.id}`] });
   expect(earlier.result.bots.sort()).toEqual(["Ember", "Old"]);
   expect((await onCloud("DELETE", `/api/bots/${old.id}`)).status).toBeLessThan(300);
   // Since: Ember's instructions changed only here, and its title on both sides.
@@ -150,9 +150,10 @@ it("a new buyer: every phase, the app killed at each one, ends with home on My C
   expect(cloudBots.find((bot) => bot.id === cloudy.id)?.name).toBe("Cloudy");
   expect(cloudBots.some((bot) => bot.id === old.id)).toBe(false);
 
-  // This computer is lent with Scout's project folder, its phone link stops, and the window opens My Cloud: once each.
+  // This computer is lent with Scout's project folder and the window opens My Cloud, once each; its phone link stays on,
+  // so a paired phone hears where the bots went.
   expect(fx.spies.lent).toEqual([[project]]);
-  expect(fx.spies.phoneStops).toBe(1);
+  expect(fx.spies.phoneStops).toBe(0);
   expect(fx.spies.opened).toEqual(["cloud"]);
 
   // The schedules on both servers: the one that runs at every start ran here only before the freeze, never on My Cloud,

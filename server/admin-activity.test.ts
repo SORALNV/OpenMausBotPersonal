@@ -19,6 +19,7 @@ import {
   readAdminActivityRange,
   sharedSignIn,
   signInListsOf,
+  TEAM_BOT_AUDIT_FIELDS,
   type AdminActionRow,
 } from "./admin-activity.ts";
 import { bindDecisionRetention, DEFAULT_DECISION_RETENTION_DAYS, type DecisionRow } from "./decision-log.ts";
@@ -136,6 +137,15 @@ describe("what a row records", () => {
     expect(botChangeRows({ id: "b" }, off, off)).toEqual([]);
   });
 
+  it("records that a Team bot's instructions changed without keeping their text", () => {
+    const before = botAuditSnapshot({ id: "b", soul: "Keep the vault code 4242 secret." }, TEAM_BOT_AUDIT_FIELDS);
+    const after = botAuditSnapshot({ id: "b", soul: "Be brief." }, TEAM_BOT_AUDIT_FIELDS);
+    const rows = botChangeRows({ id: "b" }, before, after, undefined, TEAM_BOT_AUDIT_FIELDS);
+    expect(rows.map((row) => row.changed)).toEqual([["soul"]]);
+    expect(JSON.stringify(rows)).not.toMatch(/4242|Be brief/);
+    expect(botChangeRows({ id: "b" }, after, botAuditSnapshot({ id: "b", soul: "Be brief." }, TEAM_BOT_AUDIT_FIELDS), undefined, TEAM_BOT_AUDIT_FIELDS)).toEqual([]);
+  });
+
   it("records a bot moving to another VPS server, and back to the default", () => {
     const own = botAuditSnapshot({ id: "b", cloudBackend: "vps", vpsAlias: "alpha-vps" });
     const onDefault = botAuditSnapshot({ id: "b", cloudBackend: "vps" });
@@ -232,6 +242,13 @@ describe("the Activity view", () => {
     expect(parseActivityWhat(null)).toBe("all");
     expect(parseActivityWhat("budget")).toBe("budget");
     expect(parseActivityWhat("nonsense")).toBeNull();
+  });
+
+  it("carries coded phone summaries into the global activity view without changing CSV words", () => {
+    const row: DecisionRow = { ...decisions[0]!, summary: "allowed PHONE_CREATE_EVENT", summaryCode: "chat.notice.phone.allowed", summaryParams: { tool: "PHONE_CREATE_EVENT" } };
+    const entries = activityEntries([row], [], { what: "decisions" });
+    expect(entries).toEqual([expect.objectContaining({ summary: row.summary, summaryCode: row.summaryCode, summaryParams: row.summaryParams })]);
+    expect(activityCsv(entries)).toContain("allowed PHONE_CREATE_EVENT");
   });
 
   it("exports CSV with formula cells neutralised", () => {

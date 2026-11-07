@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocale } from "@/lib/i18n";
 
 import type { Routine, RoutineRun } from "@/lib/routines";
 import type { WebhookTrigger } from "@/lib/webhooks";
@@ -81,6 +82,16 @@ describe("times in plain words", () => {
     expect(nextWhen(at(0, 15), NOW)).toBe("today 3:00 PM");
     expect(nextWhen(at(1, 9), NOW)).toBe("tomorrow 9:00 AM");
     expect(nextWhen(at(2, 9), NOW)).toBe("Monday 9:00 AM");
+  });
+  describe("in pt-BR", () => {
+    afterEach(() => { setLocale("en"); });
+    it("writes a 24-hour clock with two-digit hours and the minutes, and “às” before a weekday's time", () => {
+      setLocale("pt-br");
+      expect(lastWhen(at(0, 8, 30), NOW)).toBe("hoje às 08:30");
+      expect(nextWhen(at(2, 9), NOW)).toBe("segunda-feira às 09:00");
+      expect(plainWhen({ type: "daily", time: "14:00", weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe("Todo dia às 14:00");
+      expect(plainWhen({ type: "cron", expression: "30 8 * * 1", timeZone: "UTC" })).toBe("Toda segunda-feira às 08:30 · UTC");
+    });
   });
 });
 
@@ -172,15 +183,45 @@ describe("order and the grey line", () => {
     expect(orderAutomations([...paused, ...working, ...failing]).map((item) => item.id)).toEqual(["f", "b", "a", "p"]);
   });
 
-  it("reads Working · last ran · next, and says when it hasn't run yet", () => {
-    expect(statusLine(automation([run("completed", at(0, 9, 2))]), NOW)).toBe("Working · last ran today 9:02 AM · next: Monday 9:00 AM");
-    expect(statusLine(automation([]), NOW)).toBe("Working · hasn't run yet · next: Monday 9:00 AM");
+  it("reads On · last ran · next, and says when an automation that hasn't run yet first will", () => {
+    expect(statusLine(automation([run("completed", at(0, 9, 2))]), NOW)).toBe("On · last ran today 9:02 AM · next: Monday 9:00 AM");
+    expect(statusLine(automation([]), NOW)).toBe("First run Monday 9:00 AM");
+    expect(statusLine(automation([], { nextRunAt: at(1, 9) }), NOW)).toBe("First run tomorrow 9:00 AM");
+    expect(statusLine(automation([], { enabled: false }), NOW)).toBe("Paused · hasn't run yet");
     expect(statusLine(automation([run("completed", at(-1, 9))], { enabled: false }), NOW)).toBe("Paused · last ran yesterday");
+  });
+
+  it("a routine with checks says when it last checked and found nothing new, that it reads and drafts only, and a failed read needs you", () => {
+    const watch = { checks: ["calendar", "mail"] as Routine["checks"], access: "read-and-draft" as const, nextRunAt: at(0, 12, 15) };
+    expect(statusLine(automation([run("completed", at(0, 9, 2))], { ...watch, checkedAt: at(0, 11, 45) }), NOW)).toBe("On · checked today 11:45 AM, nothing new · next: today 12:15 PM · reads and drafts only");
+    expect(statusLine(automation([run("completed", at(0, 11, 50))], { ...watch, checkedAt: at(0, 11, 45) }), NOW)).toBe("On · last ran today 11:50 AM · next: today 12:15 PM · reads and drafts only");
+    const trouble = automation([], { ...watch, checkTrouble: "Couldn't read Gmail. Reconnect it in Connected apps." });
+    expect(automationStatus(trouble, NOW)).toEqual({ state: "needs-you", reason: "Couldn't read Gmail. Reconnect it in Connected apps.", fix: "reconnect" });
+    const failed = automation([], { ...watch, checkTrouble: "The checks could not run; they try again at the next check.", checkTroubleCode: "routines.server.checksFailed" });
+    expect(automationStatus(failed, NOW)).toMatchObject({ reason: "The checks could not run; they try again at the next check." });
+    setLocale("pt-br");
+    expect(automationStatus(failed, NOW).reason).toBe("Não foi possível fazer as verificações. O app tenta novamente na próxima verificação.");
+    expect(runLine(run("failed", at(-1, 9), { error: "Waiting to start: busy", errorCode: "routines.server.waitingToStart", errorParams: { failure: "busy" } }), NOW).text)
+      .toBe("Esperando para começar. Motivo: busy");
+    setLocale("en");
   });
 
   it("writes recent runs as a time, a mark and one line", () => {
     expect(runLine(run("completed", at(0, 9, 2), { output: "3 emails overnight.\nMore detail." }), NOW)).toEqual({ when: "Today 9:02 AM", mark: "✓", text: "3 emails overnight." });
     expect(runLine(run("failed", at(-1, 9), { error: "token expired, sign in again" }), NOW)).toMatchObject({ mark: "✗", text: "It's signed out. Sign in again so it can run." });
+  });
+
+  it("says why a stopped run stopped when it knows, and plain Stopped when nobody gave a reason", () => {
+    expect(runLine(run("cancelled", at(0, 9), { error: "The assigned bot was deleted\nmore" }), NOW)).toMatchObject({ mark: "✗", text: "Stopped: The assigned bot was deleted" });
+    expect(runLine(run("cancelled", at(0, 9)), NOW)).toMatchObject({ mark: "✗", text: "Stopped" });
+  });
+
+  it("marks a run whose reply came back but a step failed as partly done, not as a red failure", () => {
+    const partly = run("failed", at(0, 9, 2), { error: "Stopped because the tool call failed.\nmore", output: "Here is the summary.", partial: true });
+    expect(runLine(partly, NOW)).toEqual({ when: "Today 9:02 AM", mark: "!", text: "Partly done: Stopped because the tool call failed." });
+    expect(statusLine(automation([partly]), NOW)).toBe("On · last ran today 9:02 AM ! · next: Monday 9:00 AM");
+    expect(runLine(run("failed", at(0, 9, 2), { error: "Stopped because the tool call failed." }), NOW)).toMatchObject({ mark: "✗" });
+    expect(statusLine(automation([run("failed", at(0, 9, 2))]), NOW)).toBe("On · last ran today 9:02 AM ✗ · next: Monday 9:00 AM");
   });
 
   it("says a run that found nothing to tell found nothing new, whatever its last words were", () => {

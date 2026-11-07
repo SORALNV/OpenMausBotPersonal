@@ -4,14 +4,15 @@ import type { BotCreationDraft } from "./bot-creation-draft";
 import { imageAttachmentFromFile } from "./composer-attachments";
 import type { BotVisibility } from "../../shared/wire";
 import { botAvatarUrlFromStoredPath } from "../../shared/bot-avatar";
+import { t } from "@/lib/i18n";
 
 export async function preparedBotTemplate(draft: BotCreationDraft) {
   const template = draft.export();
   if (template.profile.avatarUrl?.startsWith("blob:")) {
-    if (!draft.avatarFile) throw new Error("Choose the avatar image again");
+    if (!draft.avatarFile) throw new Error(t("newBot.avatar.chooseAgain"));
     const uploaded = await imageAttachmentFromFile(draft.avatarFile);
     const avatarUrl = uploaded && botAvatarUrlFromStoredPath(uploaded.path);
-    if (!avatarUrl) throw new Error("Could not store the avatar image");
+    if (!avatarUrl) throw new Error(t("newBot.avatar.storeFailed"));
     template.profile.avatarUrl = avatarUrl;
   }
   return template;
@@ -24,15 +25,17 @@ export async function createConfiguredBot(
   update: typeof persistBotUpdate = persistBotUpdate,
   approvals = desktopApprovalBridge(),
   visibility?: BotVisibility,
+  reportsTo?: string,
 ): Promise<{ bot: Bot; warnings: string[] }> {
   const template = await preparedBotTemplate(draft);
-  const { chiefOfStaff, managedSections, toolScope, ...profile } = template.profile;
-  if (!profile.name?.trim()) throw new Error("Give the bot a name");
+  const { chiefOfStaff, managedSections, toolScope, modelSelection, ...profile } = template.profile;
+  if (!profile.name?.trim()) throw new Error(t("newBot.nameRequired"));
   const preset = draft.preset;
+  const chosenAi = modelSelection?.instanceId && modelSelection.model ? { modelSelection, requireAvailableModel: true } : {};
   const response = await request<{ bot: Bot }>("/api/bots", {
     method: "POST", body: JSON.stringify({ name: profile.name, title: profile.title,
-      description: profile.description, modelSelection: profile.modelSelection, section: profile.section,
-      requireAvailableModel: true, useDefaults: false, ...(visibility !== undefined ? { visibility } : {}),
+      description: profile.description, ...chosenAi, section: profile.section,
+      useDefaults: false, ...(visibility !== undefined ? { visibility } : {}), ...(reportsTo ? { reportsTo } : {}),
       ...(Object.hasOwn(template.profile, "toolScope") ? { settings: { toolScope } } : {}),
       ...(preset ? { preset: preset.id } : {}) }),
   });
@@ -40,20 +43,19 @@ export async function createConfiguredBot(
   const routines: Array<{ id: string; enabled: boolean }> = [];
   const warnings: string[] = [];
   try {
-    // The create endpoint already validated the model and effort defaults; never overwrite them with the raw draft.
-    const patched = await update(bot.id, { ...profile, modelSelection: bot.modelSelection, ...draft.consent }, new AbortController().signal,
+    const patched = await update(bot.id, { ...profile, ...draft.consent }, new AbortController().signal,
       request, approvals, bot);
     bot = { ...bot, ...patched };
     if (profile.approvalMode === "full" || profile.approvalMode === "custom") {
       if (patched.approvalMode !== profile.approvalMode) {
-        throw new Error("The bot's requested approval level was not granted");
+        throw new Error(t("newBot.approvalNotGranted"));
       }
       const granted = await persistTaskApproval(bot.id, bot.threadId, {
         approvalMode: profile.approvalMode,
         acknowledgeLocalAuto: draft.consent.acknowledgeLocalAuto === true,
       }, approvals, request);
       if (granted.approvalMode !== profile.approvalMode) {
-        throw new Error("The initial thread's requested approval level was not granted");
+        throw new Error(t("newBot.threadApprovalNotGranted"));
       }
     }
     for (const [path, text] of Object.entries(template.memory)) {
@@ -91,12 +93,12 @@ export async function createConfiguredBot(
       });
       bot = { ...bot, ...result.bot };
     } catch (error) {
-      warnings.push(`Review this bot's Chief of Staff setting: ${error instanceof Error ? error.message : String(error)}`);
+      warnings.push(t("newBot.warning.chiefOfStaff", { error: error instanceof Error ? error.message : String(error) }));
     }
   }
   for (const routine of routines.filter(routine => routine.enabled)) {
     try { await request(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled: true }) }); }
-    catch (error) { warnings.push(`Could not activate a routine: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { warnings.push(t("newBot.warning.routine", { error: error instanceof Error ? error.message : String(error) })); }
   }
   return { bot, warnings };
 }

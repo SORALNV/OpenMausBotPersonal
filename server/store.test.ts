@@ -19,7 +19,7 @@ import {
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
-import { canAccessTeam } from "./peer-roster.ts";
+import { hasTeamAuthority } from "./peer-roster.ts";
 import { Store, toWireTask, type BotRecord } from "./store.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { SECTION_CONTEXTS_FILE, readSectionContext, writeSectionContext } from "./section-context.ts";
@@ -41,6 +41,41 @@ describe("Store", () => {
     expect(() => store.patchBot(bot.id, { toolScope: { allow: null } } as never)).toThrow(/tool selection/i);
     store.patchBot(bot.id, { toolScope: undefined } as never);
     expect(new Store(selection).bot(bot.id)).not.toHaveProperty("toolScope");
+  });
+
+  it("gives an app the bot's Apps switch turned on its tools, on load and whenever the switch changes", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Mail reader" });
+    const file = join(DATA_DIR, "bots.json");
+    const rows = JSON.parse(readFileSync(file, "utf8")) as BotRecord[];
+    Object.assign(rows.find((row) => row.id === bot.id)!, { composio: true, connectorTools: {}, connectorScopes: { apps: { gmail: "read", googlecalendar: "write" } } });
+    writeFileSync(file, JSON.stringify(rows));
+    const loaded = new Store(selection);
+    expect(loaded.bot(bot.id)?.connectorTools).toEqual({ gmail: { tools: "*" }, googlecalendar: { tools: "*" } });
+    expect((JSON.parse(readFileSync(file, "utf8")) as BotRecord[]).find((row) => row.id === bot.id)?.connectorTools, "saved").toEqual({ gmail: { tools: "*" }, googlecalendar: { tools: "*" } });
+    loaded.patchBot(bot.id, { connectorTools: { gmail: { tools: ["GMAIL_FETCH_EMAILS"] } } });
+    loaded.patchBot(bot.id, { connectorScopes: { apps: { gmail: "read", github: "write" } } });
+    expect(loaded.bot(bot.id)?.connectorTools, "a list already chosen for an app stays").toEqual({ gmail: { tools: ["GMAIL_FETCH_EMAILS"] }, github: { tools: "*" } });
+  });
+
+  it("loads a bot saved with the retired HighLevel app, dropping it from its scopes and tool grants", () => {
+    const store = new Store(selection);
+    const crm = store.createBot({ name: "CRM helper" });
+    const only = store.createBot({ name: "Limited bot" });
+    const file = join(DATA_DIR, "bots.json");
+    const rows = JSON.parse(readFileSync(file, "utf8")) as BotRecord[];
+    Object.assign(rows.find((row) => row.id === crm.id)!, { composio: true,
+      connectorTools: { gmail: { tools: "*" }, highlevel: { tools: ["HIGHLEVEL_GET_CONTACT"] } }, connectorScopes: { apps: { gmail: "read", highlevel: "write" } } });
+    Object.assign(rows.find((row) => row.id === only.id)!, { composio: true, connectorTools: { highlevel: { tools: "*" } }, connectorScopes: { apps: { highlevel: "read" } } });
+    writeFileSync(file, JSON.stringify(rows));
+
+    const loaded = new Store(selection);
+    expect(loaded.bot(crm.id)).toMatchObject({ name: "CRM helper", connectorTools: { gmail: { tools: "*" } }, connectorScopes: { apps: { gmail: "read" } } });
+    expect(loaded.bot(crm.id)?.connectorTools).not.toHaveProperty("highlevel");
+    expect(loaded.bot(only.id), "limited to HighLevel alone, it stays limited, to no app").toMatchObject({ name: "Limited bot", connectorTools: {}, connectorScopes: { apps: {} } });
+    const saved = readFileSync(file, "utf8");
+    expect(saved, "saved").not.toContain("highlevel");
+    expect(JSON.parse(saved).map((row: BotRecord) => row.id)).toEqual(expect.arrayContaining([crm.id, only.id]));
   });
 
   it.each([undefined, { allow: ["native:read"] }, { deny: ["native:bash"] }])("does not activate a wider tool selection when saving %j fails", (toolScope) => {
@@ -172,7 +207,7 @@ describe("Store", () => {
     const manager = store.createBot({ section: "Office" });
     store.setChiefOfStaff(manager.id);
     store.patchBot(manager.id, { managedSections: ["Delivery", " Delivery ", "Other"] });
-    expect(canAccessTeam(manager, "Delivery")).toBe(true);
+    expect(hasTeamAuthority(manager, "Delivery")).toBe(true);
     const room = store.createGroup("Room", [chief.id], false, "Delivery");
     const message = store.appendMessage(chief.threadId, { role: "user", kind: "text", text: "Keep this conversation" });
     writeSectionContext("Delivery", "Shared team instructions");
@@ -184,19 +219,19 @@ describe("Store", () => {
     expect(chief).toMatchObject({ section: "Launch", chiefOfStaff: true });
     expect(archived).toMatchObject({ section: "Launch", hidden: true });
     expect(manager.managedSections).toEqual(["Launch", "Other"]);
-    expect(canAccessTeam(manager, "Launch")).toBe(true);
+    expect(hasTeamAuthority(manager, "Launch")).toBe(true);
     expect(room.section).toBe("Launch");
     expect(readSectionContext("Launch")?.text).toBe("Shared team instructions");
     expect(readSectionContext("Delivery")).toBeNull();
     expect(computers.forSection("Launch")?.id).toBe(computer.id);
     const restored = new Store(selection);
     expect(restored.bot(chief.id)?.section).toBe("Launch");
-    expect(canAccessTeam(restored.bot(manager.id)!, "Launch")).toBe(true);
+    expect(hasTeamAuthority(restored.bot(manager.id)!, "Launch")).toBe(true);
     expect(restored.group(room.id)?.section).toBe("Launch");
     expect(restored.messagesFor(chief.threadId)).toContainEqual(message);
     expect(restored.sections).not.toContain("Delivery");
     store.setBotsSection([], "Delivery");
-    expect(canAccessTeam(manager, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(manager, "Delivery")).toBe(false);
   });
 
   it("rejects rename conflicts and active work without changing teams", () => {
@@ -268,8 +303,8 @@ describe("Store", () => {
     store.setChiefOfStaff(general.id);
     expect(store.deleteSection("Studio")).toMatch(/Chief/);
     expect(store.bot(chief.id)).toMatchObject({ chiefOfStaff: true, section: "Studio" });
-    expect(store.deleteSection("missing")).toBe("No such team");
-    expect(store.deleteSection("")).toBe("No such team");
+    expect(store.deleteSection("missing")).toBe("No such department");
+    expect(store.deleteSection("")).toBe("No such department");
   });
 
   it("restores persisted membership if deleting the team cannot finish", () => {
@@ -330,7 +365,7 @@ describe("Store", () => {
       text: "Voice note attached",
       attachments: [
         { kind: "image", path: "/attachments/shot.png", mime: "image/png" },
-        { kind: "audio", path: "/attachments/note.mp3", mime: "audio/mpeg", durationMs: 4200 },
+        { kind: "audio", path: "/attachments/note.mp3", mime: "audio/mpeg", durationMs: 4200, text: "The spoken words" },
       ],
     });
     expect(reply.attachments?.[1]).toEqual({
@@ -338,6 +373,7 @@ describe("Store", () => {
       path: "/attachments/note.mp3",
       mime: "audio/mpeg",
       durationMs: 4200,
+      text: "The spoken words",
     });
     const reloaded = new Store(selection);
     const stored = reloaded.messagesFor(bot.threadId).find((message) => message.id === reply.id);
@@ -345,6 +381,7 @@ describe("Store", () => {
     const encoded = JSON.stringify(stored);
     expect(encoded).toContain('"kind":"audio"');
     expect(encoded).toContain('"durationMs":4200');
+    expect(encoded).toContain('"text":"The spoken words"');
   });
 
   it("keeps surface pin provenance server-private and round-trips it through bots.json", () => {
@@ -405,14 +442,14 @@ describe("Store", () => {
     store.setResumeCursor(bot.id, "claude", { sessionId: "s-1" }, bot.threadId);
     store.patchTask(bot.id, bot.threadId, { lastContextModel: "claude-sonnet-5" });
     expect(statSync(file).ino).toBe(saved);
-    expect(events).toEqual([{ type: "bot", botId: bot.id }, { type: "bot", botId: bot.id }]);
+    expect(events).toEqual([{ type: "bot", botId: bot.id }]);
 
     store.setResumeCursor(bot.id, "claude", { sessionId: "s-2" }, bot.threadId);
     expect(statSync(file).ino).not.toBe(saved);
     expect(new Store(selection).taskByThread(bot.id, bot.threadId)?.resumeCursors).toEqual({ claude: { sessionId: "s-2" } });
   });
 
-  it("still overwrites a bots.json changed on disk when the next save differs from it", () => {
+  it("overwrites a bots.json changed on disk with the next change it saves", () => {
     const file = join(DATA_DIR, "bots.json");
     const store = new Store(selection);
     const bot = store.createBot({ name: "Original" }, { seedMessages: false });
@@ -421,7 +458,7 @@ describe("Store", () => {
     edited[0].name = "Edited on disk";
     writeFileSync(file, JSON.stringify(edited, null, 2));
 
-    store.setResumeCursor(bot.id, "claude", { sessionId: "s-1" }, bot.threadId);
+    store.setResumeCursor(bot.id, "claude", { sessionId: "s-2" }, bot.threadId);
     expect(JSON.parse(readFileSync(file, "utf8"))[0].name).toBe("Original");
   });
 
@@ -529,6 +566,28 @@ describe("Store", () => {
     expect(bot.modelSelection).toEqual(selection());
   });
 
+  it("offers Set me up on a blank bot's greeting, never on one given a role or instructions", () => {
+    const store = new Store(selection, undefined, undefined, "en");
+    const greeting = (bot: BotRecord) => store.messagesFor(bot.threadId)[0];
+    expect(greeting(store.createBot())).toMatchObject({ role: "bot", kind: "text", setupOffer: true });
+    expect(greeting(store.createBot({ soul: "Only water the garden." }))?.setupOffer).toBeUndefined();
+    expect(greeting(store.createBot({ description: "Files bugs." }))?.setupOffer).toBeUndefined();
+    expect(greeting(store.createBot({ soul: "  \n", description: " " }))?.setupOffer).toBe(true);
+  });
+
+  it("puts the setup card's answers, in the app's language, on a blank bot's greeting only", () => {
+    let language = "en";
+    const store = new Store(selection, undefined, undefined, () => language);
+    const greeting = (bot: BotRecord) => store.messagesFor(bot.threadId)[0];
+    expect(greeting(store.createBot())?.setupChoices).toEqual([
+      "Research and digging into topics", "Keeping an eye on things for me", "Email, calendar and messages",
+      "Bookings, shopping and errands", "Data, spreadsheets and reports",
+    ]);
+    expect(greeting(store.createBot({ description: "Files bugs." }))?.setupChoices).toBeUndefined();
+    language = "es-MX";
+    expect(greeting(store.createBot())?.setupChoices?.[0]).toBe("Investigar y profundizar en temas");
+  });
+
   it("reads the current language when creating a bot", () => {
     let language = "en";
     const store = new Store(selection, undefined, undefined, () => language);
@@ -536,6 +595,16 @@ describe("Store", () => {
 
     const bot = store.createBot();
     expect(store.messagesFor(bot.threadId)[0]?.text).toBe(`Oi, eu sou ${bot.name}. O que você gostaria que eu fizesse?`);
+  });
+
+  it("greets the person by the first name they have given by the time the bot is created", () => {
+    let person: string | undefined;
+    const store = new Store(selection, undefined, undefined, "en", () => person);
+    const greeting = (name: string) => store.messagesFor(store.createBot({ name }).threadId)[0]?.text;
+
+    expect(greeting("Ivy")).toBe("Hi, I'm Ivy. What would you like me to do?");
+    person = "Milind Soni";
+    expect(greeting("Scout")).toBe("Hi Milind, I'm Scout. What would you like me to do?");
   });
 
   it("clears provider-owned voice ids as one durable mutation", () => {
@@ -1393,14 +1462,14 @@ describe("Store", () => {
 
     expect(store.changeEmptySection("Delivery", nextName)).toBeUndefined();
     expect(chief.managedSections).toEqual(["Delivery East", ""]);
-    expect(canAccessTeam(chief, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(chief, "Delivery")).toBe(false);
     expect(announcements).toEqual([chief.id]);
     store.setBotsSection([], "Delivery");
     const reloaded = new Store(selection);
     expect(reloaded.sections).toContain("Delivery");
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "Delivery")).toBe(false);
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "Delivery East")).toBe(true);
-    expect(canAccessTeam(reloaded.bot(chief.id)!, "")).toBe(true);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "Delivery")).toBe(false);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "Delivery East")).toBe(true);
+    expect(hasTeamAuthority(reloaded.bot(chief.id)!, "")).toBe(true);
   });
 
   it("keeps grants when an empty-team rename is a no-op or rejected", () => {
@@ -1539,6 +1608,21 @@ describe("Store", () => {
     reloaded.seedIfEmpty();
     expect(reloaded.bots).toHaveLength(1);
     expect(reloaded.bots[0]?.chiefOfStaff).toBe(true);
+  });
+
+  it("seedIfEmpty makes the new install's Chief its MausBot in chrome, introduced, and no bot after it takes chrome or silver in turn", () => {
+    const store = new Store(selection);
+    store.seedIfEmpty();
+    const chief = store.bots[0]!;
+    expect(chief).toMatchObject({ name: "MausBot", color: "chrome", chiefOfStaff: true, defaultBot: {} });
+    expect(store.messagesFor(chief.threadId).map((message) => [message.kind, message.helperIntro, message.card?.options.length])).toEqual([["options", true, 4]]);
+    expect(store.messagesFor(chief.threadId)[0]!.text).toContain("Hey! I'm MausBot. I'm new here. I'm here to be your Chief of Staff.");
+    const later = Array.from({ length: 25 }, () => store.createBot());
+    expect(later.map((bot) => bot.color)).not.toContain("silver");
+    expect(later.map((bot) => bot.color)).not.toContain("chrome");
+    expect(later[0]?.color).toBe("blue");
+    expect(later.map((bot) => bot.name)).not.toContain("MausBot");
+    expect(new Store(selection).bot(chief.id)).toMatchObject({ name: "MausBot", color: "chrome", defaultBot: {} });
   });
 
   it("seedIfEmpty leaves an existing workspace without a Chief as it is", () => {
@@ -1696,6 +1780,61 @@ describe("Store", () => {
     expect(messages.map((m) => m.parentId)).toEqual([null, "m1"]);
     expect(reloaded.activeLeaf(bot.threadId)).toBe("m2");
     expect(reloaded.activePath(bot.threadId).map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+});
+
+describe("Store bot order", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  // createBot puts the newest bot first, so four creations read [d, c, b, a].
+  const fleet = (store: Store) => {
+    const a = store.createBot({ name: "A" }, { seedMessages: false });
+    const b = store.createBot({ name: "B" }, { seedMessages: false });
+    const c = store.createBot({ name: "C" }, { seedMessages: false });
+    const d = store.createBot({ name: "D" }, { seedMessages: false });
+    return { a, b, c, d };
+  };
+  const order = (store: Store) => store.bots.map((bot) => bot.id);
+
+  it("reorders the whole fleet, persists it, and emits one whole-list change", () => {
+    const store = new Store(selection);
+    const { a, b, c, d } = fleet(store);
+    expect(order(store)).toEqual([d.id, c.id, b.id, a.id]);
+    const changes: unknown[] = [];
+    store.onChange((change) => changes.push(change));
+    const before = store.bots;
+    expect(store.reorderBots([a.id, b.id, c.id, d.id])?.map((bot) => bot.id)).toEqual([a.id, b.id, c.id, d.id]);
+    expect(changes).toEqual([{ type: "bots.order" }]);
+    // Same array and same records: schedulers and other consumers hold these objects.
+    expect(store.bots).toBe(before);
+    expect(store.bot(a.id)).toBe(a);
+    expect(order(new Store(selection))).toEqual([a.id, b.id, c.id, d.id]);
+  });
+
+  it("is stable for the bots a partial list leaves out", () => {
+    const store = new Store(selection);
+    const { a, b, c, d } = fleet(store);
+    // a and c sit at positions 3 and 1: a takes 1 and c takes 3; d and b never move.
+    expect(store.reorderBots([a.id, c.id])?.map((bot) => bot.id)).toEqual([d.id, a.id, b.id, c.id]);
+    expect(order(new Store(selection))).toEqual([d.id, a.id, b.id, c.id]);
+    // Swapping two neighbours inside one bucket leaves the rest alone.
+    expect(store.reorderBots([b.id, a.id])?.map((bot) => bot.id)).toEqual([d.id, b.id, a.id, c.id]);
+  });
+
+  it("refuses an empty list, a repeated id or an unknown id without touching anything", () => {
+    const store = new Store(selection);
+    const { a, b } = fleet(store);
+    const saved = order(store);
+    const changes: unknown[] = [];
+    store.onChange((change) => changes.push(change));
+    for (const ids of [[], [a.id, a.id], [a.id, "missing"], ["missing"], [b.id, a.id, b.id]]) {
+      expect(store.reorderBots(ids), JSON.stringify(ids)).toBeNull();
+    }
+    expect(changes).toEqual([]);
+    expect(order(store)).toEqual(saved);
+    expect(order(new Store(selection))).toEqual(saved);
   });
 });
 
@@ -2466,7 +2605,7 @@ describe("soul", () => {
       ] };
     store.applyTeamSetup(request);
     expect(new Store(selection).bot("created-by-chief")?.visibility).toEqual({ people: ["hr@example.test"] });
-    expect(new Store(selection).bot("created-by-chief")).toMatchObject({ composio: false, connectorTools: {}, approvePeerComms: false });
+    expect(new Store(selection).bot("created-by-chief")).toMatchObject({ autoApprove: false, approvePeerComms: false });
     const open = new Store(selection);
     const everyoneChief = open.createBot({ name: "Ops", section: "Ops" });
     open.patchBot(everyoneChief.id, { chiefOfStaff: true });
@@ -2474,6 +2613,66 @@ describe("soul", () => {
       { action: "create", botId: "created-open", threadId: "created-open-thread", fields: { name: "Helper", section: "Ops", modelSelection: selection() } },
     ] });
     expect(open.bot("created-open")?.visibility).toBeUndefined();
+  });
+
+  const createdBy = (store: Store, chief: BotRecord, botId: string, requestId = `setup-${botId}`) => {
+    store.applyTeamSetup({ version: 1, requestId, botId: chief.id, threadId: chief.threadId, reason: "Requested", createdAt: 1,
+      requesterRevision: "fixture", newTeams: [], operations: [
+        { action: "create", botId, threadId: `${botId}-thread`, fields: { name: botId, section: chief.section, modelSelection: selection() } },
+      ] });
+    return store.bot(botId)!;
+  };
+  const grantsOf = (bot: BotRecord) => ({ composio: bot.composio, connectorTools: bot.connectorTools, connectorScopes: bot.connectorScopes, mcpServers: bot.mcpServers });
+
+  it("starts a bot a Chief creates with the Chief's own connected apps and levels, copied, never more", () => {
+    const store = new Store(selection);
+    const chief = store.createBot({ name: "Ops", section: "Ops" });
+    store.patchBot(chief.id, { chiefOfStaff: true, composio: true, mcpServers: ["notes"],
+      connectorTools: { gmail: { tools: ["GMAIL_FETCH_EMAILS"] }, slack: { tools: "*" } },
+      connectorScopes: { apps: { gmail: "read", slack: "write" } } });
+    const helper = createdBy(store, chief, "helper");
+    expect(grantsOf(helper)).toEqual({ composio: true, mcpServers: ["notes"],
+      connectorTools: { gmail: { tools: ["GMAIL_FETCH_EMAILS"] }, slack: { tools: "*" } },
+      connectorScopes: { apps: { gmail: "read", slack: "write" } } });
+    expect(grantsOf(new Store(selection).bot("helper")!)).toEqual(grantsOf(helper));
+    expect(helper).toMatchObject({ autoApprove: false, approvePeerComms: false });
+    chief.connectorScopes!.apps.gmail = "write";
+    (chief.connectorTools!.gmail.tools as string[]).push("GMAIL_SEND_EMAIL");
+    expect(helper.connectorScopes?.apps.gmail, "a copy, not the Chief's own record").toBe("read");
+    expect(helper.connectorTools?.gmail).toEqual({ tools: ["GMAIL_FETCH_EMAILS"] });
+
+    store.patchBot(chief.id, { connectorScopes: { apps: { slack: "read" } }, connectorTools: { slack: { tools: ["SLACK_LIST_CHANNELS"] } }, mcpServers: [] });
+    const later = createdBy(store, chief, "later");
+    expect(grantsOf(later), "what the Chief has when the bot is made").toEqual({ composio: true, mcpServers: [],
+      connectorTools: { slack: { tools: ["SLACK_LIST_CHANNELS"] } }, connectorScopes: { apps: { slack: "read" } } });
+    expect(grantsOf(helper).connectorScopes, "a bot made earlier keeps its own").toEqual({ apps: { gmail: "read", slack: "write" } });
+
+    store.patchBot(chief.id, { composio: false, connectorTools: undefined, connectorScopes: undefined, mcpServers: undefined });
+    expect(grantsOf(createdBy(store, chief, "off")), "off stays off, even once the switch is turned on").toEqual({ composio: false, connectorTools: {} });
+  });
+
+  it("leaves a bot the person creates with today's defaults, whatever a Chief has", () => {
+    const store = new Store(selection);
+    const chief = store.createBot({ name: "Ops", section: "Ops" });
+    store.patchBot(chief.id, { chiefOfStaff: true, composio: false, connectorTools: {}, connectorScopes: { apps: {} }, mcpServers: [] });
+    const mine = store.createBot({ name: "Mine", section: "Ops" });
+    for (const field of ["composio", "connectorTools", "connectorScopes", "mcpServers"]) expect(mine).not.toHaveProperty(field);
+  });
+
+  it("on a Team Cloud, gives a member's Chief's apps only to the bot it makes for that member", () => {
+    const store = new Store(selection);
+    const ada = "ada@acme.test";
+    const chief = store.createBot({ name: "Ada's MausBot", section: "Sales", createdBy: ada, visibility: { people: [ada] } });
+    store.patchBot(chief.id, { chiefOfStaff: true, connectorTools: { gmail: { tools: "*" }, slack: { tools: ["SLACK_SEND_MESSAGE"] } },
+      connectorScopes: { apps: { gmail: "write", slack: "read" } } });
+    const helper = createdBy(store, chief, "ada-helper");
+    expect(helper).toMatchObject({ createdBy: ada, visibility: { people: [ada] } });
+    expect(grantsOf(helper)).toEqual(grantsOf(chief));
+    const shared = store.createBot({ name: "Team Chief", section: "Ops" });
+    store.patchBot(shared.id, { chiefOfStaff: true, connectorScopes: { apps: { slack: "write" } } });
+    const teamHelper = createdBy(store, shared, "team-helper");
+    expect(teamHelper.createdBy, "a bot nobody owns makes bots nobody owns").toBeUndefined();
+    expect(grantsOf(teamHelper)).toEqual({ connectorScopes: { apps: { slack: "write" } } });
   });
 
   it("deleteBot removes the bot folder with the workspace", () => {

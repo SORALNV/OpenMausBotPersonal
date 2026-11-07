@@ -11,7 +11,7 @@ vi.mock("@/state/store", async (importOriginal) => {
   return { ...original, useStore: () => ({ state: { ...original.initialState, bots: fixture.bots }, dispatch: vi.fn() }) };
 });
 vi.mock("../DesktopCapabilities", () => ({
-  useDesktopCapabilities: () => ({ capabilities: { host: { homeDir: undefined } } }),
+  useDesktopCapabilities: () => ({ capabilities: { host: { homeDir: undefined }, localComputer: {} } }),
 }));
 vi.mock("@/lib/mcp-servers", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/mcp-servers")>(),
@@ -150,10 +150,10 @@ describe("Edit Profile boundary markers in sections", () => {
       createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot(), derived: makeDerived() })),
     );
     expect(markup).toContain(
-      'Where this bot runs its shell and file tools.</div><div class="mt-1 text-[11.5px] leading-snug text-ink-secondary">Chief-proposable',
+      'Where this bot runs its shell and file tools.</div><div class="mt-1 text-[12px] leading-snug text-ink-secondary">Chief-proposable',
     );
     expect(markup).toContain(
-      'Where Scout works: Chooses for you</div><div class="mt-1 text-[11.5px] leading-snug text-ink-secondary">Owner-only',
+      'Where Scout works: Chooses for you</div><div class="mt-1 text-[12px] leading-snug text-ink-secondary">Owner-only',
     );
     expect(markup).toContain("Inbound triggers wired to this bot.");
   });

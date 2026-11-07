@@ -6,6 +6,7 @@ import { persistBotUpdate, type Bot, type InstanceInfo } from "@/state/store";
 import { EFFORT_LEVELS } from "../../shared/wire";
 import {
   applyTeamPlan,
+  planAccess,
   planNeedsLocalAutoConsent,
   planTeamChange,
   TEAM_APPROVAL_MODES,
@@ -44,17 +45,17 @@ describe("team-wide settings", () => {
     expect(teamBots(bots, "").map((b) => b.id)).toEqual(["d"]);
   });
 
-  it("plans an approval level per bot: unchanged, busy, unsupported and Full on every thread", () => {
+  it("plans an approval level per bot: unchanged, working, unsupported and Full on every thread", () => {
     const bots = [
       bot("ask", { approvalMode: "ask" }),
       bot("already", { approvalMode: "full" }),
-      bot("busy", { approvalMode: "ask", busy: true }),
+      bot("working", { approvalMode: "ask", busy: true }),
       bot("antigravity", { approvalMode: "ask", modelSelection: { instanceId: "ag", model: "x" } }),
     ];
     const plan = planTeamChange(bots, [...instances, engine("ag", "antigravityAgent", ["x"])], { kind: "approval", mode: "full" });
-    expect(plan.map((row) => row.status)).toEqual(["apply", "unchanged", "skip", "apply"]);
+    expect(plan.map((row) => row.status)).toEqual(["apply", "unchanged", "apply", "apply"]);
     expect(plan[0]).toMatchObject({ patch: { approvalMode: "full", applyToAllThreads: true } });
-    expect(plan[2]).toMatchObject({ reason: expect.stringMatching(/busy/) });
+    expect(plan[2]).toMatchObject({ patch: { approvalMode: "full", applyToAllThreads: true } });
     const auto = planTeamChange([bots[3]!], [engine("ag", "antigravityAgent", ["x"])], { kind: "approval", mode: "auto" });
     expect(auto[0]).toMatchObject({ status: "skip", reason: "Ag does not offer this approval level" });
     expect(planTeamChange([bot("codex", { modelSelection: { instanceId: "codex", model: "gpt-5" } })], instances,
@@ -87,15 +88,14 @@ describe("team-wide settings", () => {
     ]);
   });
 
-  it("calls a bot already set only when every one of its threads is, and skips one with any thread working", () => {
+  it("calls a bot already set only when every one of its threads is, and sets one with a thread working too", () => {
     const tasks = (...modes: Array<"ask" | "auto" | undefined>) => modes.map((approvalMode, index) => ({ threadId: `t${index}`, title: "T", createdAt: index, approvalMode }));
     const plan = planTeamChange([
       bot("all", { approvalMode: "auto", tasks: tasks(undefined, "auto") }),
       bot("opened", { approvalMode: "auto", tasks: tasks(undefined, "ask") }),
       bot("working", { approvalMode: "ask", tasks: [...tasks(undefined), { threadId: "w", title: "W", createdAt: 9, busy: true }] }),
     ], instances, { kind: "approval", mode: "auto" });
-    expect(plan.map((row) => row.status)).toEqual(["unchanged", "apply", "skip"]);
-    expect(plan[2]).toMatchObject({ reason: expect.stringMatching(/busy/) });
+    expect(plan.map((row) => row.status)).toEqual(["unchanged", "apply", "apply"]);
   });
 
   it("asks for the local-computer consent only when Auto reaches a bot on this computer", () => {
@@ -115,7 +115,7 @@ describe("team-wide settings", () => {
     expect(toOpus.map((row) => row.status)).toEqual(["apply", "skip", "skip", "skip"]);
     expect(toOpus[0]).toMatchObject({ patch: { modelSelection: { instanceId: "claude", model: "opus", effort: "low" }, keepThreadModels: true } });
     expect(toOpus[1]).toMatchObject({ reason: "Codex does not offer opus" });
-    expect(toOpus[3]).toMatchObject({ reason: "its engine is not available" });
+    expect(toOpus[3]).toMatchObject({ reason: "its AI isn't available" });
 
     const high = planTeamChange(bots, instances, { kind: "model", effort: "high" });
     expect(high.map((row) => row.status)).toEqual(["apply", "apply", "skip", "skip"]);
@@ -127,6 +127,14 @@ describe("team-wide settings", () => {
       .toMatchObject({ patch: { modelSelection: { instanceId: "claude", model: "sonnet" } } });
     expect(planTeamChange([bots[2]!], instances, { kind: "model", model: "local" })[0]).toMatchObject({ status: "unchanged" });
     expect(planTeamChange([bot("busy", { busy: true })], instances, { kind: "model", model: "sonnet" })[0]).toMatchObject({ status: "skip" });
+  });
+
+  it("offers no model the organization turned off, nor applies one", () => {
+    const blocked = instances.map((instance) => instance.instanceId === "claude"
+      ? { ...instance, models: { default: "sonnet", options: instance.models.options.map((option) => option.id === "opus" ? { ...option, orgBlocked: true as const } : option) } }
+      : instance);
+    expect(teamModelChoices([bot("a")], blocked).map((choice) => choice.id)).not.toContain("opus");
+    expect(planTeamChange([bot("a")], blocked, { kind: "model", model: "opus" })[0]).toMatchObject({ status: "skip" });
   });
 
   it("lists each model once with the engines offering it, and only effort levels some engine offers", () => {
@@ -147,24 +155,79 @@ describe("team-wide settings", () => {
       order.push(`${target.id}:${JSON.stringify(patch)}`);
       await Promise.resolve();
       inFlight--;
-      if (target.id === "b") throw new Error("Stop this bot's turn before changing its approval level");
+      if (target.id === "b") throw new Error("This provider does not support the selected approval level");
     }, { acknowledgeLocalAuto: true });
     expect(order).toEqual([
       'a:{"approvalMode":"auto","applyToAllThreads":true}',
       'b:{"approvalMode":"auto","applyToAllThreads":true}',
+      'c:{"approvalMode":"auto","applyToAllThreads":true}',
       'e:{"approvalMode":"auto","applyToAllThreads":true,"acknowledgeLocalAuto":true}',
     ]);
-    expect(results.map((row) => row.status)).toEqual(["applied", "skipped", "skipped", "unchanged", "applied"]);
-    expect(results[1]).toMatchObject({ reason: "Stop this bot's turn before changing its approval level" });
-    expect(teamResultCounts(results)).toEqual({ applied: 2, unchanged: 1, skipped: 2 });
+    expect(results.map((row) => row.status)).toEqual(["applied", "skipped", "applied", "unchanged", "applied"]);
+    expect(results[1]).toMatchObject({ reason: "This provider does not support the selected approval level" });
+    expect(teamResultCounts(results)).toEqual({ applied: 3, unchanged: 1, skipped: 1 });
     const markup = renderToStaticMarkup(createElement(TeamSettingsRows, { rows: results }));
-    expect(markup).toContain("Skipped: busy. Stop its turn, then try again");
+    expect(markup).toContain("Skipped: This provider does not support the selected approval level");
     expect(markup).toContain("Already set");
   });
 
   it("is offered in the team menu only when the caller passes the owner's action", () => {
     const base = { onAddBots: vi.fn(), onRename: vi.fn(), onShare: vi.fn(), onDelete: vi.fn() };
     expect(renderToStaticMarkup(createElement(TeamMenuItems, base))).not.toContain("Set for all bots");
-    expect(renderToStaticMarkup(createElement(TeamMenuItems, { ...base, onSetForAll: vi.fn() }))).toContain("Set for all bots in this team…");
+    expect(renderToStaticMarkup(createElement(TeamMenuItems, { ...base, onSetForAll: vi.fn() }))).toContain("Set for all bots in this department…");
   });
 });
+
+describe("who can use a department's bots", () => {
+  const ADA = "ada@acme.test", BOB = "bob@acme.test", CARA = "cara@acme.test";
+  const shared = (id: string, access: Bot["access"], fields: Partial<Bot> = {}) => bot(id, { access, yourAccess: "edit", reportsTo: ADA, ...fields });
+
+  it("sets everyone's level and one person's on each bot, keeping who else was added", () => {
+    const payroll = shared("payroll", { everyone: "none", people: { [CARA]: "edit" } });
+    const ledger = shared("ledger", { everyone: "chat", people: { [BOB]: "chat" } });
+    const plan = planTeamChange([payroll, ledger], instances, { kind: "access", everyone: "chat", person: { email: BOB, level: "chat" } });
+    expect(plan).toEqual([
+      { bot: payroll, status: "apply", access: { everyone: "chat", people: { [CARA]: "edit", [BOB]: "chat" } } },
+      { bot: ledger, status: "unchanged" },
+    ]);
+    expect(planTeamChange([ledger], instances, { kind: "access", person: { email: BOB, level: null } })).toEqual([
+      { bot: ledger, status: "apply", access: { everyone: "chat", people: {} } },
+    ]);
+  });
+
+  it("never lowers someone who can already do more when adding them, and keeps the sharing's other fields", () => {
+    const payroll = shared("payroll", { everyone: "none", people: { [CARA]: "edit", [BOB]: "view" }, groups: { finance: "chat" } } as Bot["access"]);
+    const plan = planAccess(payroll, { kind: "access", everyone: "chat", person: { email: CARA, level: "chat" } });
+    expect(plan).toEqual({ bot: payroll, status: "apply", access: { everyone: "chat", people: { [CARA]: "edit", [BOB]: "view" }, groups: { finance: "chat" } } });
+    expect(planAccess(payroll, { kind: "access", person: { email: BOB, level: "chat" } })).toMatchObject({ access: { everyone: "none", people: { [CARA]: "edit", [BOB]: "chat" }, groups: { finance: "chat" } } });
+  });
+
+  it("skips someone's own MausBot and a bot this person can't share, and never lists a bot's owner", () => {
+    const own = shared("mine", { everyone: "none", people: {} }, { defaultBot: { person: BOB } } as Partial<Bot>);
+    const viewOnly = shared("atlas", { everyone: "none", people: {} }, { yourAccess: "chat" });
+    const owned = shared("owned", { everyone: "none", people: {} });
+    const plan = planTeamChange([own, viewOnly, owned], instances, { kind: "access", person: { email: ADA, level: "chat" } });
+    expect(plan.map((row) => row.status === "skip" ? row.reason : row.status)).toEqual(["it's someone's own MausBot", "you can't change who can use it", "unchanged"]);
+  });
+
+  it("plans again from the bot's latest sharing, so a grant another admin removed after the preview stays removed", () => {
+    const previewed = shared("payroll", { everyone: "chat", people: { [CARA]: "chat" } });
+    const latest = shared("payroll", { everyone: "chat", people: {} });
+    const change = { kind: "access" as const, everyone: "none" as const };
+    expect(planTeamChange([previewed], instances, change)[0]).toMatchObject({ access: { everyone: "none", people: { [CARA]: "chat" } } });
+    expect(planAccess(latest, change)).toEqual({ bot: latest, status: "apply", access: { everyone: "none", people: {} } });
+  });
+
+  it("saves each bot's sharing through its own request, one at a time, and never as a settings patch", async () => {
+    const payroll = shared("payroll", { everyone: "none", people: {} });
+    const plan = planTeamChange([payroll], instances, { kind: "access", everyone: "chat" });
+    const persist = vi.fn(async () => undefined);
+    const share = vi.fn(async () => undefined);
+    expect(planNeedsLocalAutoConsent(plan)).toBe(false);
+    expect(await applyTeamPlan(plan, persist, { share })).toEqual([{ bot: payroll, status: "applied" }]);
+    expect(share).toHaveBeenCalledWith(payroll, { everyone: "chat", people: {} });
+    expect(persist).not.toHaveBeenCalled();
+    expect(await applyTeamPlan(plan, persist, { share: async () => "unchanged" }), "already set by the time it was sent").toEqual([{ bot: payroll, status: "unchanged" }]);
+  });
+});
+

@@ -18,13 +18,13 @@ function fixture() {
   const store = new Store(selection);
   const routines = new RoutineManager({
     botState: (id) => store.bot(id) ? "ready" : "missing",
-    goalState: (id, botId) => store.group(id)?.memberIds.includes(botId) ? "ready" : "missing",
+    goalState: (id, botId) => store.group(id ?? "")?.memberIds.includes(botId) ? "ready" : "missing",
     createTask: (id, title) => store.createTask(id, title),
     startTurn: async () => { throw new Error("Import must never run a bot"); },
   });
   const chief = store.createBot({ name: "Mira", section: "Engineering", description: "Full instructions\n".repeat(400) }, { seedMessages: false });
   store.setSoul(chief.id, "  Cite sources.\nRespect the user's current request. 🐭\n");
-  const scout = store.createBot({ name: "Scout", section: "Engineering", mascotBody: "circle" }, { seedMessages: false });
+  const scout = store.createBot({ name: "Scout", section: "Engineering", mascotBody: "circle", mascotFaceColor: "black" }, { seedMessages: false });
   const otherChief = store.createBot({ name: "Ava", section: "Operations" }, { seedMessages: false });
   const archived = store.createBot({ name: "Archived" }, { seedMessages: false });
   store.patchBot(archived.id, { hidden: true });
@@ -79,6 +79,26 @@ describe("additive portable team backups", () => {
     expect(narrowed.permissionsVersion).toBe(5);
   });
 
+  it("keeps fixed goal-history codes through two export/import cycles, without restoring a live card", () => {
+    const { store, routines, chief } = fixture();
+    store.appendMessage(chief.threadId, { role: "bot", kind: "goal.run", text: "Goal completed: Model's outcome", goalRun: {
+      runId: "history", goal: "Check the release", status: "completed", coordinatorBotId: chief.id, coordinatorName: chief.name,
+      turnCount: 1, maxTurns: 13, detail: "Model's outcome", startedAt: 1,
+    } });
+    let botId = chief.id;
+    for (const cycle of [1, 2]) {
+      const backup = parseTeamBackup(JSON.parse(JSON.stringify(createTeamBackup(store, routines.listRoutines(), `Goal history ${cycle}`))));
+      const botIndex = backup.bots.findIndex((bot) => bot.key === botId);
+      const saved = backup.bots[botIndex]!.tasks.flatMap((task) => task.messages).find((message) => message.text.includes("[Goal: completed]"))!;
+      expect(saved).toMatchObject({ text: "Goal completed: Model's outcome\n[Goal: completed]\nCheck the release\nModel's outcome", textCode: "chat.notice.exportedGoal.completed", textParams: { before: "Goal completed: Model's outcome\n", content: "\nCheck the release\nModel's outcome" } });
+      const imported = importTeamBackup(store, routines, backup, selection()).bots[botIndex]!;
+      const restored = imported.tasks!.flatMap((task) => store.messagesFor(task.threadId)).find((message) => message.text?.includes("[Goal: completed]"))!;
+      expect(restored).toMatchObject({ kind: "text", text: saved.text, textCode: saved.textCode, textParams: saved.textParams });
+      expect(restored).not.toHaveProperty("goalRun");
+      botId = imported.id;
+    }
+  });
+
   it("carries tool restrictions through backup and import without restoring execution grants", () => {
     const { store, routines, chief, scout } = fixture();
     const scope = { allow: ["native:read", "mcp:notes:read"], deny: ["mcp:notes:write"] };
@@ -93,6 +113,15 @@ describe("additive portable team backups", () => {
     const invalid = structuredClone(backup) as unknown as { bots: Array<{ toolScope: unknown }> };
     invalid.bots[0].toolScope = { allow: null };
     expect(() => parseTeamBackup(invalid)).toThrow();
+  });
+
+  it("backs up and restores a silver bot in silver", () => {
+    const { store, routines } = fixture();
+    const maus = store.createBot({ name: "MausBot", color: "silver" }, { seedMessages: false });
+    const backup = createTeamBackup(store, routines.listRoutines(), "With MausBot");
+    expect(backup.bots.find((bot) => bot.key === maus.id)?.color).toBe("silver");
+    const restored = importTeamBackup(store, routines, JSON.parse(JSON.stringify(backup)), selection());
+    expect(restored.bots.find((bot) => bot.name === "MausBot 2")?.color).toBe("silver");
   });
 
   it("carries a bot's never-use-the-helper switch through backup and import, so its restored notes and chats stay off the helper", () => {
@@ -199,6 +228,7 @@ describe("additive portable team backups", () => {
     expect(store.bot(otherChief.id)?.chiefOfStaff).toBe(true);
     expect(store.bot(archived.id)?.hidden).toBe(true);
     expect(importedScout.mascotBody).toBe(scout.mascotBody);
+    expect(importedScout.mascotFaceColor).toBe("black");
     expect(result.groups[0]).toMatchObject({ name: "Project room 2", section: "Engineering 2", memberIds: [importedChief.id, importedScout.id], defaultResponder: { kind: "member", botId: importedChief.id } });
     expect(result.groups[0].tasks?.map((task) => [task.title, task.createdAt])).toEqual(group.tasks?.map((task) => [task.title, task.createdAt]));
     const roomMessage = store.messagesFor(result.groups[0].threadId)[0];
@@ -245,6 +275,17 @@ describe("additive portable team backups", () => {
     const tampered = JSON.parse(JSON.stringify(backup)) as { bots: { key: string; connectorTools: unknown }[] };
     tampered.bots[0].connectorTools = { gmail: { tools: [] } };
     expect(() => parseTeamBackup(tampered)).toThrow();
+  });
+
+  it("keeps a conversation that work from outside reached marked through backup and restore", () => {
+    const { store, routines, chief } = fixture();
+    const reached = store.createTask(chief.id, "Event chat", false)!.threadId;
+    store.patchTask(chief.id, reached, { outside: true });
+    const backup = createTeamBackup(store, routines.listRoutines(), "Marked");
+    const result = importTeamBackup(store, routines, JSON.parse(JSON.stringify(backup)), selection());
+    const restored = result.bots.find((bot) => bot.name === "Mira 2")!.tasks!;
+    expect(restored.find((task) => task.title === "Event chat")!.outside).toBe(true);
+    expect(restored.find((task) => task.title === "First conversation")).not.toHaveProperty("outside");
   });
 
   it("keeps first-message title markers armed-once through backup and restore", () => {

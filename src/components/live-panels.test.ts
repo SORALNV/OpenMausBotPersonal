@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEvent } from "../../shared/runtime-events";
 import type { AppState, Bot } from "@/state/store";
+import { setLocale } from "@/lib/i18n";
 
 vi.mock("./DesktopCapabilities", async (importOriginal) => ({
   ...await importOriginal<typeof import("./DesktopCapabilities")>(),
@@ -45,8 +46,10 @@ async function mount(panel: typeof InspectorPanel | typeof ActivityPanel) {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  flushSync(() => root.render(createElement(BotEditorStore, { value, children: createElement(panel, { bot }) })));
+  const render = (next: Bot) => flushSync(() => root.render(createElement(BotEditorStore, { value, children: createElement(panel, { bot: next }) })));
+  render(bot);
   await settle();
+  return render;
 }
 
 beforeEach(() => {
@@ -63,6 +66,7 @@ afterEach(() => {
   root.unmount();
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  setLocale("en");
 });
 
 describe("Inspector on the app's live stream", () => {
@@ -90,6 +94,19 @@ describe("Inspector on the app's live stream", () => {
 });
 
 describe("Activity on the app's live stream", () => {
+  it.each([["en", "Email"], ["pt-br", "E-mail"]])("shows the email app in %s without translating the tool identifier", async (language, app) => {
+    setLocale(language);
+    const tool = "mcp__email__EMAIL_SEND_EMAIL";
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify({ rows: [{
+      at: "2026-10-04T09:00:00.000Z", threadId: "thread", tool, app: "Email", appKey: "activity.app.email", label: "Send email", outcome: "ran",
+    }] }))));
+    await mount(ActivityPanel);
+    const line = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.title === tool)!;
+    expect(line.querySelector(".font-medium")?.textContent).toBe(app);
+    expect(line.textContent).toContain("Send email");
+    expect(line.title).toBe(tool);
+  });
+
   it("reloads when one of the bot's turns settles, with no stream of its own", async () => {
     await mount(ActivityPanel);
     expect(fetched).toEqual(["/api/bots/bot/activity?limit=300"]);
@@ -99,6 +116,15 @@ describe("Activity on the app's live stream", () => {
     await settle();
     expect(fetched).toEqual(["/api/bots/bot/activity?limit=300", "/api/bots/bot/activity?limit=300"]);
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("still reloads when the bot changes while a settled turn waits", async () => {
+    const render = await mount(ActivityPanel);
+    frame(runtime("e5", { type: "turn.completed", ok: true }));
+    render({ ...bot, unread: true, tasks: [...bot.tasks!] });
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    await settle();
+    expect(fetched).toHaveLength(2);
   });
 
   it("reloads when the stream missed frames it could not replay", async () => {

@@ -13,6 +13,7 @@ import worker, {
   requestAlias,
   sha256,
 } from "./index";
+import { streamedBody } from "./test-harness";
 
 const multiAccount = {
   enable: true,
@@ -28,7 +29,7 @@ function session(id: string, userId: string, configured = true) {
   };
 }
 
-function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>) {
+function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>, userId = "omb_stable") {
   const dbRuns: Array<{ sql: string; values: unknown[] }> = [];
   const env = {
     COMPOSIO_API_BASE: "https://backend.composio.dev/api/v3.1",
@@ -39,8 +40,10 @@ function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>) {
         return {
           bind(...values: unknown[]) {
             return {
+              first: async () => ({ id: values[0], composio_user_id: userId, session_id: null, disabled_at: null }),
               run: async () => {
                 dbRuns.push({ sql, values });
+                return { meta: { changes: 1 } };
               },
             };
           },
@@ -64,6 +67,15 @@ describe("connected-apps broker boundaries", () => {
       method: "POST",
       body: "  \n",
     }))).resolves.toBeUndefined();
+  });
+
+  it("stops reading a streamed authorize body once it passes 2 KiB", async () => {
+    const stream = streamedBody(1024, 64);
+    const refused = await requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", stream.init)).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(Response);
+    expect((refused as Response).status).toBe(413);
+    expect(stream.read.cancelled).toBe(true);
+    expect(stream.read.bytes).toBeLessThanOrEqual(4 * 1024);
   });
 
   it("accepts only HTTPS Composio MCP endpoints", () => {
@@ -283,7 +295,7 @@ describe("connected-apps broker boundaries", () => {
 
   function accountFixture(installationUser: string) {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
-    const { env, ctx } = testEnv(fetchCalls);
+    const { env, ctx } = testEnv(fetchCalls, installationUser);
     const installation = { id: "retry-install", composio_user_id: installationUser, session_id: "trs_retry", disabled_at: null };
     const fixture = {
       accounts: [] as Array<{ id: string; status?: string; alias?: string; toolkit: { slug: string } }>,
@@ -506,6 +518,7 @@ describe("MCP relay Session reuse", () => {
                     lastSeenWrites.push(Number(values[0]));
                     row.last_seen_at = Number(values[0]);
                   }
+                  return { meta: { changes: 1 } };
                 },
               };
             },
@@ -694,7 +707,7 @@ describe("MCP relay Session reuse", () => {
 describe("project auth configs", () => {
   afterEach(() => vi.useRealTimers());
 
-  const highlevel = { id: "ac_new", status: "ENABLED", is_composio_managed: false, last_updated_at: "2026-10-01T00:00:00Z", toolkit: { slug: "HighLevel_Location" } };
+  const zohoCrm = { id: "ac_new", status: "ENABLED", is_composio_managed: false, last_updated_at: "2026-10-01T00:00:00Z", toolkit: { slug: "Zoho_Crm" } };
 
   function projectHarness(authConfigs: () => Response | Promise<Response>) {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
@@ -739,8 +752,8 @@ describe("project auth configs", () => {
         ? { items: [{ id: "ac_x", is_composio_managed: false, toolkit: { slug: "X" } }] }
         : {
           items: [
-            { id: "ac_old", is_composio_managed: false, last_updated_at: "2026-09-01T00:00:00Z", toolkit: { slug: "highlevel_location" } },
-            highlevel,
+            { id: "ac_old", is_composio_managed: false, last_updated_at: "2026-09-01T00:00:00Z", toolkit: { slug: "zoho_crm" } },
+            zohoCrm,
             { id: "ac_gmail", is_composio_managed: true, toolkit: { slug: "gmail" } },
             { id: "ac_hubspot", status: "DISABLED", is_composio_managed: false, toolkit: { slug: "hubspot" } },
             { id: "ac_slack", is_composio_managed: false, is_enabled_for_tool_router: false, toolkit: { slug: "slack" } },
@@ -752,27 +765,27 @@ describe("project auth configs", () => {
 
     await expect(ensureSession(harness.install(null), harness.env as never, harness.ctx as never)).resolves.toMatchObject({
       sessionId: "trs_new_1",
-      authConfigs: { highlevel_location: "ac_new", twitter: "ac_x" },
+      authConfigs: { zoho_crm: "ac_new", twitter: "ac_x" },
     });
     expect(harness.authConfigReads().map((call) => new URL(call.url).searchParams.get("is_composio_managed"))).toEqual(["false", "false"]);
     expect(harness.creations()).toEqual([expect.objectContaining({
       user_id: "omb_stable",
       multi_account: multiAccount,
-      auth_configs: { highlevel_location: "ac_new", twitter: "ac_x" },
+      auth_configs: { zoho_crm: "ac_new", twitter: "ac_x" },
     })]);
     expect(harness.dbRuns.some((run) => run.sql.includes("SET session_id") && run.values[0] === "trs_new_1")).toBe(true);
-    await expect(listCustomAuthConfigs(harness.env as never)).resolves.toEqual({ highlevel_location: "ac_new", twitter: "ac_x" });
+    await expect(listCustomAuthConfigs(harness.env as never)).resolves.toEqual({ zoho_crm: "ac_new", twitter: "ac_x" });
   });
 
   it("recreates a Session that lacks the project's auth configs once, keeping the Composio user", async () => {
     const { ensureSession } = await freshBroker();
-    const harness = projectHarness(() => Response.json({ items: [highlevel] }));
+    const harness = projectHarness(() => Response.json({ items: [zohoCrm] }));
     harness.sessions.set("trs_old", session("trs_old", "omb_stable"));
     harness.echoAuthConfigs = false;
 
     const upgraded = await ensureSession(harness.install("trs_old"), harness.env as never, harness.ctx as never);
     expect(upgraded.sessionId).toBe("trs_new_1");
-    expect(harness.creations()).toEqual([expect.objectContaining({ user_id: "omb_stable", auth_configs: { highlevel_location: "ac_new" } })]);
+    expect(harness.creations()).toEqual([expect.objectContaining({ user_id: "omb_stable", auth_configs: { zoho_crm: "ac_new" } })]);
     expect(harness.dbRuns.filter((run) => run.sql.includes("SET session_id")).map((run) => [run.values[0], run.values[2]])).toEqual([["trs_new_1", "install-1"]]);
 
     // Composio left auth_configs out of the echo: the upgrade is not retried.
@@ -780,7 +793,7 @@ describe("project auth configs", () => {
     expect(harness.creations()).toHaveLength(1);
 
     // A Session that echoes the config (in any slug case) is reused as is.
-    harness.sessions.set("trs_covered", { ...session("trs_covered", "omb_stable"), config: { user_id: "omb_stable", multi_account: multiAccount, auth_configs: { HighLevel_Location: "ac_new" } } });
+    harness.sessions.set("trs_covered", { ...session("trs_covered", "omb_stable"), config: { user_id: "omb_stable", multi_account: multiAccount, auth_configs: { Zoho_Crm: "ac_new" } } });
     await expect(ensureSession(harness.install("trs_covered"), harness.env as never, harness.ctx as never)).resolves.toMatchObject({ sessionId: "trs_covered" });
     expect(harness.creations()).toHaveLength(1);
     expect(harness.authConfigReads()).toHaveLength(1);
@@ -807,7 +820,7 @@ describe("project auth configs", () => {
     vi.setSystemTime(new Date("2026-10-15T12:00:00Z"));
     const { ensureSession } = await freshBroker();
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    let items: unknown[] | "fail" = [highlevel];
+    let items: unknown[] | "fail" = [zohoCrm];
     const harness = projectHarness(() => items === "fail"
       ? Response.json({ error: "down" }, { status: 503 })
       : Response.json({ items }));
@@ -829,14 +842,14 @@ describe("project auth configs", () => {
     expect(errors).toHaveBeenCalledTimes(1);
 
     // The failed read is retried after a minute; a new auth config upgrades the Session once more.
-    items = [highlevel, { id: "ac_x", is_composio_managed: false, toolkit: { slug: "x" } }];
+    items = [zohoCrm, { id: "ac_x", is_composio_managed: false, toolkit: { slug: "x" } }];
     vi.setSystemTime(new Date("2026-10-15T12:10:30Z"));
     await verify("trs_new_1");
     expect(harness.authConfigReads()).toHaveLength(2);
     vi.setSystemTime(new Date("2026-10-15T12:11:02Z"));
-    await expect(verify("trs_new_1")).resolves.toMatchObject({ sessionId: "trs_new_2", authConfigs: { highlevel_location: "ac_new", twitter: "ac_x" } });
+    await expect(verify("trs_new_1")).resolves.toMatchObject({ sessionId: "trs_new_2", authConfigs: { zoho_crm: "ac_new", twitter: "ac_x" } });
     expect(harness.authConfigReads()).toHaveLength(3);
-    expect(harness.creations().at(-1)).toEqual(expect.objectContaining({ user_id: "omb_stable", auth_configs: { highlevel_location: "ac_new", twitter: "ac_x" } }));
+    expect(harness.creations().at(-1)).toEqual(expect.objectContaining({ user_id: "omb_stable", auth_configs: { zoho_crm: "ac_new", twitter: "ac_x" } }));
     errors.mockRestore();
   });
 });

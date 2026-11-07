@@ -10,6 +10,7 @@ import { resetMarkers, useEngineLimits, type ResetMarker } from "@/lib/limit-res
 import { automationsFrom, automationStatus } from "@/lib/automations";
 import type { RoutineRun } from "@/lib/routines";
 import { api, useStore } from "@/state/store";
+import { useRoutineRunsFrom } from "@/state/older-routine-runs";
 import { CalendarGrid, EventDetails, EventEditor, QuickComposer, type CalendarEventItem, type EventKind, type EventSeed } from "../RoutineCalendarPage";
 import type { ResetDrop } from "../routines/LimitResetMarkers";
 
@@ -33,6 +34,7 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
   const visibleBots = state.bots.filter((bot) => !bot.hidden);
   const rangeStart = days === 7 ? startOfWeek(anchor) : startOfDay(anchor);
   const rangeEnd = addDays(rangeStart, days);
+  useRoutineRunsFrom(rangeStart);
   const markers = resetMarkers(useEngineLimits(), rangeStart, rangeEnd);
 
   const loadCalls = useCallback(async () => {
@@ -71,14 +73,14 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
       if (dragged.kind === "routine") {
         const routine = state.routines.find((candidate) => candidate.id === dragged.id);
         if (!routine) return;
-        if (routine.schedule.type === "cron") throw new Error("Open this automation to change its repeating schedule.");
-        if (routine.schedule.type !== "once" && !window.confirm("Move every time it repeats?")) return;
+        if (routine.schedule.type === "cron") throw new Error(t("automations.calendar.cronMove"));
+        if (routine.schedule.type !== "once" && !window.confirm(t("automations.calendar.moveSeries"))) return;
         const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ schedule: scheduleAt(routine.schedule, dragged.at, nextAt) }) });
         dispatch({ type: "routinePatched", routine: response.routine });
       } else {
         const call = calls.find((candidate) => candidate.id === dragged.id);
         if (!call) return;
-        if (call.schedule.type === "daily" && !window.confirm("Move every time it repeats?")) return;
+        if (call.schedule.type === "daily" && !window.confirm(t("automations.calendar.moveSeries"))) return;
         const response = await api(`/api/calendar-calls/${call.id}`, { method: "PATCH", body: JSON.stringify({ schedule: scheduleAt(call.schedule, dragged.at, nextAt) }) });
         upsertCall(response.call);
       }
@@ -133,7 +135,7 @@ export function AutomationsCalendar({ botFilter, selectedAutomationId, onOpenAut
           <button type="button" aria-pressed={days === 1} onClick={() => setDays(1)} className={segment(days === 1)}>{t("routines.view.day")}</button>
           <button type="button" aria-pressed={days === 7} onClick={() => setDays(7)} className={segment(days === 7)}>{t("routines.view.week")}</button>
         </div>
-        {error && <button type="button" onClick={() => setError("")} className="w-full text-left text-[11.5px] text-danger">{error}</button>}
+        {error && <button type="button" onClick={() => setError("")} className="w-full text-left text-[12px] text-danger">{error}</button>}
       </div>
       <div className="relative flex min-h-0 flex-1">
         {!liveSelected && <div className="hidden shrink-0 @min-[1040px]/routines:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} /></div>}

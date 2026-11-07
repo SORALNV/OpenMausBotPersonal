@@ -1,5 +1,6 @@
 // LocalComputerAutoWarning remembers its bot, so a bot switch while it is up never applies the choice to the new bot.
-import { useEffect, useState } from "react";
+import { useTeamPeople } from "@/state/team-people";
+import { useState } from "react";
 import { Crown } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -29,6 +30,7 @@ export function PermissionsSection({
   parts?: readonly PermissionsPart[];
 }) {
   const { patch, engine, canCoordinate, approvalMode, trustedModesAvailable, sectionName, currentChief } = derived;
+  const team = useTeamPeople();
   const { state, dispatch } = useStore();
   const ownerOrAdmin = useOwnerOrAdmin();
   const { draft } = useBotEditor();
@@ -39,7 +41,7 @@ export function PermissionsSection({
   const applyFullEverywhere = () =>
     dispatch({ type: "updateBot", botId: bot.id, patch: { approvalMode: "full", applyToAllThreads: true } });
   const setApprovalMode = (mode: ApprovalMode) => {
-    if (bot.busy || mode === approvalMode) return;
+    if (mode === approvalMode) return;
     if (mode === "full") {
       applyFullEverywhere();
       return;
@@ -53,7 +55,7 @@ export function PermissionsSection({
 
   return (
     <div className="flex flex-col gap-4">
-      {shows("chief") && <div
+      {shows("chief") && !team && <div
         className={cn(
           "rounded-xl border p-4",
           bot.chiefOfStaff ? "border-accent/40 bg-accent/10" : "border-hairline/40 bg-card",
@@ -70,7 +72,7 @@ export function PermissionsSection({
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-medium text-ink">{t("permissions.chief.title")}</div>
-            <div className="text-[11.5px] text-ink-secondary">{t("permissions.chief.oneFor", { section: displaySectionName })}</div>
+            <div className="text-[12px] text-ink-secondary">{t("permissions.chief.oneFor", { section: displaySectionName })}</div>
           </div>
           <Switch
             checked={Boolean(bot.chiefOfStaff)}
@@ -103,30 +105,34 @@ export function PermissionsSection({
         {bot.chiefOfStaff && <ProposalStatus bot={bot} kind="owner" />}
       </div>}
 
-      {shows("peers") && <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-        <div>
-          <div className="text-[15px] font-medium text-ink">{t("permissions.peers.title")}</div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
-            {bot.approvePeerComms
-              ? t("permissions.peers.on")
-              : t("permissions.peers.off")}
+      {shows("peers") && <div className="rounded-xl bg-card p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-[15px] font-medium text-ink">{t("permissions.peers.title")}</div>
+            <div className="mt-0.5 text-[13px] text-ink-secondary">
+              {bot.approvePeerComms
+                ? t("permissions.peers.on")
+                : t("permissions.peers.off")}
+            </div>
+            <ProposalStatus bot={bot} kind="owner" />
           </div>
-          <ProposalStatus bot={bot} kind="owner" />
+          <Switch
+            checked={Boolean(bot.approvePeerComms)}
+            aria-label={t("permissions.peers.title")}
+            disabled={!bot.approvePeerComms && !canCoordinate}
+            onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
+            title={!bot.approvePeerComms && !canCoordinate ? t("permissions.cannotCoordinate") : undefined}
+            className="disabled:cursor-not-allowed"
+          />
         </div>
-        <Switch
-          checked={Boolean(bot.approvePeerComms)}
-          aria-label={t("permissions.peers.title")}
-          disabled={!bot.approvePeerComms && !canCoordinate}
-          onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
-          title={!bot.approvePeerComms && !canCoordinate ? t("permissions.cannotCoordinate") : undefined}
-          className="disabled:cursor-not-allowed"
-        />
+        {Array.isArray(bot.peers) && <PeersListNote peers={bot.peers} bots={state.bots}
+          onOpen={() => patch({ peers: null, acknowledgePeerScope: true })} />}
       </div>}
 
       {shows("approval") && <div className="rounded-xl bg-card p-4">
         <div className="text-[15px] font-medium text-ink">{t("permissions.approval.title")}</div>
         <div className="mt-0.5 text-[13px] text-ink-secondary">
-          {draft ? t("permissions.approval.draft") : t("permissions.approval.help")}
+          {draft ? t("permissions.approval.draftHanded") : t("permissions.approval.helpHanded")}
         </div>
         <ProposalStatus bot={bot} kind="owner" />
         <div className="mt-3">
@@ -138,13 +144,13 @@ export function PermissionsSection({
             onSelect={setApprovalMode}
             menuDirection="down"
             wide
-            disabled={Boolean(bot.busy)}
+            busy={Boolean(bot.busy)}
             trustedModesAvailable={trustedModesAvailable}
             onManageCommandAllowlist={!draft && ownerOrAdmin === true ? () => setCommandAllowlistTarget({ botId: bot.id, botName: bot.name }) : undefined}
           />
         </div>
         {!draft && approvalMode === "full" && <button
-          type="button" disabled={Boolean(bot.busy)}
+          type="button"
           className="mt-3 text-[13px] text-accent hover:underline disabled:opacity-40"
           onClick={applyFullEverywhere}
         >{t("permissions.approval.applyFull")}</button>}
@@ -160,7 +166,7 @@ export function PermissionsSection({
         {...commandAllowlistTarget}
         onClose={() => setCommandAllowlistTarget(null)}
       />}
-      {!draft && shows("outbound") && <OutboundControl key={bot.id} bot={bot} onChange={(outbound) => patch({ outbound })} />}
+      {!draft && shows("outbound") && <OutboundControl bot={bot} onChange={(outbound) => patch({ outbound })} />}
       <LocalComputerAutoWarning
         open={localAutoWarning !== null}
         onCancel={() => setLocalAutoWarning(null)}
@@ -175,36 +181,18 @@ export function PermissionsSection({
   );
 }
 
+function PeersListNote({ peers, bots, onOpen }: { peers: readonly string[]; bots: readonly Bot[]; onOpen: () => void }) {
+  const names = peers.flatMap((id) => bots.find((other) => other.id === id && !other.hidden)?.name ?? []);
+  return (
+    <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-hairline/40 pt-3 text-[13px] text-ink-secondary">
+      <span>{names.length ? t("permissions.peers.limited", { names: names.join(", ") }) : t("permissions.peers.none")}</span>
+      <button type="button" className="text-accent hover:underline" onClick={onOpen}>{t("permissions.peers.everyone")}</button>
+    </div>
+  );
+}
+
 function OutboundControl({ bot, onChange }: { bot: Bot; onChange: (policy: OutboundPolicy) => void }) {
   const policy = bot.outbound ?? DEFAULT_OUTBOUND_POLICY;
-  const [today, setToday] = useState<number | null>(null);
-  const [capDraft, setCapDraft] = useState(String(policy.dailyCap));
-
-  useEffect(() => {
-    setCapDraft(String(policy.dailyCap));
-  }, [policy.dailyCap]);
-
-  useEffect(() => {
-    let alive = true;
-    void fetch(`/api/bots/${bot.id}/outbound`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: { today?: number } | null) => {
-        if (alive && body && typeof body.today === "number") setToday(body.today);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [bot.id, bot.outbound]);
-
-  const commitCap = () => {
-    const parsed = Number(capDraft);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
-      setCapDraft(String(policy.dailyCap));
-      return;
-    }
-    if (parsed !== policy.dailyCap) onChange({ policy: policy.policy, dailyCap: parsed });
-  };
 
   return (
     <div className="rounded-xl bg-card p-4">
@@ -225,7 +213,7 @@ function OutboundControl({ bot, onChange }: { bot: Bot; onChange: (policy: Outbo
             type="button"
             aria-pressed={policy.policy === value}
             onClick={() => {
-              if (value !== policy.policy) onChange({ policy: value, dailyCap: policy.dailyCap });
+              if (value !== policy.policy) onChange({ policy: value });
             }}
             className={cn(
               "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium",
@@ -236,30 +224,6 @@ function OutboundControl({ bot, onChange }: { bot: Bot; onChange: (policy: Outbo
           </button>
         ))}
       </div>
-      {policy.policy === "allow" && (
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-ink-secondary">
-          <label className="flex items-center gap-2">
-            {t("permissions.outbound.upTo")}
-            <input
-              type="number"
-              min={1}
-              max={1000}
-              value={capDraft}
-              onChange={(event) => setCapDraft(event.target.value)}
-              onBlur={commitCap}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") (event.target as HTMLInputElement).blur();
-              }}
-              aria-label={t("permissions.outbound.dailyLimit")}
-              className="w-20 rounded-md bg-inset px-2 py-1 text-[13px] text-ink tabular-nums outline-none focus:ring-1 focus:ring-accent"
-            />
-            {t("permissions.outbound.perDay")}
-          </label>
-          <span className="tabular-nums">
-            {today === null ? "" : t("permissions.outbound.usedToday", { today, cap: policy.dailyCap })}
-          </span>
-        </div>
-      )}
     </div>
   );
 }

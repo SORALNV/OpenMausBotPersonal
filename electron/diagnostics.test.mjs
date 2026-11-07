@@ -18,10 +18,10 @@ const {
   CREDENTIAL_ENV_NAMES,
 } = require("./diagnostics.mjs");
 
-// The desktop credential list is a hand copy of server/config.ts WORKSPACE_CREDENTIAL_ENV; this test is the drift alarm.
-describe("credential env parity with server/config.ts", () => {
+// The desktop credential list is a hand copy of server/credential-env.ts WORKSPACE_CREDENTIAL_ENV; this test is the drift alarm.
+describe("credential env parity with server/credential-env.ts", () => {
   it("matches WORKSPACE_CREDENTIAL_ENV exactly", () => {
-    const config = readFileSync(new URL("../server/config.ts", import.meta.url), "utf8");
+    const config = readFileSync(new URL("../server/credential-env.ts", import.meta.url), "utf8");
     const match = config.match(/WORKSPACE_CREDENTIAL_ENV = \[([\s\S]*?)\] as const/);
     expect(match).not.toBeNull();
     const names = [...match[1].matchAll(/"([A-Z0-9_]+)"/g)].map((m) => m[1]);
@@ -121,6 +121,14 @@ describe("buildDiagnosticsReport", () => {
     for (const secret of [key, otherKey, workspaceKey]) expect(report).not.toContain(secret);
     expect(report).toContain("groq.configured=true");
     expect(report).toContain("Groq HTTP 401");
+  });
+
+  it("masks long-term and temporary AWS access key ids", () => {
+    const longTerm = `AKIA${"ABCDEFGHIJKLMNOP"}`;
+    const temporary = `ASIA${"QRSTUVWXYZ234567"}`;
+    const redacted = redactSecretsInLine(`aws ${longTerm} then sts ${temporary} done`);
+    for (const id of [longTerm, temporary]) expect(redacted).not.toContain(id);
+    expect(redacted).toContain("done");
   });
 
   it("includes privacy-safe desktop crash metadata separately from the server log", () => {

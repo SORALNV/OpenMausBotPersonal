@@ -42,7 +42,6 @@ const CASES: ReadonlyArray<[string, OutcomeCategory | null]> = [
   ["PIPEDRIVE_ADD_A_PERSON", "lead"],
   ["APOLLO_PEOPLE_SEARCH", "lead"],
   ["HUNTER_EMAIL_FINDER", "lead"],
-  ["mcp__highlevel__HIGHLEVEL_CREATE_CONTACT", "lead"],
   ["HUBSPOT_LIST_CONTACTS", null],
   ["STRIPE_CREATE_REFUND", "other"],
   ["GOOGLECALENDAR_CREATE_EVENT", "other"],
@@ -58,6 +57,8 @@ const CASES: ReadonlyArray<[string, OutcomeCategory | null]> = [
   ["post_to_room", null],
   ["mcp__agents__post_to_room", null],
   ["mcp__computer__screenshot", null],
+  ["mcp__device__PHONE_CREATE_EVENT", null],
+  ["mcp__device__PHONE_SEND_MESSAGE", null],
   ["error: Your ChatGPT sign-in has expired", null],
 ];
 

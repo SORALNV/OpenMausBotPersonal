@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { keepTransient, lazyClaimRetryText, MAX_CLAIM_ATTEMPTS, startAutoVmClaim, transientClaimFailure, type AutoVmClaimSlot, type AutoVmClaimTable } from "./auto-vm-claims.ts";
+import { keepTransient, lazyClaimFailedText, lazyClaimRetryText, MAX_CLAIM_ATTEMPTS, startAutoVmClaim, transientClaimFailure, type AutoVmClaimSlot, type AutoVmClaimTable } from "./auto-vm-claims.ts";
 
 const slot = (claim: () => Promise<void>, generation = "gen-1"): AutoVmClaimSlot => ({
   owner: { threadId: "t1", generation },
@@ -16,7 +16,27 @@ describe("startAutoVmClaim", () => {
     startAutoVmClaim(table, "t1", "gen-1");
     startAutoVmClaim(table, "t1", "gen-1");
     await table.get("t1")!.begin;
-    expect(claim).toHaveBeenCalledExactlyOnceWith();
+    expect(claim).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
+  it("hands the claim what the first screen call would open, so the person's question can name it", async () => {
+    const table: AutoVmClaimTable = new Map();
+    const claim = vi.fn(async () => undefined);
+    table.set("t1", slot(claim));
+    startAutoVmClaim(table, "t1", "gen-1", { app: "Chrome", site: "calendar.google.com" });
+    await table.get("t1")!.begin;
+    expect(claim).toHaveBeenCalledExactlyOnceWith({ app: "Chrome", site: "calendar.google.com" });
+  });
+
+  it("takes a person's No as an answer: the slot refuses later calls, and no failed turn is reported", async () => {
+    const table: AutoVmClaimTable = new Map();
+    const onRejected = vi.fn();
+    const declined = Object.assign(new Error("the person said no to using their own computer"), { declined: true });
+    table.set("t1", { ...slot(async () => { throw declined; }), onRejected });
+    startAutoVmClaim(table, "t1", "gen-1");
+    await table.get("t1")!.begin;
+    expect(table.get("t1")).toMatchObject({ failed: true, failure: "the person said no to using their own computer" });
+    expect(onRejected).not.toHaveBeenCalled();
   });
 
   it("refuses to fire for a different dispatch generation", () => {
@@ -39,13 +59,13 @@ describe("startAutoVmClaim", () => {
     expect(table.get("t1")!.owner.generation).toBe("gen-1");
     startAutoVmClaim(table, "t1", "gen-1");
     startAutoVmClaim(table, "t1", "gen-1");
-    expect(claim).toHaveBeenCalledExactlyOnceWith();
+    expect(claim).toHaveBeenCalledExactlyOnceWith(undefined);
     table.delete("t1");
     const next = vi.fn(async () => undefined);
     table.set("t1", slot(next, "gen-2"));
     startAutoVmClaim(table, "t1", "gen-2");
     await table.get("t1")!.begin;
-    expect(next).toHaveBeenCalledExactlyOnceWith();
+    expect(next).toHaveBeenCalledExactlyOnceWith(undefined);
     expect(table.get("t1")!.failed).toBeUndefined();
   });
 
@@ -57,7 +77,7 @@ describe("startAutoVmClaim", () => {
     await table.get("t1")!.begin;
     startAutoVmClaim(table, "t1", "gen-1");
     await Promise.resolve();
-    expect(claim).toHaveBeenCalledExactlyOnceWith();
+    expect(claim).toHaveBeenCalledExactlyOnceWith(undefined);
     expect(table.has("t1")).toBe(true);
   });
 
@@ -172,5 +192,23 @@ describe("startAutoVmClaim", () => {
     await table.get("t1")!.begin;
     expect(table.get("t1")!.claimed).toBe(true);
     expect(onRejected).not.toHaveBeenCalled();
+  });
+});
+
+describe("lazyClaimFailedText", () => {
+  const boat = { label: "the cloud computer", startsComputer: true as const, failure: "Miso's cloud desktop didn't start. This conversation is back on Auto. Send your message again." };
+
+  it("gives the bot the computer's own reason, and says the conversation is back on Auto only when it is", () => {
+    expect(lazyClaimFailedText({ ...boat, cause: "the cloud computer could not be created or reached", backOnAuto: true })).toBe(
+      "The cloud computer could not be started: the cloud computer could not be created or reached. This call was not performed. " +
+      "This conversation is back on Auto. Do not retry computer work in this turn; tell the person what you could not do.");
+    expect(lazyClaimFailedText({ ...boat, cause: "the cloud computer didn't start in time." })).toBe(
+      "The cloud computer could not be started: the cloud computer didn't start in time. This call was not performed. " +
+      "Do not retry computer work in this turn; tell the person what you could not do.");
+  });
+
+  it("keeps the claim wording for a computer the turn does not start", () => {
+    expect(lazyClaimFailedText({ label: "the Local VM", failure: "the Local VM is not ready" })).toBe(
+      "This turn could not claim the Local VM (the Local VM is not ready). This call was not performed. Do not retry computer work in this turn; tell the person what you could not do.");
   });
 });

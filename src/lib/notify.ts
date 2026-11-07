@@ -5,6 +5,12 @@ export type NotifyFrame = Notification;
 
 export type NotificationTarget = Pick<NotifyFrame, "botId" | "threadId">;
 
+/** On a team's page in the desktop app, its name: notifications then say which place they come from ("Acme · Scout"). */
+let placeName: string | null = null;
+export function setNotificationPlace(name: string | null) {
+  placeName = name;
+}
+
 /** Call from the click: browsers may reject a permission request made later from an SSE frame. Resolves to the permission now in force. */
 export async function requestNotificationPermission(): Promise<NotificationPermission | null> {
   if (typeof Notification === "undefined") return null;
@@ -34,19 +40,24 @@ export function showNotification(
   if (frame.kind === "done" && !finishedNotificationsEnabled()) return;
   const spend = frame.kind === "spend";
   if (!spend && document.hasFocus() && visibleThreadId === frame.threadId) return;
+  if (Notification.permission !== "granted") return;
 
-  const open = () => {
-    window.focus();
-    onOpen({ botId: frame.botId, threadId: frame.threadId });
+  const title = placeName ? `${placeName} · ${frame.title}` : frame.title;
+  const options: NotificationOptions = {
+    body: frame.body,
+    ...buildNotificationOptions({ id: frame.botId, avatarUrl }),
+    ...(spend ? { tag: "openmausbot:spend", icon: undefined } : {}),
+    ...(notificationSoundsEnabled() ? {} : { silent: true }),
   };
-
-  if (Notification.permission === "granted") {
-    const options: NotificationOptions = {
-      body: frame.body,
-      ...buildNotificationOptions({ id: frame.botId, avatarUrl }),
-      ...(spend ? { tag: "openmausbot:spend", icon: undefined } : {}),
-      ...(notificationSoundsEnabled() ? {} : { silent: true }),
+  const shownByPage = () => {
+    new Notification(title, options).onclick = () => {
+      window.focus();
+      onOpen({ botId: frame.botId, threadId: frame.threadId });
     };
-    new Notification(frame.title, options).onclick = open;
-  }
+  };
+  const desktop = window.ogb?.desktopNotifications;
+  if (!desktop) return shownByPage();
+  void desktop.show({
+    title, body: frame.body, tag: options.tag, silent: options.silent === true, picture: options.icon, botId: frame.botId, threadId: frame.threadId,
+  }).then((shown) => { if (!shown) shownByPage(); }, shownByPage);
 }

@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 
+import { spawnBotWork } from "../../oom-score.ts";
 import { pipeTransport, type CdpTransport } from "../cdp/transport.ts";
 import { chromeArgs, chromeEnv, type ChromeEnvInput, type ChromeFlagsInput } from "./flags.ts";
 import { diagnoseLaunchFailure } from "./host-setup.ts";
@@ -52,6 +53,10 @@ export class ChromeLaunchError extends Error {
 }
 
 const OUTPUT_LIMIT = 64 * 1024;
+
+/** A binary's first start on a machine: Windows scans a newly downloaded Chrome before it runs, over 60 s for Chrome
+ * for Testing 156 on GitHub's Windows runner. */
+export const FIRST_START_MS = 120_000;
 const HANDSHAKE_ID = 0;
 
 function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -99,7 +104,7 @@ export async function launchChrome(options: LaunchOptions): Promise<ChromeProces
     sandboxHelper: options.sandboxHelper ?? null,
     profileMarker: options.profileMarker ?? null,
   });
-  const child = spawn(options.executablePath, argv, { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"], env, windowsHide: true });
+  const child = spawnBotWork(() => spawn(options.executablePath, argv, { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"], env, windowsHide: true }));
   let output = "";
   const keep = (chunk: Buffer) => {
     output = (output + chunk.toString("utf8")).slice(-OUTPUT_LIMIT);
@@ -113,9 +118,12 @@ export async function launchChrome(options: LaunchOptions): Promise<ChromeProces
       resolve({ code: null, signal: null });
     });
   });
+  const pid = child.pid;
+  if (pid !== undefined) void exited.then(() => options.registry?.remove(pid));
   const transport = pipeTransport(child.stdio[3] as Writable, child.stdio[4] as Readable);
   let version: BrowserVersion;
   try {
+    if (pid !== undefined) options.registry?.add({ pid, startTime: null, userDataDir: options.userDataDir, ownerPid: process.pid, launchedAt: new Date().toISOString() });
     version = await handshake(transport, exited, options.handshakeTimeoutMs ?? 60_000);
   } catch (error) {
     killTree(child, "SIGKILL");
@@ -123,9 +131,6 @@ export async function launchChrome(options: LaunchOptions): Promise<ChromeProces
     const diagnosis = await diagnoseLaunchFailure({ executable: options.executablePath, output, env }).catch(() => null);
     throw new ChromeLaunchError(diagnosis?.message ?? (error instanceof Error ? error.message : String(error)), output);
   }
-  const pid = child.pid!;
-  options.registry?.add({ pid, startTime: null, userDataDir: options.userDataDir, ownerPid: process.pid, launchedAt: new Date().toISOString() });
-  void exited.then(() => options.registry?.remove(pid));
   const wait = (ms: number) => Promise.race([exited, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
   const stop = async (graceMs: number): Promise<ChromeExit> => {
     const polite = await wait(graceMs);
@@ -145,7 +150,7 @@ export async function launchChrome(options: LaunchOptions): Promise<ChromeProces
     return exited;
   };
   return {
-    pid,
+    pid: pid!,
     argv,
     transport,
     version,

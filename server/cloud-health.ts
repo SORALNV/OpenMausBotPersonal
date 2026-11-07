@@ -7,6 +7,10 @@ import { failedTurnCause } from "../shared/failed-turn.ts";
 import { PLACE_STATES } from "../shared/place-view.ts";
 import type { RoutineRunStatus } from "../shared/routines.ts";
 import { trialCreditKind } from "../shared/trial-credit.ts";
+import type { BoxReport } from "./bot-box/box.ts";
+import type { RoomReport } from "./engine-memory.ts";
+import type { FirstHourReport } from "./host/first-hour.ts";
+import type { ValueReport } from "./host/value-ledger.ts";
 import type { ProviderSnapshot, RuntimeEvent } from "./contracts.ts";
 import { classifyError } from "./drivers/retry.ts";
 import type { Message, StoreChange } from "./store.ts";
@@ -31,7 +35,7 @@ const match = (pattern: RegExp, value: unknown): string | null => typeof value =
 
 /** Stop reasons a driver settles a failed turn with. Free text never becomes a code. */
 const STOP_CODES = new Set(["auth_required", "rpc_error", "shutdown_timeout", "provider_safety", "update_required", "spawn_error", "quota",
-  "exit_before_result", "error_during_execution", "error", "failed"]);
+  "tool_error", "exit_before_result", "error_during_execution", "error", "failed"]);
 /** Stops that say only that something failed: the cause's own class, when known, says more. */
 const GENERIC_STOPS = new Set(["rpc_error", "error", "failed", "error_during_execution", "exit_before_result"]);
 /** Engine stops that count as a failure even when no failed row was written for them. */
@@ -39,10 +43,11 @@ const ROWLESS_STOPS = new Set(["shutdown_timeout", "auth_required", "update_requ
 /** Causes the server writes itself, by fixed code. */
 const FIXED_CAUSES: ReadonlyArray<[RegExp, string]> = [
   [/ran out of memory while \d+ tasks? ran at once/, "out_of_memory"],
+  [/^Ran out of room, so I (closed the browser|stopped this task) to keep everything else running\./, "out_of_memory"],
   [/^no activity for \d+ minutes — the turn was stopped$/, "stalled"],
   [/^turn interrupted — OpenMausBot restarted$/, "restart"],
   [/could not start — /, "could_not_start"],
-  [/^the incident could not reach /, "incident_undelivered"],
+  [/^the problem report could not reach /, "incident_undelivered"],
   [/^could not deliver approval to the provider/, "approval_undelivered"],
   [/^Canonical event history is incomplete/, "event_log"],
 ];
@@ -242,7 +247,21 @@ export interface CloudHealthDeps {
   /** Null when connected apps are not set up here. */
   connectors: () => Promise<Record<string, { connected: boolean; pending?: boolean }>> | null;
   browser: () => { available: boolean; installing: boolean; interrupted: number };
+  /** The bot box (server/bot-box): whether turns run boxed here, and the last self-check's count. */
+  box?: () => BoxReport;
+  /** A personal Cloud's milestones since its first boot, and the work its Chief did: times and counts only. */
+  firstHour?: () => { firstHour?: FirstHourReport; value?: ValueReport };
+  /** The last day's memory pressure (engine-memory.ts), where this home watches it. */
+  room?: () => RoomReport;
   now?: () => number;
+}
+
+/** Fixed codes and counts only: the box kind, why it is off, and the self-check's `passed/total` with the failed check ids. */
+export function boxSummary(report: BoxReport | undefined): { box: BoxReport["box"]; reason: BoxReport["reason"]; checks: string | null; failed: string[]; boxed: number; refused: BoxReport["refused"]; broker: BoxReport["broker"]; hardening: BoxReport["hardening"] } | null {
+  if (!report) return null;
+  const failed = report.checks?.failed.filter((id) => CODE.test(id)).slice(0, 50) ?? [];
+  const broker = { ...report.broker, unbrokered: report.broker.unbrokered.filter((name) => KIND.test(name)).slice(0, 50) };
+  return { box: report.box, reason: report.reason, checks: report.checks ? `${report.checks.passed}/${report.checks.total}` : null, failed, boxed: report.boxed, refused: report.refused, broker, hardening: report.hardening };
 }
 
 /** The report's body, at most CLOUD_HEALTH_MAX_BYTES of JSON. */
@@ -274,11 +293,13 @@ export function createCloudHealth(deps: CloudHealthDeps) {
     noteRoutineRun: ledger.noteRoutineRun,
     report(after: string | null | undefined) {
       const read = ledger.read(after);
-      const memory = memoryBytes(), browser = deps.browser();
+      const memory = memoryBytes(), browser = deps.browser(), first = deps.firstHour?.();
       const base = {
         v: 1 as const, version, image, bootedAt: ledger.bootedAt, at: now(),
         turns: read.turns, routines: read.routines, engines: engines(), connectors: connectorState(),
         browser: { available: browser.available, installing: browser.installing, interrupted: browser.interrupted },
+        box: boxSummary(deps.box?.()),
+        firstHour: first?.firstHour ?? null, value: first?.value ?? null, room: deps.room?.() ?? null,
         system: { ...memory, rssBytes: process.memoryUsage.rss(), load1: loadavg()[0] ?? 0, cpus: availableParallelism(), disk: diskBytes(deps.dataDir), eventLogWritable: writable(deps.eventsDir) },
       };
       let budget = CLOUD_HEALTH_MAX_BYTES - JSON.stringify({ ...base, cursor: ledger.cursor(read.seq), truncated: true, incidents: [] }).length;

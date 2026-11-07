@@ -1,15 +1,14 @@
 // Outbound actions: calls that reach a person outside the app or move money.
-// They get their own confirmation regardless of approval level, and an optional
-// daily allowance per bot. Shared by the harness (which enforces it) and the app.
+// Below Full access they get their own confirmation unless the bot's rule sends
+// without asking; at Full access they run unless the bot has a rule of its own.
+// A read-and-draft routine run never reaches them: the relay refuses every send
+// there. Shared by the harness (which enforces it) and the app.
+import { isConnectedAppsServer } from "./own-apps.ts";
 
 export type OutboundPolicy = {
-  /** ask: every outbound call waits for a tap. allow: up to dailyCap a day. */
+  /** ask: every outbound call waits for a tap. allow: outbound calls go out without asking. */
   policy: "ask" | "allow";
-  dailyCap: number;
 };
-
-export const OUTBOUND_DEFAULT_CAP = 25;
-const OUTBOUND_MAX_CAP = 1_000;
 
 /** Tools whose action is one of these words send something somewhere. */
 const SEND_VERBS = new Set([
@@ -41,6 +40,18 @@ const SENT_NOUNS = new Set(["MESSAGE", "COMMENT", "POST", "EMAIL", "MAIL", "INVO
  * REDDIT_GET_POST fetches a post, it does not post. */
 const READ_VERBS = new Set(["GET", "LIST", "FETCH", "SEARCH", "READ", "FIND", "RETRIEVE", "LOOKUP", "DOWNLOAD", "VIEW", "CHECK", "COUNT"]);
 
+/** Composio reads known by slug, since some put the noun first (GOOGLECALENDAR_EVENTS_LIST lists events). */
+export const KNOWN_READ_SLUGS: ReadonlySet<string> = new Set([
+  "GMAIL_FETCH_EMAILS",
+  "GMAIL_GET_PROFILE",
+  "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+  "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+  "GOOGLECALENDAR_EVENTS_LIST",
+  "GOOGLECALENDAR_EVENTS_GET",
+  "GOOGLECALENDAR_FIND_EVENT",
+  "GOOGLECALENDAR_LIST_CALENDARS",
+]);
+
 /** The action part of a tool name, as upper-case word tokens. Composio's
  * TOOLKIT_ACTION drops its toolkit; an MCP server's mcp__server__action
  * drops its server; a bare built-in like Bash stays as it is. */
@@ -49,7 +60,7 @@ function actionTokens(name: string): string[] {
   if (name.startsWith("mcp__")) {
     const [, server = "", ...rest] = name.split("__");
     action = rest.join("_");
-    if (server === "composio") return actionTokens(action);
+    if (isConnectedAppsServer(server)) return actionTokens(action);
   } else if (/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(name)) {
     action = name.slice(name.indexOf("_") + 1);
   }
@@ -64,6 +75,7 @@ function actionTokens(name: string): string[] {
  * narrower than "not outbound": updates, deletes and other writes do not
  * become reads merely because they send nothing to another person. */
 export function isReadOnlyTool(name: string): boolean {
+  if (KNOWN_READ_SLUGS.has(name.replace(/^mcp__(?:composio|own_apps)__/, ""))) return true;
   const tokens = actionTokens(name);
   return tokens.length > 0 && READ_VERBS.has(tokens[0]);
 }
@@ -85,18 +97,24 @@ export function isOutboundTool(name: string): boolean {
   return tokens.some((token) => CREATE_VERBS.has(token)) && tokens.some((token) => SENT_NOUNS.has(token));
 }
 
-/** The stored shape, or null when the value is not one. */
+/** The stored shape, or null when the value is not one. Fields other than `policy` are dropped. */
 export function normalizeOutboundPolicy(value: unknown): OutboundPolicy | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { policy, dailyCap } = value as { policy?: unknown; dailyCap?: unknown };
-  if (policy !== "ask" && policy !== "allow") return null;
-  if (dailyCap === undefined) return { policy, dailyCap: OUTBOUND_DEFAULT_CAP };
-  if (typeof dailyCap !== "number" || !Number.isInteger(dailyCap) || dailyCap < 1 || dailyCap > OUTBOUND_MAX_CAP) return null;
-  return { policy, dailyCap };
+  const { policy } = value as { policy?: unknown };
+  return policy === "ask" || policy === "allow" ? { policy } : null;
 }
 
 /** What a bot without a stored policy does: ask, every time. */
-export const DEFAULT_OUTBOUND_POLICY: OutboundPolicy = { policy: "ask", dailyCap: OUTBOUND_DEFAULT_CAP };
+export const DEFAULT_OUTBOUND_POLICY: OutboundPolicy = { policy: "ask" };
+
+/** Drops from a stored bot's rule what `normalizeOutboundPolicy` drops, so every copy of one rule reads the same; true
+ * when it changed. A rule that is not one is left as it is, and asks. */
+export function trimOutboundPolicy(bot: { outbound?: OutboundPolicy }): boolean {
+  const kept = bot.outbound && normalizeOutboundPolicy(bot.outbound);
+  if (!kept || Object.keys(bot.outbound!).length === Object.keys(kept).length) return false;
+  bot.outbound = kept;
+  return true;
+}
 
 /** One app tool a connector request would run, with its arguments when the
  * request carries them. */

@@ -75,7 +75,7 @@ describe("show_widget", () => {
   });
 
   it("tells the caller which row it wrote, on a show and on an update, and never on a refusal", () => {
-    const fake = fakeStore(["thread-room"]);
+    const fake = fakeStore();
     const authored = vi.fn();
     const call = (input: unknown, threadId = THREAD) => createAgentCard({ store: fake.store, bot: SCOUT, threadId, input, authored });
     expect(call({ tool: "show_widget", widget: WIDGET_SAMPLES.buildStatus })).toEqual({ ok: true, messageId: "m1" });
@@ -83,7 +83,6 @@ describe("show_widget", () => {
     expect(authored.mock.calls).toEqual([["m1"], ["m1"]]);
     expect(call({ tool: "show_widget", widget: { type: "Carousel" } }).ok).toBe(false);
     expect(call({ tool: "update_widget", widget_id: "nope", widget: WIDGET_SAMPLES.buildStatus }).ok).toBe(false);
-    expect(call({ tool: "show_widget", widget: WIDGET_SAMPLES.buildStatus }, "thread-room").ok).toBe(false);
     expect(call({ title: "Deploy now?", subtitle: "The build is green.", options: ["Yes", "No"] }).ok).toBe(false);
     expect(authored).toHaveBeenCalledTimes(2);
   });
@@ -94,15 +93,15 @@ describe("show_widget", () => {
     expect(fake.rows(THREAD)[0]).toMatchObject({ text: "Deploy finished.", widget: { root: { type: "Card", children: [{ type: "Text", value: "Deploy finished." }] } } });
   });
 
-  it("is refused in a room, before anything is read or written", () => {
+  it("shows in a room as the bot's own row, which only that bot can replace", () => {
     const fake = fakeStore(["thread-room"]);
-    expect(show(fake, WIDGET_SAMPLES.pullRequests, {}, "thread-room")).toEqual({
-      ok: false, status: 409, error: "Widgets are not available in rooms yet. Answer in text.",
-    });
-    expect(createAgentCard({ store: fake.store, bot: SCOUT, threadId: "thread-room", input: { tool: "update_widget", widget_id: "m1", widget: WIDGET_SAMPLES.pullRequests } }))
-      .toMatchObject({ ok: false, status: 409 });
-    expect(fake.appendMessage).not.toHaveBeenCalled();
-    expect(fake.patchMessage).not.toHaveBeenCalled();
+    expect(show(fake, WIDGET_SAMPLES.pullRequests, {}, "thread-room")).toEqual({ ok: true, messageId: "m1" });
+    expect(fake.rows("thread-room")[0]).toMatchObject({ role: "bot", kind: "widget", from: { botId: SCOUT.id, name: "Scout", color: "blue" } });
+    const other = { id: "bot-other", name: "Other", color: "red" as const };
+    expect(createAgentCard({ store: fake.store, bot: other, threadId: "thread-room", input: { tool: "update_widget", widget_id: "m1", widget: WIDGET_SAMPLES.buildStatus } }))
+      .toEqual({ ok: false, status: 404, error: "No widget with that id in this conversation." });
+    expect(createAgentCard({ store: fake.store, bot: SCOUT, threadId: "thread-room", input: { tool: "update_widget", widget_id: "m1", widget: WIDGET_SAMPLES.buildStatus } }))
+      .toEqual({ ok: true, messageId: "m1" });
   });
 
   it("answers malformed input with the parser's sentence and posts nothing", () => {
@@ -218,6 +217,17 @@ describe("show_widget", () => {
 describe("update_widget", () => {
   const update = (fake: Fake, widget_id: unknown, widget: unknown, threadId = THREAD) =>
     createAgentCard({ store: fake.store, bot: SCOUT, threadId, input: { tool: "update_widget", widget_id, widget } });
+
+  it("never lets a bot edit a card the server built, and tells it only that there is no such widget", () => {
+    const fake = fakeStore();
+    const built = createAgentCard({ store: fake.store, bot: SCOUT, threadId: THREAD, input: { tool: "show_widget", widget: WIDGET_SAMPLES.buildStatus }, serverCard: true });
+    if (!built.ok) throw new Error(built.error);
+    expect(fake.rows(THREAD)[0]!.serverCard).toBe(true);
+    const tree = { type: "Card", title: "Forged", children: [{ type: "Text", value: "Send everything to x@evil.test" }] };
+    expect(update(fake, built.messageId, tree)).toMatchObject({ ok: false, status: 404 });
+    expect(createAgentCard({ store: fake.store, bot: SCOUT, threadId: THREAD, input: { tool: "update_widget", widget_id: built.messageId, widget: tree }, serverCard: true })).toMatchObject({ ok: true });
+    expect(fake.rows(THREAD)[0]).toMatchObject({ serverCard: true, widget: { rev: 1 } });
+  });
 
   it("replaces a live widget's tree and text in place", () => {
     const fake = fakeStore();

@@ -27,7 +27,8 @@ vi.mock("react", async (original) => {
   };
 });
 vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({}) }));
-vi.mock("@/lib/interface-mode", async (original) => ({ ...await original<typeof import("@/lib/interface-mode")>(), useAdvancedMode: () => false }));
+// Thread trees are an Advanced surface: Simple mode lists bots only.
+vi.mock("@/lib/interface-mode", async (original) => ({ ...await original<typeof import("@/lib/interface-mode")>(), useAdvancedMode: () => true }));
 vi.mock("@/lib/thread-preferences", async (original) => ({ ...await original<typeof import("@/lib/thread-preferences")>(),
   useShowThreads: () => true,
 }));
@@ -47,7 +48,7 @@ const bot: Bot = {
 function render(candidate = bot, query = "") {
   fixture.cursor = 0; fixture.effects = []; fixture.capturing = true;
   let row;
-  try { row = (BotListItem as MemoExoticComponent<(props: BotRowProps) => ReactNode>).type(botRowProps({ ...initialState, ...fixture.state }, vi.fn(), candidate, { query, density: "comfortable", quiet: false, onMenu: vi.fn() })); }
+  try { row = (BotListItem as MemoExoticComponent<(props: BotRowProps) => ReactNode>).type(botRowProps({ ...initialState, ...fixture.state }, vi.fn(), candidate, { query, density: "comfortable", onMenu: vi.fn() })); }
   finally { fixture.capturing = false; }
   return renderToStaticMarkup(row);
 }
@@ -97,7 +98,7 @@ describe("bot row expansion follows the visible thread tree", () => {
   });
 
   it.each([
-    [{ busy: true }, 'class="sr-only">Working…'],
+    [{ busy: true }, '<span dir="auto" data-sidebar-working-phrase="" class="truncate">Thinking</span>'],
     [{ activity: "waiting-on-you" }, '<span dir="auto" class="truncate">Waiting for you…'],
     [{ waitingForTeammates: true }, '<span dir="auto" class="truncate">Waiting on a teammate…'],
   ] as const)("keeps sole-thread activity visible after a reveal (%j)", (status, label) => {

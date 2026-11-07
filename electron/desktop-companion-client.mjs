@@ -41,8 +41,20 @@ const cleanLabel = (value, fallback) => {
   return label || fallback;
 };
 
-/** Only the control plane's `c-<32 hex>` names: any other name in those zones never receives a pairing code. Ship a new domain here first. */
-const MANAGED_COMPANION_HOSTNAME = /^c-[0-9a-f]{32}\.(?:openmausbot\.com|mausbot\.si)$/;
+/** The third Cloudflare account's zone apex, "" until the owner names it. Set it, ship that release, and only then
+ * add the control-plane entry with that release as its minAppVersion. */
+export const NEXT_MANAGED_COMPANION_HOST_SUFFIX = "";
+
+/** Every zone the control plane makes addresses in, lowercase apex names. Ship a new domain here first. */
+export const MANAGED_COMPANION_HOST_SUFFIXES = Object.freeze(
+  ["openmausbot.com", "mausbot.si", NEXT_MANAGED_COMPANION_HOST_SUFFIX].filter(Boolean),
+);
+
+/** Only the control plane's `c-<32 hex>` names: any other name in those zones never receives a pairing code. */
+export function managedCompanionHostname(hostname) {
+  const match = /^c-[0-9a-f]{32}\.(.+)$/.exec(String(hostname ?? ""));
+  return Boolean(match) && MANAGED_COMPANION_HOST_SUFFIXES.includes(match[1]);
+}
 
 /** HTTPS, or a Tailscale MagicDNS name (WireGuard protects its HTTP); a LAN IP would put the long-lived bearer on Wi-Fi in plaintext. */
 export function normalizeDesktopCompanionEndpoint(value) {
@@ -60,7 +72,7 @@ export function normalizeDesktopCompanionEndpoint(value) {
   const hostname = parsed.hostname.toLowerCase();
   const tailscaleHttp = parsed.protocol === "http:" && hostname.endsWith(".ts.net");
   const managedHttps =
-    parsed.protocol === "https:" && MANAGED_COMPANION_HOSTNAME.test(hostname);
+    parsed.protocol === "https:" && managedCompanionHostname(hostname);
   if (
     (!tailscaleHttp && !managedHttps) ||
     parsed.username ||
@@ -312,6 +324,13 @@ export function proxyDesktopCompanionUpgrade(req, socket, head, access, activeSo
       activeSockets.delete(socket);
       activeSockets.delete(remote);
     };
+    // `pipe` forwards no error, so a reset on one end must end the other.
+    const teardown = () => {
+      socket.destroy();
+      remote.destroy();
+    };
+    socket.on("error", teardown);
+    remote.on("error", teardown);
     socket.once("close", release);
     remote.once("close", release);
     if (head.length) remote.write(head);
@@ -356,13 +375,20 @@ export async function startDesktopCompanionRelay({
       if (!isLoopbackHost(req.headers.host) || !allowedOrigin(req.headers.origin, req.headers.host)) {
         return json(res, 403, { error: "forbidden: loopback client required" });
       }
-      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+      let pathname;
+      try {
+        pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+      } catch {
+        return json(res, 400, { error: "invalid request target" });
+      }
       if (pathname.startsWith("/api/") || pathname.startsWith("/vps-viewer/")) {
         return proxyDesktopCompanionApi(req, res, normalized);
       }
       return serveStatic(req, res, staticDir);
     });
     server.on("upgrade", (req, socket, head) => {
+      // Node removes its own error listener from a socket it hands to `upgrade`.
+      socket.on("error", () => socket.destroy());
       if (!isLoopbackHost(req.headers.host) || !allowedOrigin(req.headers.origin, req.headers.host)) {
         return socket.destroy();
       }

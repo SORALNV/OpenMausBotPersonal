@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
 import { useShowThreads } from "@/lib/thread-preferences";
+import { t } from "@/lib/i18n";
 
 export const MIN_QUERY = 2;
 const DEBOUNCE_MS = 250;
@@ -51,10 +52,10 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
   return (
     <div className="mt-2 border-t border-hairline/40 pt-2">
       <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-ink-secondary">
-        Messages{hits ? ` · ${hits.length}${hits.length === 40 ? "+" : ""}` : ""}
+        {hits ? t("search.messagesCount", { count: `${hits.length}${hits.length === 40 ? "+" : ""}` }) : t("search.messages")}
       </div>
-      {error && <div className="px-3 py-2 text-[12.5px] text-danger">couldn't search: {error}</div>}
-      {hits && hits.length === 0 && !error && <div className="px-3 py-3 text-[13px] text-ink-secondary">No messages match “{q}”</div>}
+      {error && <div className="px-3 py-2 text-[13px] text-danger">{t("search.failed", { error })}</div>}
+      {hits && hits.length === 0 && !error && <div className="px-3 py-3 text-[13px] text-ink-secondary">{t("search.noMatch", { query: q })}</div>}
       {hits?.map((hit) => {
         const bot = hit.botId ? state.bots.find((b) => b.id === hit.botId) : undefined;
         const before = hit.snippet.slice(0, hit.matchStart);
@@ -77,7 +78,7 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
                 {hit.task ? <span className="truncate">· {hit.task}</span> : null}
                 <span className="ml-auto shrink-0 tabular-nums">{formatTime(hit.at)}</span>
               </span>
-              <span dir="auto" className={cn("mt-0.5 line-clamp-2 text-[12.5px] leading-snug", hit.role === "user" ? "text-ink" : "text-ink-secondary")}>
+              <span dir="auto" className={cn("mt-0.5 line-clamp-2 text-[13px] leading-snug", hit.role === "user" ? "text-ink" : "text-ink-secondary")}>
                 {hit.kind === "activity" && <Wrench size={11} className="mr-1 inline text-ink-secondary" />}
                 {before}
                 <mark className="rounded-sm bg-accent/25 px-0.5 text-ink">{match}</mark>
@@ -85,7 +86,7 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
               </span>
               {!hit.onActivePath && (
                 <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-secondary">
-                  <GitBranch size={10} /> other version
+                  <GitBranch size={10} /> {t("search.otherVersion")}
                 </span>
               )}
             </span>

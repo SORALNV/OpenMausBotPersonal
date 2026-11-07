@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { VoiceProbeSample } from "../../../shared/voice-latency-probe";
 
+import { setLocale } from "../i18n";
 import { Speaker } from "./index";
+import { toUtterances } from "../../../server/tts/speech-text";
+import { userError } from "../../../server/user-errors";
 
 class FakeAudio {
   static latest: FakeAudio | null = null;
@@ -96,6 +100,130 @@ describe("Speaker lifecycle", () => {
       { text: "Distinct voice.", voiceId: "voice-bot" },
     ]);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-test");
+  });
+
+  it.each([
+    ["http", "splitter unavailable"],
+    ["network", "connection lost"],
+    ["unconfigured", "Set up a voice provider in an agent profile on this computer, then pick a voice for the agent."],
+  ])("leaves preparation with an error after a %s failure", async (failure, error) => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      if (failure === "network") throw new Error(error);
+      return failure === "http"
+        ? new Response(JSON.stringify({ error }), { status: 503 })
+        : json({ ready: false });
+    });
+    const speaker = new Speaker();
+
+    await speaker.speak("Fixture reply", { botId: "bot", messageId: "reply" });
+
+    expect(speaker.state).toEqual({ status: "idle", error });
+    expect(speaker.isSpeaking("reply")).toBe(false);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("does not publish an old preparation failure over a newer stream", async () => {
+    const response = deferredResponse();
+    vi.stubGlobal("fetch", () => response.promise);
+    const speaker = new Speaker();
+    const old = speaker.speak("Old reply", { messageId: "old" });
+    const current = speaker.begin({ messageId: "current" });
+
+    response.resolve(new Response(JSON.stringify({ error: "old failure" }), { status: 503 }));
+    await old;
+
+    expect(speaker.state).toEqual({ status: "preparing", messageId: "current" });
+    current.cancel();
+  });
+
+  it("stops active audio before publishing a stream failure", async () => {
+    vi.stubGlobal("fetch", async () => new Response(new Blob(["mp3"])));
+    const speaker = new Speaker();
+    const stream = speaker.begin({ messageId: "reply" });
+    stream.push("Playing block.");
+    await vi.waitFor(() => expect(FakeAudio.latest).not.toBeNull());
+    const audio = FakeAudio.latest!;
+    let sourceAtFailure: string | undefined;
+    speaker.subscribe(snapshot => {
+      if (snapshot.error) sourceAtFailure = audio.src;
+    });
+
+    stream.fail("splitter unavailable");
+    await stream.end();
+
+    expect(sourceAtFailure).toBe("");
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.onended).toBeNull();
+    expect(audio.onerror).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-test");
+    expect(speaker.state).toEqual({ status: "idle", error: "splitter unavailable" });
+  });
+
+  it("does not stop a newer stream's audio when an old stream fails", async () => {
+    vi.stubGlobal("fetch", async () => new Response(new Blob(["mp3"])));
+    const speaker = new Speaker();
+    const old = speaker.begin({ messageId: "old" });
+    const current = speaker.begin({ messageId: "current" });
+    current.push("Current block.");
+    await vi.waitFor(() => expect(FakeAudio.latest).not.toBeNull());
+    const audio = FakeAudio.latest!;
+
+    old.fail("old failure");
+    await old.end();
+
+    expect(audio.src).toBe("blob:voice-test");
+    expect(audio.pause).not.toHaveBeenCalled();
+    expect(speaker.state).toMatchObject({ status: "speaking", messageId: "current" });
+    audio.onended?.();
+    await current.end();
+  });
+});
+
+describe("coded voice refusals", () => {
+  beforeEach(() => { FakeAudio.latest = null; });
+
+  afterEach(() => {
+    setLocale("en");
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["en", "voice utterances are limited to 500 characters"],
+    ["pt-br", "Cada trecho de fala pode ter no máximo 500 caracteres"],
+  ])("shows an oversized prepared utterance refusal in %s", async (locale, expected) => {
+    setLocale(locale);
+    const text = "Tudo bem. ".repeat(80);
+    const utterances = toUtterances(text);
+    expect(utterances.some((utterance) => utterance.length > 500)).toBe(true);
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input).endsWith("/prepare")
+      ? json({ ready: true, utterances })
+      : Response.json(userError("serverError.voice.utteranceTooLong"), { status: 413 })));
+    const speaker = new Speaker();
+    await speaker.speak(text);
+    expect(speaker.state).toEqual({ status: "idle", error: expected });
+    expect(FakeAudio.latest).toBeNull();
+  });
+
+  it.each(["prepare", "speak"])("consumes string error params from /%s", async (phase) => {
+    setLocale("pt-br");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input).endsWith("/prepare") && phase === "speak"
+      ? json({ ready: true, utterances: ["Hello there."] })
+      : Response.json(userError("serverError.owner.choose", { team: "Aurora" }), { status: 400 })));
+    const speaker = new Speaker();
+    await speaker.speak("Hello there.");
+    expect(speaker.state.error).toBe("Escolha alguém de Aurora.");
+  });
+
+  it.each([undefined, "activity.tool.team.decide", "serverError.future.voice"])("keeps the raw diagnostic for unsupported error key %s", async (errorKey) => {
+    setLocale("pt-br");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input).endsWith("/prepare")
+      ? json({ ready: true, utterances: ["Hello there."] })
+      : Response.json({ error: "upstream technical diagnostic", errorKey }, { status: 502 })));
+    const speaker = new Speaker();
+    await speaker.speak("Hello there.");
+    expect(speaker.state.error).toBe("upstream technical diagnostic");
   });
 });
 
@@ -412,5 +540,183 @@ describe("prefetch window", () => {
     expect(gates[1]!.signal?.aborted).toBe(true);
     expect(gates[2]!.signal?.aborted).toBe(true);
     expect(playedUrls).toEqual(["blob:block-1"]);
+  });
+});
+
+describe("stream identification", () => {
+  beforeEach(() => {
+    FakeAudio.latest = null;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:voice-test");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  });
+
+  it("adopts the completed message id into the snapshot and probe records", async () => {
+    const probe: VoiceProbeSample[] = [];
+    vi.stubGlobal("window", { __ombVoiceProbe: probe });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/prepare")
+          ? json({ ready: true, utterances: ["Hello.", "Bye."] })
+          : new Response(new Blob(["mp3"]), { status: 200 }),
+      ),
+    );
+    const captions: string[] = [];
+    const speaker = new Speaker();
+    const stream = speaker.begin({ botId: "bot" });
+    expect(speaker.state).toEqual({ status: "preparing", botId: "bot" });
+    expect(speaker.isSpeaking("m9")).toBe(false);
+    speaker.subscribe((snapshot) => {
+      if (snapshot.caption) captions.push(snapshot.caption);
+    });
+    stream.identify("m9");
+    expect(speaker.state).toEqual({ status: "preparing", botId: "bot", messageId: "m9" });
+    expect(speaker.isSpeaking("m9")).toBe(true);
+    for (const block of await stream.prepare("Hello. Bye.")) stream.push(block);
+    for (const caption of ["Hello.", "Bye."]) {
+      await vi.waitFor(() => expect(captions).toContain(caption));
+      FakeAudio.latest!.onended?.();
+    }
+    await stream.end();
+    expect(speaker.state).toEqual({ status: "idle" });
+    const sample = probe.find((entry) => entry.messageId === "m9");
+    expect(sample?.blockCount).toBe(2);
+    expect(sample?.blocks).toHaveLength(2);
+    expect(sample?.blocks[0]?.renderStartAt).toBeDefined();
+  });
+
+  it("cancel tears down only the stream that is still current", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/prepare")
+          ? json({ ready: true, utterances: ["Old."] })
+          : new Response(new Blob(["mp3"]), { status: 200 }),
+      ),
+    );
+    const speaker = new Speaker();
+    const first = speaker.begin({});
+    first.push("Old.");
+    const second = speaker.begin({});
+
+    first.cancel();
+    expect(speaker.state).toEqual({ status: "preparing" });
+
+    second.cancel();
+    expect(speaker.state).toEqual({ status: "idle" });
+  });
+});
+
+describe("local system voice stream", () => {
+  const makeSynth = () => ({
+    speak: vi.fn(),
+    cancel: vi.fn(),
+    getVoices: (): SpeechSynthesisVoice[] => [],
+  });
+  let synth = makeSynth();
+  let spoken: FakeUtterance[] = [];
+
+  class FakeUtterance {
+    text: string;
+    voice: SpeechSynthesisVoice | null = null;
+    onstart: (() => void) | null = null;
+    onend: (() => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
+
+    constructor(text: string) {
+      this.text = text;
+      spoken.push(this);
+    }
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    synth = makeSynth();
+    spoken = [];
+    vi.stubGlobal("window", {
+      ogb: { remoteClient: { active: true }, platform: "darwin" },
+      speechSynthesis: synth,
+      SpeechSynthesisUtterance: FakeUtterance,
+    });
+  });
+
+  it("resets the preparing state when nothing was ever pushed", async () => {
+    const speaker = new Speaker();
+    const stream = speaker.begin({ botId: "bot" });
+    expect(speaker.state).toEqual({ status: "preparing", botId: "bot" });
+    expect(speaker.isSpeaking()).toBe(true);
+
+    await stream.end();
+
+    expect(speaker.state).toEqual({ status: "idle" });
+    expect(speaker.isSpeaking()).toBe(false);
+  });
+
+  it("does not speak a block queued before a newer stream took over", async () => {
+    const speaker = new Speaker();
+    const first = speaker.begin({ botId: "bot" });
+    first.push("Stale words.");
+    const second = speaker.begin({ botId: "bot" });
+    second.identify("m2");
+
+    await first.end();
+    expect(synth.speak).not.toHaveBeenCalled();
+
+    second.push("Fresh words.");
+    await vi.waitFor(() => expect(spoken.map((utterance) => utterance.text)).toEqual(["Fresh words."]));
+    spoken[0]!.onstart?.();
+    expect(speaker.state).toEqual({ status: "speaking", botId: "bot", messageId: "m2", caption: "Fresh words." });
+    spoken[0]!.onend?.();
+    await second.end();
+    expect(speaker.state).toEqual({ status: "idle" });
+  });
+
+  it("surfaces a failure and resets a live stream", () => {
+    const speaker = new Speaker();
+    const stream = speaker.begin({ botId: "bot" });
+
+    stream.fail("splitter down");
+
+    expect(speaker.state).toEqual({ status: "idle", error: "splitter down" });
+  });
+
+  it("cancel silences only a stream that is still current", () => {
+    const speaker = new Speaker();
+    const first = speaker.begin({ botId: "bot" });
+    const second = speaker.begin({ botId: "bot" });
+    const cancelsBefore = synth.cancel.mock.calls.length;
+
+    first.cancel();
+    expect(speaker.state).toEqual({ status: "preparing", botId: "bot" });
+    expect(synth.cancel.mock.calls.length).toBe(cancelsBefore);
+
+    second.cancel();
+    expect(speaker.state).toEqual({ status: "idle" });
+    expect(synth.cancel.mock.calls.length).toBe(cancelsBefore + 1);
+  });
+});
+
+
+describe("OpenAI voice error language", () => {
+  beforeEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it("localizes a new server error and preserves an unknown error fallback", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => String(input).endsWith("/prepare")
+      ? json({ ready: true, utterances: ["fixture text"] })
+      : new Response(JSON.stringify({ error: "English fallback", errorKey: "voice.openai.error.auth" }), { status: 502 }));
+    vi.stubGlobal("fetch", fetch);
+    const speaker = new Speaker();
+    try {
+      await speaker.speak("fixture text");
+      expect(speaker.state.error).toContain("OpenAI rejected the API key");
+      fetch.mockImplementation(async (input) => String(input).endsWith("/prepare")
+        ? json({ ready: true, utterances: ["fixture text"] })
+        : new Response(JSON.stringify({ error: "future fallback", errorKey: "voice.future" }), { status: 502 }));
+      await speaker.speak("fixture text");
+      expect(speaker.state.error).toBe("future fallback");
+    } finally { setLocale("en"); }
   });
 });

@@ -52,7 +52,7 @@ export type Status =
   | "running"         // a turn of the assignee is executing it
   | "needs_input"     // parked on the person (a card or a NEEDS INPUT line)
   | "waiting"         // its turn ended after handing out work; waits on children
-  | "resume"          // every child settled; owes its own follow-up turn
+  | "resume"          // every child settled, or one it waits on parked a new question; owes its own follow-up turn
   | "completed"
   | "failed"
   | "cancelled";
@@ -123,9 +123,17 @@ export interface Assignment {
    * a repeat lands on it unless rework is set. */
   rework: boolean;
   /** While parked: the exact question for the person. */
+  /** Its reply only acknowledged: its requester takes no turn for it (status-reply.ts). */
+  statusOnly?: boolean;
   question?: string;
-  /** The person's answer, harness-quoted, carried into the next turn. */
+  /** While parked under Full access ("Just do it"): the question is its requester's to answer, never the person's.
+   * Still unanswered when the requester's turn that carries it ends, the assignee goes on with `default`, or with its
+   * own pick when it named none. */
+  decide?: { default?: string };
+  /** The answer, harness-quoted, carried into the next turn. */
   answer?: string;
+  /** Who gave `answer` when the person did not: a bot that passed one on or decided it, or nobody (the default). */
+  answeredBy?: Answerer;
   /** On a root only: the budget window since its last durable progress. */
   budgets?: { since: number; requests: number; executions: number; wakes: number };
   /** While parked on the person's cards (a root): the ids of the cards the
@@ -137,12 +145,17 @@ export interface Assignment {
   /** While a node continues in place, for the loop guard: `stale` counts consecutive continuations
    * with no successful tool call; `errors` holds the last three tool error texts. */
   guard?: { stale: number; errors: string[] };
+  /** While a turn runs: the awaited children whose open questions its input carries. A restart that cuts the turn
+   * reruns it with them once more; no other turn carries them again. */
+  carrying?: string[];
   /** A peer-review card allowed this before it was sent. */
   approved?: boolean;
   /** A room brief shown once per call: every recipient of that call shares it. */
   batchKey?: string;
   version: 1;
 }
+
+export type Answerer = { kind: "bot"; botId: string } | { kind: "default" };
 
 export interface TurnEvidence {
   commands?: number;
@@ -161,7 +174,7 @@ export interface TurnEvidence {
 export type EventKind =
   | "enqueued" | "refused" | "admitted" | "started" | "progress" | "parked" | "answered"
   | "waiting" | "resume_due" | "settled" | "reported" | "woken" | "cancelled"
-  | "restart_reconciled" | "budget" | "stalled" | "continued";
+  | "restart_reconciled" | "budget" | "stalled" | "continued" | "held";
 
 export interface AssignmentEvent {
   id: number;
@@ -211,7 +224,7 @@ export type EnqueueResult =
   | { ok: false; reason: string; outcome: "refused" | "budget" | "duplicate" };
 
 export interface RunInput {
-  /** first; resume (returns settled children's results); rerun (after a restart cut it); answered; continued. */
+  /** first; resume (returns settled children's results and awaited children's open questions); rerun (after a restart cut it); answered; continued. */
   turn: "first" | "resume" | "rerun" | "answered" | "continued";
   /** Not the node's first turn (any `turn` but "first"). */
   resumed: boolean;
@@ -223,6 +236,9 @@ export interface RunInput {
   answer?: string;
   /** The settled children whose results this (resume) turn returns. */
   settled?: Assignment[];
+  /** The awaited children parked on a question this turn passes on: a question not yet delivered, or, in the rerun
+   * of a turn a restart cut, the questions that turn carried. */
+  asked?: Assignment[];
   /** For a continued turn: why it continues and, after a step cap, where
    * the steps so far are listed. */
   continuation?: { note: string; handoffPath?: string };
@@ -231,9 +247,10 @@ export interface RunInput {
 }
 
 export type RunResult =
-  | { kind: "completed"; text: string; evidence?: TurnEvidence }
+  /** statusOnly: nothing in `text` for the requester to do (status-reply.ts). */
+  | { kind: "completed"; text: string; evidence?: TurnEvidence; statusOnly?: boolean }
   | { kind: "failed"; outcome: Exclude<Outcome, "done" | "needs_input">; text: string; evidence?: TurnEvidence }
-  | { kind: "needs_input"; question: string; cards?: string[]; evidence?: TurnEvidence }
+  | { kind: "needs_input"; question: string; cards?: string[]; decide?: { default?: string }; evidence?: TurnEvidence }
   /** The turn stopped short (a step cap, a seat it could not get) and the
    * same node continues in place with its next execution. */
   | { kind: "continue"; text: string; note: string; handoffPath?: string; evidence?: TurnEvidence };
@@ -247,6 +264,8 @@ export interface EndResult {
   needsInput?: { question: string; cards?: string[] };
   /** The turn stopped short and continues in place. */
   continue?: { note: string; handoffPath?: string };
+  /** The host's stall watchdog stopped the turn. */
+  stalled?: boolean;
 }
 
 export interface Owner {
@@ -264,6 +283,11 @@ export interface EnvelopeNames {
   person?: string;
   /** The requester conversation's title, when there is one. */
   thread?: string;
+  /** The tool the assignee asks the person a question with set answers, when its engine has one: the exact name its
+   * model calls. */
+  askTool?: string;
+  /** The bot that gave the answer the turn carries, when a bot did (`answeredBy`). */
+  answerer?: string;
 }
 
 /** What the runtime needs from the server. No method may throw into the runtime: a throw is logged and read as "not now". */
@@ -314,8 +338,8 @@ export interface Limits {
   /** A turn with no activity for this long is stalled (the host says what
    * counts as activity by touching progress()). */
   turnStallMs: number;
-  /** How long a parked assignment waits on the person before it expires:
-   * not run, not refused. */
+  /** How long a parked assignment waits on the person's words before it expires: not run, not refused. Infinite
+   * unless a host sets it: a question waits for the person. */
   inputWaitMs: number;
 }
 
@@ -327,7 +351,7 @@ export const DEFAULT_LIMITS: Limits = {
   queueMs: 24 * 60 * 60_000,
   stallMs: 4 * 60 * 60_000,
   turnStallMs: 20 * 60_000,
-  inputWaitMs: 30 * 60_000,
+  inputWaitMs: Number.POSITIVE_INFINITY,
 };
 
 export interface LiveEdge {

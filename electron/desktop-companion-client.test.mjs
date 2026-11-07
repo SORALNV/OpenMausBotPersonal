@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-import { createServer } from "node:http";
+import http, { createServer } from "node:http";
 import { createConnection } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import {
   DESKTOP_COMPANION_FIELD,
+  MANAGED_COMPANION_HOST_SUFFIXES,
+  NEXT_MANAGED_COMPANION_HOST_SUFFIX,
   desktopCompanionAccess,
   desktopCompanionRendererArguments,
   desktopCompanionProxyTarget,
@@ -101,6 +103,32 @@ describe("desktop companion endpoint", () => {
       `https://www.${LABEL}.mausbot.si`,
     ]) {
       expect(normalizeDesktopCompanionEndpoint(endpoint), endpoint).toBe("");
+    }
+  });
+
+  it("accepts one c-<32 hex> label under each listed domain, and only those", () => {
+    // The third domain is a one-line change; until the owner names it, nothing new is accepted.
+    expect(NEXT_MANAGED_COMPANION_HOST_SUFFIX).toBe("");
+    expect(MANAGED_COMPANION_HOST_SUFFIXES).toEqual(["openmausbot.com", "mausbot.si"]);
+    expect(Object.isFrozen(MANAGED_COMPANION_HOST_SUFFIXES)).toBe(true);
+    for (const suffix of MANAGED_COMPANION_HOST_SUFFIXES) {
+      expect(suffix).toMatch(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/);
+      expect(normalizeDesktopCompanionEndpoint(`https://${LABEL}.${suffix}`)).toBe(`https://${LABEL}.${suffix}`);
+      expect(normalizeDesktopCompanionEndpoint(`${LABEL.toUpperCase().replace("C-", "c-")}.${suffix}`))
+        .toBe(`https://${LABEL}.${suffix}`);
+      for (const near of [
+        `https://${LABEL}.${suffix}.`,
+        `https://${LABEL}.x${suffix}`,
+        `https://${LABEL}.sub.${suffix}`,
+        `https://${LABEL.slice(0, -1)}g.${suffix}`,
+        `https://${LABEL}.${suffix}.example.net`,
+        `https://c-.${suffix}`,
+      ]) {
+        expect(normalizeDesktopCompanionEndpoint(near), near).toBe("");
+      }
+    }
+    for (const unlisted of ["example.net", "openmausbot.net", "mausbot.com", "si", "com", ""]) {
+      expect(normalizeDesktopCompanionEndpoint(`https://${LABEL}.${unlisted}`), unlisted).toBe("");
     }
   });
 
@@ -346,5 +374,79 @@ describe("desktop companion loopback relay", () => {
       path: "/vps-viewer/session-id/websockify",
     });
     for (const socket of upgraded) socket.destroy();
+  });
+
+  it("answers a request target that is not a URL with 400 and keeps serving", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omb-desktop-client-"));
+    tempDirs.push(directory);
+    fs.writeFileSync(path.join(directory, "index.html"), "<h1>Remote client</h1>");
+    const relay = await startDesktopCompanionRelay({ access, staticDir: directory, ports: [0] });
+    servers.push(relay.server);
+    const { port } = relay.server.address();
+    const status = await new Promise((resolve, reject) => {
+      const sent = http.request({ hostname: "127.0.0.1", port, path: "//[" }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      });
+      sent.on("error", reject);
+      sent.end();
+    });
+    expect(status).toBe(400);
+    expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+  });
+
+  it("survives a reset on either end of a viewer WebSocket and closes the other end", async () => {
+    for (const reset of ["browser", "companion"]) {
+      let companionSocket;
+      const companion = createServer();
+      companion.on("upgrade", (_req, socket) => {
+        sockets.push(socket);
+        socket.on("error", () => {});
+        companionSocket = socket;
+        socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nready");
+      });
+      servers.push(companion);
+      const companionPort = await new Promise((resolve) =>
+        companion.listen(0, "127.0.0.1", () => resolve(companion.address().port)));
+      const relay = createServer();
+      relay.on("upgrade", (req, socket, head) => proxyDesktopCompanionUpgrade(
+        req,
+        socket,
+        head,
+        { ...access, endpoint: `http://127.0.0.1:${companionPort}` },
+        new Set(),
+      ));
+      servers.push(relay);
+      const relayPort = await new Promise((resolve) =>
+        relay.listen(0, "127.0.0.1", () => resolve(relay.address().port)));
+
+      const browser = createConnection({ host: "127.0.0.1", port: relayPort });
+      sockets.push(browser);
+      browser.on("error", () => {});
+      await new Promise((resolve) => {
+        let text = "";
+        browser.setEncoding("utf8");
+        browser.on("data", (chunk) => {
+          text += chunk;
+          if (text.includes("ready")) resolve();
+        });
+        browser.once("connect", () => browser.write(
+          "GET /vps-viewer/session-id/websockify HTTP/1.1\r\n"
+            + `Host: 127.0.0.1:${relayPort}\r\n`
+            + "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        ));
+      });
+      const survivor = reset === "browser" ? companionSocket : browser;
+      // The companion's server socket is half-open by default: its peer going away shows as `end`.
+      const closed = new Promise((resolve) => {
+        survivor.once("end", resolve);
+        survivor.once("close", resolve);
+      });
+      (reset === "browser" ? browser : companionSocket).resetAndDestroy();
+      await expect(Promise.race([
+        closed,
+        new Promise((_, fail) => setTimeout(() => fail(new Error(`${reset} reset left the other end open`)), 2_000)),
+      ])).resolves.not.toBe("timeout");
+    }
   });
 });

@@ -113,7 +113,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
 `, { mode: 0o755 });
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
-      ...Object.fromEntries(["codex", "cursor", "openaiCompat", "qwen", "hermes", "pi", "claude"].map((id) => [id, { driver: "not-a-real-driver" }])),
+      ...Object.fromEntries(["codex", "cursor", "githubCopilot", "openaiCompat", "qwen", "hermes", "pi", "claude"].map((id) => [id, { driver: "not-a-real-driver" }])),
       held: { driver: "claudeAgent", displayName: "Held", config: { cli } },
     },
   }));
@@ -286,9 +286,9 @@ it("boots without anyone else's session: the chat-only device is signed out, and
 it("no route mints or accepts a session without admin scope: pairing, email sign-in and invites answer in one plain line", async () => {
   const owner = await adminPairing();
   const chatOnly = await api("POST", "/api/auth/pairing", { token: owner, body: { label: "Guest phone", scopes: ["client"] } });
-  expect(chatOnly).toEqual({ status: 403, body: { error: PERSONAL, code: "cloud_personal" } });
+  expect(chatOnly).toEqual({ status: 403, body: { error: PERSONAL, code: "cloud_personal", errorKey: "serverError.cloud.personal" } });
   for (const path of ["/api/auth/email/start", "/api/auth/email/verify"]) {
-    expect(await api("POST", path, { body: { email: "friend@example.test", code: "123456" } }), path).toEqual({ status: 403, body: { error: PERSONAL, code: "cloud_personal" } });
+    expect(await api("POST", path, { body: { email: "friend@example.test", code: "123456" } }), path).toEqual({ status: 403, body: { error: PERSONAL, code: "cloud_personal", errorKey: "serverError.cloud.personal" } });
   }
   for (const signIn of [{ admins: [], members: ["friend@example.test"] }, { admins: ["friend@example.test"], members: [] }]) {
     expect((await api("PUT", "/api/config", { token: owner, body: { signIn } })).body.error).toBe(PERSONAL);

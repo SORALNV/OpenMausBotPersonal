@@ -1,8 +1,13 @@
-// Structured chat-completions calls. Assistant content is never parsed as a tool.
+// Structured chat-completions calls. Assistant content becomes a tool call only for a local model, in chat-text-tool-calls.ts.
+import { randomUUID } from "node:crypto";
+
 export interface ChatToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  /** Gemini's thought signature (`{ google: { thought_signature } }`): sent back with the call, or Gemini rejects the
+   * next round with "Function call is missing a thought_signature". */
+  extra_content?: Record<string, unknown>;
 }
 
 /** Calls one model reply may carry (its index bound). */
@@ -37,6 +42,31 @@ export class ChatReasoningDetails {
 export class ChatToolCalls {
   private calls = new Map<number, ChatToolCall>();
   private argumentChars = 0;
+  /** The pre-tools `function_call` field some OpenAI-compatible relays still answer with: one call, no ID. */
+  private legacy = { name: "", arguments: "" };
+  /** Why the legacy call can't be used; reported only when it is the reply's call, so a mirror can't reject tool_calls. */
+  private legacyError = "";
+
+  addLegacy(value: unknown): void {
+    if (value === undefined || value === null || this.legacyError) return;
+    const fn = object(value);
+    if (!fn) {
+      this.legacyError = "provider returned an invalid function_call";
+      return;
+    }
+    for (const field of ["name", "arguments"] as const) {
+      if (fn[field] === undefined || fn[field] === null) continue;
+      if (typeof fn[field] !== "string") {
+        this.legacyError = "provider returned invalid function_call arguments or name";
+        return;
+      }
+      this.legacy[field] += fn[field];
+    }
+    if (this.legacy.name.length > 64 || this.legacy.arguments.length > MAX_ARGUMENT_CHARS) {
+      this.legacyError = "provider tool calls exceeded the size limit";
+      this.legacy = { name: "", arguments: "" };
+    }
+  }
 
   add(value: unknown, streaming: boolean): void {
     if (value === undefined || value === null) return;
@@ -44,7 +74,7 @@ export class ChatToolCalls {
     const omitted = (field: unknown) => field === undefined || (streaming && field === null);
     for (const [position, raw] of value.entries()) {
       const delta = object(raw);
-      const index = streaming ? delta?.index : position;
+      const index = !streaming ? position : delta?.index ?? this.slotOf(delta?.id);
       if (!delta || !Number.isInteger(index) || Number(index) < 0 || Number(index) >= MAX_REPLY_TOOL_CALLS) {
         throw new ChatProtocolError("provider returned an invalid tool-call index");
       }
@@ -66,6 +96,13 @@ export class ChatToolCalls {
           if (field === "arguments") this.argumentChars += fn[field].length;
         }
       }
+      const extra = object(delta.extra_content);
+      if (extra) {
+        // A later chunk replaces the earlier value, so count only the size change.
+        const previous = call.extra_content ? JSON.stringify(call.extra_content).length : 0;
+        call.extra_content = extra;
+        this.argumentChars += JSON.stringify(extra).length - previous;
+      }
       if (call.function.name.length > 64 || this.argumentChars > MAX_ARGUMENT_CHARS) {
         throw new ChatProtocolError("provider tool calls exceeded the size limit");
       }
@@ -73,13 +110,31 @@ export class ChatToolCalls {
     }
   }
 
+  /** Gemini's OpenAI-compatible endpoint streams each call whole, with an id and no index: the slot of the call with
+   * that id, else the one after the last. */
+  private slotOf(id: unknown): number | undefined {
+    if (typeof id !== "string" || !id) return undefined;
+    for (const [slot, call] of this.calls) if (call.id === id) return slot;
+    return this.calls.size ? Math.max(...this.calls.keys()) + 1 : 0;
+  }
+
   finish(reason: string | null, malformedFrame: boolean): ChatToolCall[] {
     const calls = [...this.calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
     if (malformedFrame) throw new ChatProtocolError("provider stream contained a malformed completion frame");
-    if (reason === "function_call") throw new ChatProtocolError("legacy function_call is unsupported; use structured tool_calls");
-    if (reason === "tool_calls" && !calls.length) throw new ChatProtocolError("provider ended for tool calls without a complete call");
+    // A legacy call counts only alone: relays that mirror tool_calls or send an empty placeholder add nothing.
+    if (!calls.length) {
+      if (this.legacyError) throw new ChatProtocolError(this.legacyError);
+      if (this.legacy.name) {
+        calls.push({ id: `call_${randomUUID().replaceAll("-", "")}`, type: "function", function: { ...this.legacy } });
+      } else if (this.legacy.arguments) {
+        throw new ChatProtocolError("provider ended for tool calls without a complete call");
+      }
+    }
+    if ((reason === "tool_calls" || reason === "function_call") && !calls.length) {
+      throw new ChatProtocolError("provider ended for tool calls without a complete call");
+    }
     if (!calls.length) return calls;
-    if (reason !== null && reason !== "tool_calls" && reason !== "stop") {
+    if (reason !== null && reason !== "tool_calls" && reason !== "function_call" && reason !== "stop") {
       throw new ChatProtocolError("provider tool calls were truncated or malformed");
     }
     const ids = new Set<string>();

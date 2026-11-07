@@ -1,3 +1,4 @@
+import { noticeLine } from "./chat-notices.ts";
 // What a person's bots finished in a window, what only the person can fix,
 // and the time it saved, computed on each read from the transcript rows and
 // routine runs the server already keeps.
@@ -6,6 +7,7 @@ import type { TurnDigest } from "../shared/digest.ts";
 import { isClientCancellation } from "../shared/client-cancel.ts";
 import { failedTurnCause } from "../shared/failed-turn.ts";
 import type { PlaceRow, PlaceState } from "../shared/place-view.ts";
+import type { ServerTextParams } from "../shared/server-text.ts";
 import type { RoutineRunReport, RoutineRunStatus, RoutineRunTrigger } from "../shared/routines.ts";
 import { classifyToolCall, isReportRoutine, minutesSaved, OUTCOME_CATEGORIES, toolApps, type OutcomeCategory, type OutcomeCounts } from "../shared/today-outcomes.ts";
 import { NEEDS_YOU_WINDOW_MS, TODAY_MAX_LINES, TODAY_MAX_WINDOW_MS, type NeedsYouItem, type TodayLine, type TodayReport, type TodayStarter } from "../shared/today.ts";
@@ -19,6 +21,9 @@ export interface TodayViewer {
   admin: boolean;
   thread(threadId: string): boolean;
   routine(run: { botId?: unknown; groupId?: unknown }): boolean;
+  /** A Team Cloud: whether an ask in this conversation is this viewer's. It then holds approvals too, since each one
+   * waits on the one person it is for. */
+  asks?(botId: string | undefined, threadId: string): boolean;
 }
 
 interface RunRecord {
@@ -43,8 +48,9 @@ export interface TodaySources {
   groups: ReadonlyArray<{ id: string; threadId: string; tasks?: ReadonlyArray<{ threadId: string }> }>;
   routines: { listRoutines(): ReadonlyArray<{ botId: string; groupId?: string }>; listRuns(from?: number): readonly RunRecord[] } | null;
   engines: ReadonlyArray<{ instanceId: string; snapshot?: { state: string; authenticated?: boolean } }>;
-  /** Work parked on a question for the person (a NEEDS INPUT line rather than a card). */
-  parked: ReadonlyArray<{ id: string; botId: string; threadId: string; question?: string; createdAt: number }>;
+  /** Work parked on a question for the person (a NEEDS INPUT line rather than a card); one its requester decides
+   * (`decide`) waits on no person. */
+  parked: ReadonlyArray<{ id: string; botId: string; threadId: string; question?: string; decide?: unknown; createdAt: number }>;
 }
 
 /** Place failures a person fixes by changing a setting or plan; the rest pass or retry by themselves. */
@@ -54,7 +60,7 @@ const OWNER_PLACES: ReadonlySet<PlaceState> = new Set([
 ]);
 /** A connected app refusing for want of a working sign-in, as Composio and the apps behind it word it. */
 const BROKEN_CONNECTION = /\b(?:401|unauthori[sz]ed|invalid[_ ]grant|(?:token|credentials?) (?:has |have )?(?:expired|been revoked)|expired (?:token|credentials?)|re-?authori[sz]e|re-?authenticate|reconnect|no (?:active )?connected account|connected ?account (?:not found|is (?:inactive|expired|disabled))|connection (?:is )?(?:inactive|expired|revoked|not found)|insufficient[_ ](?:scopes?|permissions?)|ACCESS_TOKEN_SCOPE_INSUFFICIENT|not connected)\b/i;
-const KIND_ORDER: Record<NeedsYouItem["kind"], number> = { "signed-out": 0, "out-of-credit": 1, "usage-limit": 2, connection: 3, place: 4, question: 5 };
+const KIND_ORDER: Record<NeedsYouItem["kind"], number> = { "signed-out": 0, "out-of-credit": 1, "usage-limit": 2, connection: 3, place: 4, question: 5, message: 6 };
 const DAY_MS = 24 * 60 * 60_000;
 const TITLE_CHARS = 160;
 /** A failed row and the summary its turn ends with are written this close together. */
@@ -91,6 +97,13 @@ const parse = <T,>(text: string | null): T | null => {
   try { return JSON.parse(text) as T; } catch { return null; }
 };
 
+function causeCode(row: Pick<AttentionRow, "nameCode" | "nameParams">): { textCode?: string; textParams?: ServerTextParams } {
+  if (!row.nameCode?.startsWith("chat.notice.")) return {};
+  const params = parse<unknown>(row.nameParams);
+  const flat = params && typeof params === "object" && !Array.isArray(params) && Object.values(params).every((value) => typeof value === "string" || typeof value === "number");
+  return { textCode: row.nameCode, ...(flat ? { textParams: params as ServerTextParams } : {}) };
+}
+
 function plainTitle(text: string): string {
   const line = text.replace(/^[\s#>]+/gm, "").replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim();
   return line.length > TITLE_CHARS ? `${line.slice(0, TITLE_CHARS - 1).trimEnd()}…` : line;
@@ -110,8 +123,14 @@ function runEnd(run: RunRecord, now: number): number | null {
   return run.status === "cancelled" ? null : now;
 }
 
+function approvalText(card: QuestionCard & { tool?: string }) {
+  const text = plainTitle(`Approve: ${card.subtitle || card.tool || card.title || ""}`);
+  return text === "Approve:" ? { text } : noticeLine("chat.notice.approve", { what: text.slice("Approve: ".length) });
+}
+
+/** A question card the harness made carries the question as its subtitle, under a generic title. */
 function questionText(card: QuestionCard): string {
-  return plainTitle(card.questionRequest?.questions?.[0]?.question || card.title || card.subtitle || "");
+  return plainTitle(card.questionRequest?.questions?.[0]?.question || (card.requestType === "question" && card.subtitle) || card.title || card.subtitle || "");
 }
 
 export function todayReport(sources: TodaySources, viewer: TodayViewer, requestedSince: number, now = Date.now()): TodayReport {
@@ -229,16 +248,21 @@ export function todayReport(sources: TodaySources, viewer: TodayViewer, requeste
   };
 }
 
+/** What only the person can fix right now, across every conversation the viewer may see. */
+export function needsYouNow(sources: TodaySources, viewer: TodayViewer, now = Date.now()): NeedsYouItem[] {
+  const owners = threadOwners(sources);
+  return needsYou(sources, viewer, owners, (threadId): threadId is string => Boolean(threadId && owners.has(threadId) && viewer.thread(threadId)), now);
+}
+
 function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string, Owner>, seen: (threadId: string | undefined) => threadId is string, now: number): NeedsYouItem[] {
   const rows = attentionRows(now - NEEDS_YOU_WINDOW_MS).filter((row) => seen(row.threadId));
   const botOf = (row: AttentionRow) => row.digestBotId ?? row.fromBotId ?? owners.get(row.threadId)?.botId;
   const engineOf = new Map(sources.bots.map((bot) => [bot.id, bot.modelSelection?.instanceId]));
-  const lastTurnByBot = new Map<string, number>(), lastTurnByThread = new Map<string, number>();
+  const lastTurnByBot = new Map<string, number>();
   for (const row of rows) {
     if (row.kind !== "digest") continue;
     const botId = botOf(row);
     if (botId) lastTurnByBot.set(botId, row.at);
-    lastTurnByThread.set(row.threadId, row.at);
   }
 
   const items = new Map<string, NeedsYouItem>();
@@ -257,12 +281,13 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
     if (row.kind === "options") {
       const card = parse<QuestionCard>(row.card);
       const botId = botOf(row);
-      if (!card || !botId || !isPersistentQuestionCard(card) || card.outboundRequest || card.quotaSwitch || card.teamMemoryRequest || card.autoApplied) continue;
-      if ((lastTurnByThread.get(row.threadId) ?? -Infinity) > row.at) continue;
+      if (!card || !botId || card.outboundRequest || card.quotaSwitch || card.teamMemoryRequest || card.autoApplied) continue;
+      const approval = viewer.asks !== undefined && (card.requestType === "permission" || Boolean(card.tool));
+      if (!(approval || isPersistentQuestionCard(card)) || (viewer.asks && !viewer.asks(botId, row.threadId))) continue;
       const earlier = card.requestId ? askedIn.get(card.requestId) : undefined;
       if (earlier && earlier !== `question:${row.threadId}`) items.delete(earlier);
       if (card.requestId) askedIn.set(card.requestId, `question:${row.threadId}`);
-      keep(`question:${row.threadId}`, { kind: "question", id: row.id, at: row.at, botId, threadId: row.threadId, text: questionText(card) });
+      keep(`question:${row.threadId}`, { kind: "question", id: row.id, at: row.at, botId, threadId: row.threadId, ...(approval ? approvalText(card) : { text: questionText(card) }) });
       continue;
     }
     if (!viewer.admin || row.kind !== "activity" || !row.name) continue;
@@ -288,7 +313,7 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
     } else {
       const reason = classifyError({ text: cause }).reason;
       if ((row.setup || reason === "auth") && instanceId) keep(`signed-out:${instanceId}`, { kind: "signed-out", id: row.id, at: row.at, instanceId, botIds: [botId], threadId: row.threadId });
-      else if (reason === "quota") keep(`usage-limit:${instanceId ?? botId}`, { kind: "usage-limit", id: row.id, at: row.at, ...(instanceId ? { instanceId } : {}), botIds: [botId], threadId: row.threadId, text: plainTitle(cause) });
+      else if (reason === "quota") keep(`usage-limit:${instanceId ?? botId}`, { kind: "usage-limit", id: row.id, at: row.at, ...(instanceId ? { instanceId } : {}), botIds: [botId], threadId: row.threadId, text: plainTitle(cause), ...causeCode(row) });
     }
   }
 
@@ -311,7 +336,7 @@ function needsYou(sources: TodaySources, viewer: TodayViewer, owners: Map<string
   }
 
   for (const work of sources.parked) {
-    if (!work.question || items.has(`question:${work.threadId}`) || !seen(work.threadId)) continue;
+    if (!work.question || work.decide || items.has(`question:${work.threadId}`) || !seen(work.threadId) || (viewer.asks && !viewer.asks(work.botId, work.threadId))) continue;
     keep(`question:${work.threadId}`, { kind: "question", id: work.id, at: work.createdAt, botId: work.botId, threadId: work.threadId, text: plainTitle(work.question) });
   }
 

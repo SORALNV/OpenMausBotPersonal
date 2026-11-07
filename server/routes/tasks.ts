@@ -7,7 +7,7 @@ import type { Coordinator } from "../coordinator.ts";
 import type { Handoffs } from "../delta-context.ts";
 import type { hostedModelPolicy } from "../hosted-models.ts";
 import type { PhoneSecretSubmissionRegistry } from "../phone-secret.ts";
-import type { RequestAuth } from "../request-auth.ts";
+import { ownerOrAdmin, type RequestAuth } from "../request-auth.ts";
 import type { RoutineManager } from "../routines.ts";
 import type { SkillReview } from "../skill-review.ts";
 import { isProjectEmoji, type BotRecord, type Store, type TaskRecord } from "../store.ts";
@@ -18,6 +18,9 @@ import type { MessagePage } from "./channels.ts";
 import { bulkDeleteThreadIds, type BulkDeleteRefusal } from "./bulk-delete.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 import { sawThread } from "../thread-presence.ts";
+import { refusalBody, userError } from "../user-errors.ts";
+import type { ServerErrorBody } from "../../shared/server-text.ts";
+import { readThreadNotifications } from "./notifications.ts";
 
 type HostedModels = NonNullable<ReturnType<typeof hostedModelPolicy>>;
 
@@ -48,6 +51,7 @@ export interface TaskRouteDeps {
   sharedWorkspaceFullAccessEnabled(): boolean;
   supportsApprovalMode(selection: ModelSelection, mode: ApprovalMode): boolean;
   threadBusy(botId: string, threadId: string): boolean;
+  broadcast(payload: Record<string, unknown>): void;
   publicBot(bot: BotRecord): WireBot;
   wireBot(bot: BotRecord): WireBot;
   wireTask(task: TaskRecord, botModel: ModelSelection): WireTask;
@@ -55,10 +59,10 @@ export interface TaskRouteDeps {
   messagePage(threadId: string, limit: number | undefined): MessagePage;
   checkedModelSelection(raw: unknown, current?: { selection: ModelSelection; busy: boolean }, requireAvailableModel?: boolean):
     | { ok: true; selection: ModelSelection }
-    | { ok: false; status: number; error: string };
+    | ({ ok: false; status: number } & ServerErrorBody);
   checkedTaskModelSwitch(current: BotRecord, raw: unknown, updateBotDefault: boolean, resetApprovalToAsk: boolean, requireAvailableModel?: boolean):
     | { ok: true }
-    | { ok: false; status: number; error: string };
+    | ({ ok: false; status: number } & ServerErrorBody);
   threadTitleGate(bot: Pick<BotRecord, "modelSelection">): { ok: true; instance: ProviderInstance } | { ok: false; refusal: string };
   generateThreadTitle(provider: ProviderInstance, text: string, source: ThreadTitleSource): Promise<string | null>;
   settleDirectFollowup(generation: string | undefined): void;
@@ -66,13 +70,16 @@ export interface TaskRouteDeps {
   revokeInternalCapabilitiesForThread(threadId: string): void;
   stagedSkillCleanupsForThread(threadId: string): Array<{ botId: string; stagedId: string }>;
   rejectDeletedThreadSkillStages(cleanups: Array<{ botId: string; stagedId: string }>): void;
+  /** A person opened this conversation (a Team Cloud's Needs you lines for them there are done). */
+  threadRead?(auth: RequestAuth, threadId: string): void;
 }
 
-export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
+/** `deleteTasks`: the same deletion for the server's own use (a person leaving a Team Cloud, host/team-member-left.ts). */
+export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTasks(botId: string, threadIds: string[]): ReturnType<TaskRouteDeps["store"]["deleteTasks"]> } {
   const {
     store, hostedModels, coordinator, handoffs, skillReview, threadStarters, phoneSecretSubmissions, titleRegenerations,
     directTurnGenerationByThread, actorKey, cloudOwnerSession, cloudThreadRefusal, sharedWorkspaceFullAccessEnabled,
-    supportsApprovalMode, threadBusy, publicBot, wireBot, wireTask, pageSize, messagePage, checkedModelSelection,
+    supportsApprovalMode, threadBusy, broadcast, publicBot, wireBot, wireTask, pageSize, messagePage, checkedModelSelection,
     checkedTaskModelSwitch, threadTitleGate, generateThreadTitle, settleDirectFollowup, clearTurnDigestState,
     revokeInternalCapabilitiesForThread, stagedSkillCleanupsForThread, rejectDeletedThreadSkillStages,
   } = deps;
@@ -106,7 +113,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
     }
     return result;
   };
-  return async ({ req, res, url, path, method, auth, json, readBody }) => {
+  return Object.assign(async ({ req, res, url, path, method, auth, json, readBody }: Parameters<RouteHandler>[0]) => {
     let m: RegExpMatchArray | null = null;
 
     // Folders never own settings, transcripts or working directories; the "project" wire names stay.
@@ -158,6 +165,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
     if (m && method === "POST") {
       const body = await readBody(req);
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "body must be a JSON object" });
+      if (body.select !== undefined && typeof body.select !== "boolean") return json(res, 400, { error: "select must be a boolean" });
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       let cwd: string | undefined;
@@ -186,7 +194,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       if (body.projectId !== undefined && (typeof body.projectId !== "string" || !store.project(bot.id, body.projectId))) {
         return json(res, 400, { error: "projectId must belong to this bot" });
       }
-      const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined, true, body.projectId, undefined, body.approvalMode, undefined, cwd);
+      const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined, body.select !== false, body.projectId, undefined, body.approvalMode, undefined, cwd);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       // Who opened it decides who may answer its cards on a shared workspace.
       if (auth.kind === "session") threadStarters.set(task.threadId, actorKey(auth));
@@ -224,6 +232,8 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
       sawThread(m[2]);
+      deps.threadRead?.(auth, m[2]);
+      readThreadNotifications(m[2], broadcast, auth);
       const wiredSwitch = wireBot(switched);
       const switchedSettings = { ...wiredSwitch, tasks: wiredSwitch.tasks ?? [] };
       // "0": settings only; a positive page: that tail; omitted: the whole thread (search hits can be older than a page).
@@ -246,6 +256,9 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
         (body.approvalMode !== undefined || body.autoApprove !== undefined || body.acknowledgeLocalAuto !== undefined || body.updateBotDefault === true || body.refreshPermissions === true)) {
         return json(res, 403, { error: "On this Cloud only its owner can change how a bot asks for approval, or its default model." });
       }
+      if (body.updateBotDefault === true && !ownerOrAdmin(auth)) {
+        return json(res, 403, userError("serverError.model.defaultAdmin"));
+      }
       for (const key of ["requireAvailableModel", "acknowledgeLocalAuto", "updateBotDefault", "resetApprovalToAsk"] as const) {
         if (body[key] !== undefined && typeof body[key] !== "boolean") return json(res, 400, { error: `${key} must be a boolean` });
       }
@@ -264,7 +277,6 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
         const profile = store.bot(m[1]);
         if (!profile) return json(res, 404, { error: "no such bot" });
         if (profile.approvalGrant) return json(res, 409, { error: "the bot's approval mode is still being confirmed" });
-        if (threadBusy(profile.id, m[2])) return json(res, 409, { error: "stop this thread before changing its approval mode" });
         const nextMode = approvalModeFor({ ...profile, approvalGrant: undefined });
         // Custom never travels over the bot-reachable HTTP surface; only the desktop's private channel copies it.
         if (nextMode === "custom") {
@@ -342,7 +354,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       if (body.modelSelection !== undefined) {
         if (current.approvalGrant) return json(res, 409, { error: "the bot's approval mode is still being confirmed" });
         const checked = checkedModelSelection(body.modelSelection, { selection: current.modelSelection, busy: threadBusy(current.id, current.threadId) }, body.requireAvailableModel === true);
-        if (!checked.ok) return json(res, checked.status, { error: checked.error });
+        if (!checked.ok) return json(res, checked.status, refusalBody(checked));
         patch.modelSelection = checked.selection;
       }
       if (body.approvalMode !== undefined || body.autoApprove !== undefined) {
@@ -356,7 +368,6 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
         if (!supportsApprovalMode(patch.modelSelection ?? current.modelSelection, mode)) {
           return json(res, 400, { error: "This provider does not support the selected approval level" });
         }
-        if (threadBusy(current.id, current.threadId)) return json(res, 409, { error: "stop this thread before changing its approval mode" });
         if (current.approvalGrant) return json(res, 409, { error: "the bot's approval mode is still being confirmed" });
         if (mode === "auto" && approvalModeFor(current) !== "auto" && auth.kind === "loopback" && !DESKTOP_MANAGED && !req.headers.origin && store.bots.some((bot) => bot.busy)) {
           return json(res, 409, { error: "Change approval mode from the app or a paired device while bots are working." });
@@ -371,7 +382,7 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
         const checked = checkedTaskModelSwitch({ ...current,
           ...(patch.approvalMode ? { approvalMode: patch.approvalMode, autoApprove: patch.autoApprove } : {}),
         }, patch.modelSelection, body.updateBotDefault === true, body.resetApprovalToAsk === true, body.requireAvailableModel === true);
-        if (!checked.ok) return json(res, checked.status, { error: checked.error });
+        if (!checked.ok) return json(res, checked.status, refusalBody(checked));
       }
       const task = patch.modelSelection
         ? store.switchTaskModel(m[1], m[2], patch.modelSelection, body.updateBotDefault === true, body.resetApprovalToAsk === true,
@@ -413,5 +424,5 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler {
       }
     }
     return PASS;
-  };
+  }, { deleteTasks });
 }

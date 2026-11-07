@@ -3,7 +3,7 @@
 // --public, reads the four public bot-test pages. Read-only: it never signs in or submits a form.
 // Usage: node --experimental-strip-types scripts/verify-browser-identity.ts [--chrome PATH] [--engine PATH] [--public] [--out DIR]
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -12,9 +12,11 @@ import { pathToFileURL } from "node:url";
 import { agentBrowserIntegration, closeBrowserSession, prepareBrowserSessionState, resolveAgentBrowserBinary, setBrowserViewport } from "../server/browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv, type BrowserSpawnSpec } from "../server/browser-runtime.ts";
 import { ChromeLauncher } from "../server/browser/chrome/launcher.ts";
+import type { IdentitySidecars } from "../server/browser/chrome/sidecar.ts";
 import { openGate } from "../server/browser/egress/gate.ts";
 import { refusalFor } from "../server/browser/egress/policy.ts";
 import { DATA_DIR } from "../server/config.ts";
+import { removeTempDir } from "../server/testing/cleanup.ts";
 import { expectedUserAgent, startIdentityProbe, type ProbeReports, type ReportedIdentity } from "./testing/browser-identity-probe.ts";
 
 export const PUBLIC_PAGES = [
@@ -98,6 +100,19 @@ function refused(result: unknown): string | null {
   return answer?.content?.filter((part) => part.type === "text").map((part) => part.text).join(" ") || JSON.stringify(result).slice(0, 300);
 }
 
+/**
+ * Opens a page of the check's own in the bot's just-started browser. Chrome for Testing 155-156 on Windows now and then
+ * cancels a fresh profile's first network navigation (net::ERR_ABORTED, 35 of 150 starts on GitHub's runner), and a
+ * second request goes through: the page has no side effects, so it is opened once more after that one cancel. Answers
+ * what the bot was told when it failed.
+ */
+export async function openOwnPageAsBot(call: BotCall, url: string, log: (line: string) => void): Promise<string | null> {
+  const failed = refused(await call("agent_browser_open", { url }));
+  if (!failed || !failed.includes("net::ERR_ABORTED")) return failed;
+  log(`the bot's browser: Chrome cancelled its first navigation (${failed}); opening ${url} once more`);
+  return refused(await call("agent_browser_open", { url }));
+}
+
 /** The runtime keeps file paths away from the engine, so a screenshot comes back as image content. */
 function savedImage(result: unknown, base: string): string | null {
   const image = (result as { content?: Array<{ type?: string; data?: string; mimeType?: string }> } | null)?.content?.find((part) => part.type === "image" && part.data);
@@ -137,6 +152,8 @@ export interface BotBrowserOptions {
   out: string;
   sessionPrefix?: string;
   log?: (line: string) => void;
+  /** The identity connections, in place of the server's own: a test can slow one down. */
+  sidecars?: IdentitySidecars;
 }
 
 /** A browser tool call, as the bot makes it. */
@@ -157,7 +174,7 @@ export async function withBotBrowser<T>(options: BotBrowserOptions, work: (call:
   // runner's HOME is a temporary folder, so the real one comes from the user database.
   const home = userInfo().homedir;
   const session = `${options.sessionPrefix ?? "omb-identity"}-${randomBytes(3).toString("hex")}`;
-  const launcher = new ChromeLauncher({ dataDir: join(scratch, "data"), env: { ...process.env, HOME: home, USERPROFILE: home, OMB_CHROME_PATH: options.chrome }, log });
+  const launcher = new ChromeLauncher({ dataDir: join(scratch, "data"), env: { ...process.env, HOME: home, USERPROFILE: home, OMB_CHROME_PATH: options.chrome }, log, ...(options.sidecars ? { sidecars: options.sidecars } : {}) });
   // Where the launcher adds nothing (OMB_BROWSER_LEGACY_SHELL=1, a headless shell), agent-browser would otherwise look for a
   // browser of its own, such as an installed Google Chrome, instead of the one named here.
   const launcherEnv = launcher.env();
@@ -185,8 +202,8 @@ export async function withBotBrowser<T>(options: BotBrowserOptions, work: (call:
     await closeBrowserSession(options.engine, browserRuntimeEnv({ ...spec.env, AGENT_BROWSER_SESSION: session })).catch(() => false);
     await runtime.closeAll();
     await gate.close();
-    rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    rmSync(sockets, { recursive: true, force: true });
+    await removeTempDir(scratch);
+    await removeTempDir(sockets);
   }
 }
 
@@ -195,7 +212,7 @@ export async function verifyBrowserIdentity(options: BotBrowserOptions & { publi
   const probe = await startIdentityProbe();
   try {
     return await withBotBrowser(options, async (call, decided, launcher) => {
-      const failed = refused(await call("agent_browser_open", { url: probe.url }));
+      const failed = await openOwnPageAsBot(call, probe.url, log);
       if (failed) throw new Error(`the bot's browser could not open the probe page: ${failed}`);
       const reports = await probe.complete(30_000);
       const major = String(reports.page?.high?.uaFullVersion ?? "").split(".")[0] ?? "";

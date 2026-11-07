@@ -3,20 +3,27 @@ import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 
 export type ConfirmTone = "danger" | "neutral";
 
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  body: string;
+  body: ReactNode;
   confirmLabel: string;
+  /** The way out, "Cancel" unless given. */
+  cancelLabel?: string;
   tone?: ConfirmTone;
   icon?: ReactNode;
   onCancel: () => void;
   onConfirm: () => void;
+  /** A gentler way to the same end, offered beside the confirm button ("Archive instead"). */
+  alternative?: { label: string; onClick: () => void };
   pending?: boolean;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  /** Where it sits among open dialogs, when another one above the usual layer asked it. */
+  layer?: string;
 }
 
 /**
@@ -72,7 +79,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      className={`fixed inset-0 ${props.layer ?? "z-50"} flex items-center justify-center bg-black/55 p-6`}
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <ConfirmDialogCard ref={dialogRef} cancelRef={cancelRef} {...props} />
@@ -87,10 +94,12 @@ export function ConfirmDialogCard({
   title,
   body,
   confirmLabel,
+  cancelLabel = t("common.cancel"),
   tone = "danger",
   icon,
   onCancel,
   onConfirm,
+  alternative,
   pending = false,
 }: ConfirmDialogProps & {
   ref?: React.Ref<HTMLDivElement>;
@@ -132,8 +141,10 @@ export function ConfirmDialogCard({
           disabled={pending}
           className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
         >
-          Cancel
+          {cancelLabel}
         </button>
+        {alternative && <button type="button" data-confirm-alternative onClick={alternative.onClick} disabled={pending}
+          className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110">{alternative.label}</button>}
         <button
           type="button"
           onClick={onConfirm}

@@ -5,6 +5,9 @@ import { request as httpRequest, type IncomingMessage, type ServerResponse } fro
 import type { Duplex } from "node:stream";
 
 import { bearerToken } from "./devices.ts";
+import type { E2EDescriptor } from "./e2e/descriptor.ts";
+import { e2eContextOf } from "./e2e/origin.ts";
+import type { E2EContext } from "./e2e/registry.ts";
 import {
   COMPANION_ENDPOINT_KINDS,
   MAX_COMPANION_ENDPOINTS,
@@ -17,7 +20,7 @@ import {
   isMessageFileDownload,
 } from "./routes.ts";
 import { sendTunnelJson } from "./tunnel-gzip.ts";
-import { CompanionViewerRelay } from "./viewer-relay.ts";
+import { CompanionViewerRelay, requestTarget } from "./viewer-relay.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 export interface ProxyOptions {
@@ -26,7 +29,7 @@ export interface ProxyOptions {
   mutationToken?: () => string | null;
   authenticate: (
     token: string | undefined,
-  ) => { id?: string; cloudDesktopAccess: boolean; browserControlAccess: boolean } | null;
+  ) => { id?: string; cloudDesktopAccess: boolean; browserControlAccess: boolean; e2eAt?: number } | null;
   /** Pairing is handled here and never forwarded: the harness has no such route. */
   redeem: (
     code: string,
@@ -43,6 +46,25 @@ export interface ProxyOptions {
    * it synchronously on revoke; the returned disposer is called exactly once. */
   connected?: (deviceId: string, disconnect: () => void) => () => void;
   headersTimeoutMs?: number;
+  /** The `e2e` descriptor for one device (null: the phone pairing now); null when end-to-end is off. */
+  e2eDescriptor?: (deviceId: string | null) => E2EDescriptor | null;
+  /** A phone paired through an encrypted session keyed by the pairing token: the session is now that device's. */
+  e2ePaired?: (context: E2EContext, deviceId: string) => void;
+}
+
+/** Which listener a request reached. Only `lan` (port 8810, plain HTTP) refuses a device that has gone end-to-end;
+ * requests arriving through an encrypted stream are recognised by their socket, whatever this says. */
+export type ProxyListener = "lan" | "origin";
+
+/** §11 rule 4 of the wire spec: a phone that has used the encrypted connection never goes back to plain HTTP. */
+const UPDATE_APP = { error: "update_app" } as const;
+
+const PAIRING_SESSION_PATHS = new Set(["POST /api/pair", "GET /api/health"]);
+
+/** A token presented inside a session must belong to the device whose psk opened it. */
+function e2eRefusal(context: E2EContext, method: string, path: string, deviceId: string | undefined): string | null {
+  if (context.peer.kind === "pairing") return PAIRING_SESSION_PATHS.has(`${method} ${path}`) ? null : "pair this phone first";
+  return deviceId && deviceId !== context.peer.id ? "this connection belongs to another device" : null;
 }
 
 export interface CompanionEndpointSnapshot {
@@ -92,6 +114,9 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
       }
     });
   });
+
+const isPlainValue = (value: unknown): value is string | number | null | undefined =>
+  value == null || typeof value === "string" || typeof value === "number";
 
 const PRIVATE_RESPONSE_HEADERS = {
   "cache-control": "private, no-store",
@@ -261,7 +286,15 @@ function harnessControlCheck(options: ProxyOptions) {
 export function createProxyHandler(options: ProxyOptions) {
   const viewers = new CompanionViewerRelay({ checkControl: harnessControlCheck(options) });
   const capabilityStreams = new Map<string, Set<() => void>>();
-  const handle = function handle(req: IncomingMessage, res: ServerResponse): void {
+  /** Each device's open `/api/events` streams, for the events the sidecar itself sends. */
+  const eventStreams = new Map<string, Set<(event: string) => void>>();
+  const endpointsFor = (deviceId: string | null) => {
+    const descriptor = options.e2eDescriptor?.(deviceId) ?? null;
+    return { ...endpointSnapshot(options), ...(descriptor ? { e2e: descriptor } : {}) };
+  };
+  const handle = function handle(req: IncomingMessage, res: ServerResponse, listener: ProxyListener = "lan"): void {
+    const target = requestTarget(req.url);
+    if (!target) return sendJson(res, 400, { error: "invalid request target" });
     const path = (req.url ?? "/").split("?")[0];
     const method = req.method ?? "GET";
 
@@ -273,6 +306,10 @@ export function createProxyHandler(options: ProxyOptions) {
 
     const token = bearerToken(req.headers.authorization);
     const device = options.authenticate(token);
+    const e2e = e2eContextOf(req.socket);
+    if (!e2e && listener === "lan" && device?.e2eAt && path !== "/api/health") return sendJson(res, 426, UPDATE_APP);
+    const e2eDenial = e2e ? e2eRefusal(e2e, method, path, device?.id) : null;
+    if (e2eDenial) return sendJson(res, 401, { error: e2eDenial });
     const browserRequest = isBrowserControlAccess(method, path);
     const browserRefusal = () => {
       if (!browserRequest) return null;
@@ -317,35 +354,47 @@ export function createProxyHandler(options: ProxyOptions) {
     if (method === "POST" && path === "/api/pair") {
       readJson(req).then(
         (body) => {
+          const credential = body.credential ?? body.code;
+          if (!isPlainValue(credential) || !isPlainValue(body.deviceName)) {
+            return sendJson(res, 400, { error: "invalid pairing request" });
+          }
           const result = options.redeem(
-            String(body.credential ?? body.code ?? ""),
+            String(credential ?? ""),
             body.deviceName,
             body.pairRequestId,
           );
           if ("error" in result) return sendJson(res, 401, { error: result.error });
+          const pairedId = (result.device as { id?: unknown } | null)?.id;
+          if (e2e && typeof pairedId === "string") options.e2ePaired?.(e2e, pairedId);
           const hosts = options.hosts?.() ?? [];
           const endpoints = options.endpoints?.() ?? [];
+          const descriptor = options.e2eDescriptor?.(typeof pairedId === "string" ? pairedId : null) ?? null;
           const response: typeof result & {
             serverName: string;
             hosts?: string[];
             endpoints?: CompanionEndpoint[];
+            e2e?: E2EDescriptor;
           } = {
             ...result,
             serverName: options.serverName(),
           };
           if (hosts.length) response.hosts = hosts;
           if (endpoints.length) response.endpoints = endpoints;
+          if (descriptor) response.e2e = descriptor;
           return sendJson(res, 201, response);
         },
         (error: Error) => sendJson(res, 400, { error: error.message }),
-      );
+      ).catch((error: unknown) => {
+        console.error("companion: pairing failed", error);
+        sendJson(res, 500, { error: "could not complete the pairing" });
+      });
       return;
     }
 
     // Sidecar-owned state: answered here after the bearer and default-deny
     // checks, never sent to the harness.
     if (method === "GET" && path === "/api/companion/endpoints") {
-      return sendJson(res, 200, endpointSnapshot(options));
+      return sendJson(res, 200, endpointsFor(device?.id ?? null));
     }
 
     const mutationToken = device ? options.mutationToken?.() : undefined;
@@ -447,9 +496,24 @@ export function createProxyHandler(options: ProxyOptions) {
             open.add(disconnect);
             capabilityStreams.set(capabilityOwner, open);
           }
+          // The scrubber hands on whole events only, so an event written here never splits one of the harness's.
+          const pushTo = tracksDeviceConnection && currentDevice?.id ? currentDevice.id : undefined;
+          const push = (event: string) => {
+            if (!res.destroyed && !res.writableEnded) res.write(event);
+          };
+          if (pushTo) {
+            const open = eventStreams.get(pushTo) ?? new Set<(event: string) => void>();
+            open.add(push);
+            eventStreams.set(pushTo, open);
+          }
           const release = () => {
             releaseConnection?.();
             releaseConnection = null;
+            if (pushTo) {
+              const open = eventStreams.get(pushTo);
+              open?.delete(push);
+              if (open && open.size === 0) eventStreams.delete(pushTo);
+            }
             if (capabilityOwner) {
               const open = capabilityStreams.get(capabilityOwner);
               open?.delete(disconnect);
@@ -561,7 +625,7 @@ export function createProxyHandler(options: ProxyOptions) {
               path,
               parsed,
               device?.id,
-              new URL(req.url ?? "/", "http://companion.invalid").searchParams.get("controlLeaseId"),
+              target.searchParams.get("controlLeaseId"),
             );
             text = JSON.stringify(scrub(parsed));
           } catch {
@@ -622,14 +686,33 @@ export function createProxyHandler(options: ProxyOptions) {
     req.pipe(upstream);
   };
 
-  handle.upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
+  handle.upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer, listener: ProxyListener = "lan"): void => {
     if (req.headers.origin) {
       socket.destroy();
       return;
     }
     const token = bearerToken(req.headers.authorization);
     const device = options.authenticate(token);
+    const e2e = e2eContextOf(req.socket);
+    if (!e2e && listener === "lan" && device?.e2eAt) {
+      socket.end("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      return;
+    }
+    if (e2e && e2eRefusal(e2e, req.method ?? "GET", (req.url ?? "/").split("?")[0], device?.id)) {
+      socket.destroy();
+      return;
+    }
     viewers.handleUpgrade(req, socket, head, device);
+  };
+  handle.closeViewers = (): void => viewers.closeAll();
+  /** The endpoint list again, as an event on every event stream the device holds: a phone hears a change of where it
+   * may connect from inside its session, before the relay acts on it. No `id:`, so the replay cursor stays put. */
+  handle.sendEndpoints = (deviceId: string): number => {
+    const open = eventStreams.get(deviceId);
+    if (!open) return 0;
+    const event = `data: ${JSON.stringify({ kind: "companion.endpoints", ...endpointsFor(deviceId) })}\n\n`;
+    for (const push of open) push(event);
+    return open.size;
   };
   handle.disconnectDevice = (deviceId: string): void => {
     viewers.closeDevice(deviceId);

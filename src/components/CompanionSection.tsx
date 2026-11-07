@@ -5,13 +5,13 @@ import {
   Loader2,
   LogOut,
   ShieldCheck,
-  Smartphone,
-  Trash2,
   Wifi,
 } from "lucide-react";
+import type { CompanionAccountState } from "../types/ogb";
 import {
   PhoneSetupFlowView,
   companionAccountActionError,
+  companionAccountBridge,
   companionBridge,
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
@@ -21,9 +21,11 @@ import {
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
 import { revealPhonePairing } from "../lib/phone-pairing";
+import { PhonesList } from "./PhonesList";
+import { PairedPhones, RelayLine } from "./PairedPhones";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { Card, Switch } from "./SettingsPrimitives";
-import { brand } from "../lib/brand";
+import { productName } from "../lib/brand";
 import { useStore } from "@/state/store";
 
 export {
@@ -112,12 +114,20 @@ export function deriveCompanionPanelStatus(
   const pairedCount = state.devices.length;
   if (!pairedCount) return null;
   return {
-    label: `${pairedCount} ${pairedCount === 1 ? "device" : "devices"} paired`,
+    label: pairedCount === 1 ? t("remote.status.pairedOne") : t("remote.status.pairedMany", { count: pairedCount }),
     good: true,
   };
 }
 
-const relative = (at: number) => {
+/** Opening this page is what brings a paused address back: no button. */
+export function shouldResumePausedAddress(
+  account: CompanionAccountState | null,
+  state: Pick<CompanionState, "enabled" | "devices" | "error"> | null,
+): boolean {
+  return account?.paused === true && account.available && state?.enabled === true && !state.error && state.devices.length > 0;
+}
+
+export const relative = (at: number) => {
   const seconds = Math.round((Date.now() - at) / 1000);
   if (seconds < 90) return t("remote.time.justNow");
   const minutes = Math.round(seconds / 60);
@@ -145,6 +155,14 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
     if (!focusRequest) revealed.current = 0;
     else if (revealed.current !== focusRequest && revealPhonePairing(pairingFlow.current)) revealed.current = focusRequest;
   }, [focusRequest, loaded]);
+  const resumeAsked = useRef(false);
+  const resumePaused = shouldResumePausedAddress(c.account, state);
+  const { accountAct } = c;
+  useEffect(() => {
+    if (!resumePaused || resumeAsked.current || !companionAccountBridge()?.prepare) return;
+    resumeAsked.current = true;
+    void accountAct((remote) => remote.prepare?.() ?? remote.state());
+  }, [resumePaused, accountAct]);
   const managedPolicy = useStore().state.config?.managedPolicy;
   const remoteBlocked = managedPolicy?.remoteAccess === false ? t("policy.remoteBlocked", { organization: managedPolicy.organizationName }) : null;
   const managedBy = managedPolicy?.remoteAccess === false ? t("policy.managedBy", { organization: managedPolicy.organizationName }) : null;
@@ -152,7 +170,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
   if (!companionBridge()) {
     return (
       <Card
-        title={t("remote.desktopOnly.title", { app: brand().name })}
+        title={t("remote.desktopOnly.title", { app: productName() })}
         subtitle={t("remote.desktopOnly.subtitle")}
       />
     );
@@ -195,7 +213,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
             <div className="mb-4 flex items-center justify-between gap-3">
               {panelStatus && (
                 <div
-                  className={`flex items-center gap-2 rounded-full px-2.5 py-1 text-[11.5px] ${
+                  className={`flex items-center gap-2 rounded-full px-2.5 py-1 text-[12px] ${
                     panelStatus.good ? "bg-success/10 text-success" : "bg-control text-ink-secondary"
                   }`}
                 >
@@ -204,13 +222,13 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
                 </div>
               )}
               {pairedCount > 0 && c.hostedReady && (
-                <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
+                <div className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
                   <ShieldCheck size={13} className="text-accent" /> {t("remote.worksAway")}
                 </div>
               )}
             </div>
           )}
-          <PhoneSetupFlowView controller={c} variant="settings" />
+          <PhoneSetupFlowView controller={c} />
         </Card>
       </div>
 
@@ -222,8 +240,8 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[13px] text-ink">{t("remote.title")}</div>
-              <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-                {t("remote.toggleDetail")}
+              <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+                <RelayLine state={state} fallback={t("remote.toggleDetail")} />
               </div>
             </div>
             <Switch
@@ -236,67 +254,17 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
 
           <div className="border-t border-hairline/30 pt-4">
             <div className="text-[13px] text-ink">{t("remote.devices.title")}</div>
-            <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">{pairedCount ? t("remote.devices.subtitle", { app: brand().name }) : t("remote.devices.empty")}</div>
+            <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{pairedCount ? t("remote.devices.subtitle", { app: productName() }) : t("remote.devices.empty")}</div>
             <div className="mt-3">
-              {pairedCount > 0 && (
-                <ul className="flex flex-col gap-2">
-                  {state.devices.map((device) => (
-                    <li key={device.id} className="rounded-xl bg-inset px-3 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-control text-ink-secondary">
-                          <Smartphone size={15} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13.5px] font-medium text-ink">{device.name}</div>
-                          <div className="text-[11.5px] text-ink-secondary">{t("remote.devices.lastSeen", { when: relative(device.lastSeenAt) })}</div>
-                        </div>
-                        <button
-                          disabled={c.busy}
-                          onClick={() => void c.act((companion) => companion.revoke(device.id))}
-                          aria-label={t("remote.devices.remove", { name: device.name })}
-                          className="shrink-0 rounded p-1.5 text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/30 pt-3">
-                        <div>
-                          <div className="text-[12px] text-ink">{t("remote.devices.allowView")}</div>
-                          <div className="mt-0.5 text-[11px] text-ink-secondary">{t("remote.devices.allowViewDetail")}</div>
-                        </div>
-                        <Switch
-                          checked={device.cloudDesktopAccess}
-                          aria-label={t("remote.devices.viewAria", { name: device.name })}
-                          disabled={c.busy}
-                          onClick={() =>
-                            void c.act((companion) =>
-                              companion.cloudDesktop(device.id, !device.cloudDesktopAccess),
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/30 pt-3">
-                        <div>
-                          <div className="text-[12px] text-ink">{t("remote.devices.allowBrowser")}</div>
-                          <div className="mt-0.5 text-[11px] text-ink-secondary">{t("remote.devices.allowBrowserDetail")}</div>
-                        </div>
-                        <Switch
-                          checked={device.browserControlAccess === true}
-                          aria-label={t("remote.devices.browserAria", { name: device.name })}
-                          disabled={c.busy}
-                          onClick={() => void c.act((companion) => companion.browserControl(device.id, !device.browserControlAccess))}
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <PairedPhones c={c} state={state} />
             </div>
           </div>
 
+          <PhonesList />
+
           <div className="border-t border-hairline/30 pt-4">
             <div className="text-[13px] text-ink">{t("remote.pairing.tailscale.title")}</div>
-            <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">{t("remote.tailscaleCard.subtitle")}</div>
+            <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("remote.tailscaleCard.subtitle")}</div>
             <div className="mt-3">
               <div className="rounded-xl bg-inset px-3 py-3" aria-live="polite">
                 <div className="flex items-start gap-2.5">
@@ -306,7 +274,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
                   />
                   <div className="min-w-0">
                     <div className="text-[13px] font-medium text-ink">{tailscaleStatus.title}</div>
-                    <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                    <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
                       {tailscaleStatus.detail}
                     </div>
                   </div>
@@ -343,7 +311,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
           <div className="flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
             <div className="min-w-0">
               <div className="text-[13px] text-ink">{t("remote.keepAwake")}</div>
-              <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+              <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
                 {t("remote.keepAwakeDetail")}
               </div>
             </div>
@@ -361,7 +329,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
                 <Cloud size={15} className="mt-0.5 shrink-0 text-accent" />
                 <div className="min-w-0">
                   <div className="text-[13px] text-ink">{t("remote.account.title")}</div>
-                  <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                  <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
                     {c.account?.status === "ready"
                       ? t("remote.account.signedIn", {
                           email: c.account.email ?? t("remote.account.yourAccount"),
@@ -378,7 +346,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
                 <button
                   disabled={c.accountBusy}
                   onClick={() => void c.accountAct((remote) => remote.signOut())}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hairline/40 px-2.5 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hairline/40 px-2.5 py-1.5 text-[12px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
                 >
                   <LogOut size={12} /> {t("remote.account.signOut")}
                 </button>
@@ -398,7 +366,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
 
           <div className="border-t border-hairline/30 pt-4">
             <div className="text-[13px] text-ink">{t("remote.connection.title")}</div>
-            <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+            <div className="mt-0.5 text-[12px] text-ink-secondary">
               {t("remote.connection.detail")}
             </div>
             <div className="mt-3 flex flex-col gap-2">
@@ -415,7 +383,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
               <Wifi size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
               <div>
                 <div className="text-[13px] text-ink">{t("remote.pairing.wifi.title")}</div>
-                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
                   {t("remote.wifi.detail")}
                 </div>
               </div>
@@ -430,7 +398,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
           </div>
 
           {state.enabled && !hosted && !state.tailscale && (
-            <div className="rounded-lg bg-inset px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
+            <div className="rounded-lg bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary">
               {t("remote.localOnly")}
             </div>
           )}

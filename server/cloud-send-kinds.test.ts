@@ -84,9 +84,9 @@ describe("My Cloud takes a routine", () => {
     const d = deps(cloud, { routines: () => held });
     const runs = [run("run-1", "completed"), run("run-2", "running"), run("run-3", "failed", { routineId: "r9" })];
     expect((await take(d, itemKey.moved("routine", "r1"), { ...routine() }, runs)).status).toBe(200);
-    expect(held.routines).toEqual([expect.objectContaining({ id: "r1", enabled: false, nextRunAt: null, prompt: `Read ${cloud}/workspaces/b1/notes.md` })]);
+    expect(held.routines).toEqual([expect.objectContaining({ id: "r1", enabled: false, nextRunAt: null, prompt: `Read ${join(cloud, "workspaces", "b1", "notes.md")}` })]);
     expect((held.routines[0]!.attachments as Array<{ path: string }>)[0]!.path).toBe(join(cloud, "attachments", "plan.md"));
-    expect(held.runs.map((entry) => [entry.id, entry.output])).toEqual([["run-1", `Wrote ${cloud}/workspaces/b1/out.md`]]);
+    expect(held.runs.map((entry) => [entry.id, entry.output])).toEqual([["run-1", `Wrote ${join(cloud, "workspaces", "b1", "out.md")}`]]);
     expect(d.owned).toEqual([["r1", OWNER.person]]);
 
     held.routines[0]!.enabled = true;
@@ -101,6 +101,34 @@ describe("My Cloud takes a routine", () => {
     expect((await take(deps("/data", { routines: () => held, owner: () => null }), itemKey.moved("routine", "r1"), routine())).status).toBe(403);
     expect((await take(deps("/data", { routines: () => held }), itemKey.moved("routine", "r1"), routine({ botId: "gone" }))).status).toBe(409);
     expect(held.routines).toEqual([]);
+  });
+});
+
+describe("My Cloud takes an app event", () => {
+  const appEvents = (service: { available: true } | { available: false; reason: "self-hosted" | "unavailable" }) => {
+    const adopted: string[] = [];
+    return { adopted, list: () => [], remove: async () => false, service: () => service,
+      adopt: async (record: { id: string }) => { adopted.push(record.id); return record as never; } };
+  };
+  const event = { id: "t1", botId: "b1", name: "Reply to email", prompt: "Draft a reply.", app: "gmail", event: "GMAIL_NEW_GMAIL_MESSAGE", config: {}, enabled: true };
+
+  it("refuses it for good while connected apps are not set up there, so the move goes on without it", async () => {
+    for (const reason of ["unavailable", "self-hosted"] as const) {
+      const there = appEvents({ available: false, reason });
+      const answer = await take(deps(HERE, { appEvents: () => there as never }), itemKey.moved("app-event", "t1"), event);
+      expect(answer).toMatchObject({ status: 409, body: { final: true } });
+      expect(answer.body.error).toMatch(/stays on the computer it came from/u);
+      expect(there.adopted).toEqual([]);
+    }
+  });
+
+  it("takes it where connected apps are set up, and a refusal that may pass is not final", async () => {
+    const there = appEvents({ available: true });
+    expect((await take(deps(HERE, { appEvents: () => there as never }), itemKey.moved("app-event", "t1"), event)).status).toBe(200);
+    expect(there.adopted).toEqual(["t1"]);
+    const notYet = await take(deps(HERE), itemKey.moved("app-event", "t1"), event);
+    expect(notYet.status).toBe(503);
+    expect(notYet.body.final).toBeUndefined();
   });
 });
 

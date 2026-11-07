@@ -2,10 +2,11 @@ import { z } from "zod";
 
 import type { SkillsLibrarySkillWire } from "../../shared/wire.ts";
 import type { AppConfig } from "../config.ts";
-import { importedSkillListings, setImportedSkillEnabled } from "../imported-skills.ts";
+import { setImportedSkillEnabled } from "../imported-skills.ts";
 import { botSkillTemplateSchema } from "../new-bot-defaults.ts";
 import { fetchSkillFromSource } from "../skill-fetch.ts";
-import { installLibrarySkill, listLibrarySkills, readLibrarySkillFile, readSkillLibraryIndex, setLibrarySkillReviewState, skillsLibraryEnabled } from "../skill-library.ts";
+import { skillImportSummary } from "../skill-folder.ts";
+import { installLibrarySkill, listLibrarySkills, readLibrarySkillFile, readSkillLibraryIndex, setLibrarySkillEveryBot, setLibrarySkillReviewState, skillsLibraryEnabled } from "../skill-library.ts";
 import {
   installSkill, listBotSkillsWithOrigin, listStagedSkillWrites, parseSkillMd, removeSkill, scanSkillText, setSkillEnabled,
   type SkillListing, type StagedSkillWrite,
@@ -16,14 +17,14 @@ import { PASS, type RouteHandler } from "./table.ts";
 export interface BotSkillsRouteDeps {
   store: Store;
   cfg: AppConfig;
-  listBotSkills(bot: BotRecord): SkillListing[];
+  listBotSkills(bot: BotRecord, threadId?: string): SkillListing[];
   readBotSkillFile(bot: BotRecord, name: string): string | null;
   stagedSkillListing(staged: StagedSkillWrite): Omit<StagedSkillWrite, "files" | "baseSha256" | "baseAppliedStageId">;
 }
 
 export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
   const { store, cfg, listBotSkills, readBotSkillFile, stagedSkillListing } = deps;
-  return async ({ req, res, path, method, json, readBody }) => {
+  return async ({ req, res, url, path, method, json, readBody }) => {
     let m: RegExpMatchArray | null = null;
     // Imports land DISABLED: a person enables one after reading SKILL.md and its scan warnings.
     m = path.match(/^\/api\/bots\/([\w-]+)\/skill-template$/);
@@ -44,18 +45,23 @@ export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills$/);
     if (m && method === "GET") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      // The thread names a folder on disk: only one of this bot's own threads may pick it.
+      const asked = url.searchParams.get("threadId");
+      const threadId = asked && store.taskByThread(bot.id, asked) ? asked : bot.threadId;
       if (skillsLibraryEnabled(cfg)) {
         const { skills, library } = listBotSkillsWithOrigin(m[1]!, store.bot(m[1])!.assignedSkills);
+        const names = new Set(skills.map((skill) => skill.name));
         return json(res, 200, {
-          skills: [...skills, ...importedSkillListings(m[1]!, new Set(skills.map((skill) => skill.name)))],
+          skills: [...skills, ...listBotSkills(bot, threadId).filter((skill) => !names.has(skill.name))],
           library,
           assignedSkills: store.bot(m[1])!.assignedSkills,
           staged: listStagedSkillWrites(m[1]).map(stagedSkillListing),
         });
       }
       return json(res, 200, {
-        skills: listBotSkills(store.bot(m[1])!),
+        skills: listBotSkills(bot, threadId),
         staged: listStagedSkillWrites(m[1]).map(stagedSkillListing),
       });
     }
@@ -65,11 +71,12 @@ export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
       if (!parsed.success) return json(res, 400, { error: "source must be a GitHub or skills.sh URL, or owner/repo" });
       const fetched = await fetchSkillFromSource(parsed.data.source);
       if ("error" in fetched) return json(res, 422, { error: fetched.error });
-      const results = fetched.skills.map((skill) => installSkill(m![1]!, skill.source, skill.files));
-      const installed = results.filter((entry): entry is Exclude<typeof entry, { error: string }> => !("error" in entry));
-      const errors = results.flatMap((entry) => ("error" in entry ? [entry.error] : []));
-      if (!installed.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
-      return json(res, 201, { installed, errors });
+      const results = fetched.skills.map((skill) => ({ skill, result: installSkill(m![1]!, skill.source, skill.files, skill.github) }));
+      const errors = results.flatMap(({ result }) => ("error" in result ? [result.error] : []));
+      const done = results.flatMap(({ skill, result }) => ("error" in result ? [] : [{ skill, installed: result }]));
+      if (!done.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
+      const imported = done.map(({ skill, installed }) => skillImportSummary(installed.name, skill.files, skill.skipped));
+      return json(res, 201, { installed: done.map(({ installed }) => installed), imported, errors });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)$/);
     if (m && method === "GET") {
@@ -108,6 +115,7 @@ export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
           description: listing.description,
           source: listing.source,
           enabled: listing.enabled,
+          everyBot: index[listing.name]?.everyBot === true,
           tags: listing.tags ?? [],
           version: index[listing.name]?.package?.release ?? null,
           importedAt: listing.importedAt,
@@ -115,7 +123,7 @@ export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
           ...(listing.compatibility ? { compatibility: listing.compatibility } : {}),
           warnings: listing.warnings,
           assignedBots: store.bots
-            .filter((bot) => bot.assignedSkills?.includes(listing.name))
+            .filter((bot) => index[listing.name]?.everyBot === true || bot.assignedSkills?.includes(listing.name))
             .map((bot) => ({ id: bot.id, name: bot.name })),
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -149,9 +157,12 @@ export function createBotSkillsRoutes(deps: BotSkillsRouteDeps): RouteHandler {
     }
     if (m && method === "PATCH") {
       if (!skillsLibraryEnabled(cfg)) return json(res, 404, { error: "skills library is not enabled" });
-      const parsed = z.object({ enabled: z.boolean() }).safeParse(await readBody(req));
-      if (!parsed.success) return json(res, 400, { error: "enabled must be true or false" });
-      const result = setLibrarySkillReviewState(m[1]!, parsed.data.enabled ? "approved" : "disabled");
+      const parsed = z.object({ enabled: z.boolean().optional(), everyBot: z.boolean().optional() })
+        .refine((body) => (body.enabled !== undefined) !== (body.everyBot !== undefined)).safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "enabled or everyBot must be true or false" });
+      const result = parsed.data.enabled !== undefined
+        ? setLibrarySkillReviewState(m[1]!, parsed.data.enabled ? "approved" : "disabled")
+        : setLibrarySkillEveryBot(m[1]!, parsed.data.everyBot!);
       if ("error" in result) return json(res, 404, { error: result.error });
       return json(res, 200, { skill: result });
     }

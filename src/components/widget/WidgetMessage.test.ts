@@ -30,13 +30,14 @@ const fetchMock = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>
 const openExternal = vi.fn(async (_url: string) => {});
 const flushBotPatches = vi.fn<(botId: string) => Promise<null>>();
 const store = { state: {}, dispatch: vi.fn(), flushBotPatches } as unknown as ReturnType<typeof useStore>;
-const inStore = (message: Message) => createElement(BotEditorStore, { value: store, children: createElement(WidgetMessage, { botId: "scout", threadId: "t1", message }) });
+const inStore = (message: Message, viewOnly?: boolean) =>
+  createElement(BotEditorStore, { value: store, children: createElement(WidgetMessage, { botId: "scout", threadId: "t1", message, ...(viewOnly ? { viewOnly } : {}) }) });
 
 let host: HTMLDivElement;
 let root: Root;
 
-function mount(message: Message) {
-  act(() => root.render(inStore(message)));
+function mount(message: Message, viewOnly?: boolean) {
+  act(() => root.render(inStore(message, viewOnly)));
 }
 
 const find = <T extends Element = HTMLElement>(selector: string) => host.querySelector<T>(selector);
@@ -170,7 +171,7 @@ describe("drawing a widget", () => {
   it("falls back to the row's text when there is no tree to draw", () => {
     mount({ id: "w1", role: "bot", kind: "widget", at: 1, text: "the readable fallback" });
     expect(host.textContent).toBe("the readable fallback");
-    expect(host.querySelector(".chat-text")?.className).toContain("max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))]");
+    expect(host.querySelector(".chat-text")?.className).toMatch(/max-w-\[min\(var\(--chat-bubble-max\),var\(--chat-bubble-pct\)/);
     expect(find("[data-widget]")).toBeNull();
   });
 
@@ -514,6 +515,19 @@ describe("pressing", () => {
     expect(line.querySelector("svg.lucide-x")).not.toBeNull();
   });
 
+  it("in a room, locks every press and field, still opens a link, and posts nothing", async () => {
+    mount(row(sample("routineForm")), true);
+    expect(find('[data-widget="w1"]')!.getAttribute("data-widget-state")).toBe("view-only");
+    const create = button("Create routine")!;
+    expect(create.disabled).toBe(true);
+    await press(create);
+    for (const control of all<HTMLInputElement | HTMLButtonElement>("[data-widget-field]")) expect(control.matches(":disabled, [aria-disabled=true]"), control.outerHTML.slice(0, 80)).toBe(true);
+    mount(row(sample("kitchenSink")), true);
+    await press(button("Open the docs")!);
+    expect(openExternal).toHaveBeenLastCalledWith("https://mausbot.com/docs");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("opens an open_url link on this device and posts nothing", async () => {
     mount(row(sample("sources")));
     const link = find<HTMLButtonElement>('[role="listitem"] > button')!;
@@ -527,6 +541,19 @@ describe("pressing", () => {
     mount(row(sample("kitchenSink")));
     await press(button("Open the docs")!);
     expect(openExternal).toHaveBeenLastCalledWith("https://mausbot.com/docs");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a published page's open_url in the bot's browser panel in the desktop app, and posts nothing", async () => {
+    const PAGE = "https://abcdefghijklmnopqrstuvwxyz.mausbot.page/";
+    const dispatch = vi.fn();
+    const withBrowser = { ...store, dispatch, state: { selectedId: "scout", bots: [{ id: "scout" }], groups: [], config: { features: { browser: true }, browserEngine: { kind: "engine" } } } } as unknown as ReturnType<typeof useStore>;
+    const parsed = parseWidgetInput({ type: "Card", children: [{ type: "Button", label: "Open page", onClickAction: { type: "open_url", payload: { url: PAGE } } }] });
+    if (!parsed.ok) throw new Error(parsed.error);
+    act(() => root.render(createElement(BotEditorStore, { value: withBrowser, children: createElement(WidgetMessage, { botId: "scout", threadId: "t1", message: row(parsed.value) }) })));
+    await press(button("Open page")!);
+    expect(dispatch.mock.calls).toEqual([[{ type: "toggleComputer", open: true }]]);
+    expect(openExternal).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

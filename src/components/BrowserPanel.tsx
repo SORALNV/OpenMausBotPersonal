@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Globe, Hand, Loader2, LockKeyhole, Moon, X } from "lucide-react";
 import { browserUnavailableReason } from "@/lib/feature-flags";
 import { t } from "@/lib/i18n";
+import { usePageVisible } from "@/lib/page-visible";
 import { api, useStore, type Bot } from "@/state/store";
 import { BrowserProfilesManager } from "./BrowserProfilesManager";
 import { ChromeRow, type BrowserNav, type BrowserTab } from "./browser/ChromeRow";
@@ -15,11 +16,14 @@ import { browserStreamAccess, createPreviewStreamClient, type PreviewStreamClien
 import { createLiveStreamClient, type LiveResume, type LiveStreamClient } from "@/lib/browser-stream-v1";
 import { BROWSER_HELD_ELSEWHERE } from "../../shared/browser-held";
 import { passkeyWallAt } from "../../shared/passkey-wall";
+import { browserScope, withBrowserScope } from "@/lib/team-browser";
 
 const button = "rounded-md p-1.5 text-ink-secondary hover:bg-inset hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed";
 const NO_NAV: BrowserNav = { url: "", loading: false, canGoBack: false, canGoForward: false };
 
 export type BrowserSignIn = { url: string; site: string; nonce: number };
+/** A page to open in a new tab once the view is connected and awake: a published page's Open (usePageOpener). */
+export type BrowserPage = { url: string; nonce: number };
 
 function tabsOf(value: unknown): BrowserTab[] {
   if (!Array.isArray(value)) return [];
@@ -29,11 +33,11 @@ function tabsOf(value: unknown): BrowserTab[] {
 }
 
 /**
- * A bot's browser: the page fills the panel, streamed over the v2 WebSocket when the new engine runs it, else over the
- * v1 live view. Security: a new connection never silently restores permission to type and never replays old input.
- * Only the server returns a hold, and only to this panel's reconnect after its own v1 stream dropped.
+ * A bot's browser: the page fills the panel on either engine, streamed over the v2 WebSocket when the new engine runs
+ * it, else over the v1 live view. Security: a new connection never replays old input. Only the server gives this view a
+ * hold: one of the same person's, when none of their views uses it or when they take it over here.
  */
-export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn }) {
+export function LiveBrowser({ bot, signIn, page }: { bot: Bot; signIn?: BrowserSignIn; page?: BrowserPage }) {
   const { state } = useStore();
   const [fallback, setFallback] = useState(false);
   const stream = state.config?.browserEngine?.engine === "chrome" && !fallback;
@@ -54,8 +58,10 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
   const [showTyping, setShowTyping] = useState(false);
   const [masked, setMasked] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const [passkeyDismissed, setPasskeyDismissed] = useState("");
   const floating = useBrowserPictureInPicture();
+  const pageVisible = usePageVisible();
   const panel = useRef<HTMLDivElement>(null);
   const address = useRef<HTMLInputElement>(null);
   const surface = useRef<StreamSurfaceHandle>(null);
@@ -69,13 +75,15 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
   const resume = useRef<LiveResume & { key: string }>({ key: "", viewer: "" });
   const keepNow = useRef(false);
   const signInHandled = useRef(0);
+  const pageHandled = useRef(0);
   const signInPage = useRef<string | null>(null);
   const pageNow = useRef<string | null>(null);
   const latest = useRef({ openSignInPage: () => {}, takeControl: () => {} });
   const signInOpen = state.computerControl?.[bot.id]?.help?.place === "browser";
+  const scopedThread = browserScope(state.config?.team, bot.threadId).threadId;
   keepNow.current = kept || signInOpen;
-  const profileName = bot.browserProfile === "guest" ? "Temporary browser"
-    : state.config?.browserProfiles?.find((profile) => profile.id === bot.browserProfile)?.name ?? `${bot.name}’s own browser`;
+  const profileName = bot.browserProfile === "guest" ? t("browser.panel.temporary")
+    : state.config?.browserProfiles?.find((profile) => profile.id === bot.browserProfile)?.name ?? t("browser.panel.ownBrowser", { name: bot.name });
   useEffect(() => { if (showProfiles) profilesDialog.current?.showModal(); else profilesDialog.current?.close(); }, [showProfiles]);
   useEffect(() => {
     browserControl.current?.hold(showTyping);
@@ -89,7 +97,7 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     setAttempt((value) => value + 1);
   }, []);
   // Another profile may run on the other engine: it gets the stream again if it has one.
-  useEffect(() => { setFallback(false); }, [bot.id, bot.browserProfile]);
+  useEffect(() => { setFallback(false); }, [bot.id, bot.browserProfile, scopedThread]);
   useEffect(() => {
     setTabs([]);
     setNav(stream ? NO_NAV : { ...NO_NAV, canGoBack: true, canGoForward: true });
@@ -97,17 +105,18 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     setGone(false);
     setAsleep("");
     pageNow.current = null;
-  }, [bot.id, bot.browserProfile, attempt, stream]);
+  }, [bot.id, bot.browserProfile, scopedThread, attempt, stream]);
 
   const connect = useCallback<SurfaceConnect>((target, events) => {
-    if (stream) return createPreviewStreamClient({ access: browserStreamAccess(bot.id), ...target }, events);
-    const key = `${bot.id}\n${bot.browserProfile ?? ""}`;
+    const scope: Record<string, string> = scopedThread ? { threadId: scopedThread } : {};
+    if (stream) return createPreviewStreamClient({ access: browserStreamAccess(bot.id, window.location, scope), ...target }, events);
+    const key = `${bot.id}\n${bot.browserProfile ?? ""}${scopedThread ? `\n${scopedThread}` : ""}`;
     if (resume.current.key !== key) resume.current = { key, viewer: "" };
-    return createLiveStreamClient(bot.id, events, (body, viewerId) => api(`/api/bots/${encodeURIComponent(bot.id)}/browser/action`, {
+    return createLiveStreamClient(bot.id, events, (body, viewerId) => api(withBrowserScope(`/api/bots/${encodeURIComponent(bot.id)}/browser/action`, scope), {
       // 120 s matches the server's browser requestTimeoutMs.
       method: "POST", body: JSON.stringify({ ...body, viewerId }), timeoutMs: 120_000,
-    }), resume.current);
-  }, [bot.id, bot.browserProfile, stream]);
+    }), resume.current, scope, { width: target.width, height: target.height });
+  }, [bot.id, bot.browserProfile, scopedThread, stream]);
 
   const interact = useCallback((input: PreviewStreamInput) => {
     if (controlRef.current?.controller === "another-viewer") { setError(BROWSER_HELD_ELSEWHERE); return; }
@@ -128,6 +137,7 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     const created = createBrowserControl({
       transport,
       owned: () => controlRef.current?.controller === "you",
+      mine: () => controlRef.current?.owned === true,
       onTakeStatus: setTakeStatus,
       onError: setError,
       onHalted: () => setError(t("browser.input.tooSlow")),
@@ -193,6 +203,17 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     latest.current.openSignInPage();
   }, [signIn, connected]);
 
+  // A new tab, so whatever the bot has open stays as it was; a sleeping browser is woken first.
+  useEffect(() => {
+    if (!page || !connected || pageHandled.current === page.nonce) return;
+    if (asleep) {
+      if (asleep === "asleep" && clientRef.current?.send({ type: "wake" })) setAsleep("waking");
+      return;
+    }
+    pageHandled.current = page.nonce;
+    interact({ type: "tabNew", url: page.url });
+  }, [page, connected, asleep, interact]);
+
   // On macOS a full-screen element takes the window into native full screen, where minimize is disabled.
   useEffect(() => {
     const update = () => setFullscreen(Boolean(panel.current) && document.fullscreenElement === panel.current);
@@ -201,14 +222,38 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
   }, []);
   const toggleFullscreen = () => {
     const leaving = Boolean(panel.current) && document.fullscreenElement === panel.current;
+    if (leaving && maximized) {
+      setMaximized(false);
+    }
     const request = leaving ? document.exitFullscreen() : panel.current?.requestFullscreen();
-    void request?.catch(() => setError(leaving ? "Could not leave full screen. Press Esc instead." : "Full screen is unavailable in this browser."));
+    void request?.catch(() => setError(t(leaving ? "browser.panel.exitFullscreenFailed" : "browser.panel.fullscreenUnavailable")));
   };
+  const toggleMaximize = () => {
+    if (fullscreen && document.fullscreenElement === panel.current) {
+      void document.exitFullscreen().catch(() => {});
+    }
+    setMaximized((value) => !value);
+  };
+  // The maximized panel swallows its Escape (defaultPrevented) so the same press cannot close a dialog beneath.
+  // Capture: listeners registered before this panel must see the key already refused.
+  useEffect(() => {
+    if (!maximized) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      if (fullscreen && document.fullscreenElement === panel.current) {
+        void document.exitFullscreen().catch(() => {});
+      }
+      setMaximized(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [maximized, fullscreen]);
 
   const restart = () => {
     if (!window.confirm(t("browser.panel.confirmRestart"))) return;
     setError("");
-    if (!clientRef.current?.send({ type: "restart" })) setError("The browser view is not connected. Reconnect it, then try again.");
+    if (!clientRef.current?.send({ type: "restart" })) setError(t("browser.panel.notConnected"));
   };
   const wake = () => {
     if (connected && clientRef.current?.send({ type: "wake" })) setAsleep("waking");
@@ -216,16 +261,26 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
   };
   const togglePip = () => {
     if (floating === bot.id) { closeBrowserPictureInPicture(); return; }
-    void openBrowserPictureInPicture({ botId: bot.id, seed: surface.current?.canvas() ?? null }).catch(() => setError("Picture in picture is unavailable here."));
+    void openBrowserPictureInPicture({ botId: bot.id, seed: surface.current?.canvas() ?? null }).catch(() => setError(t("browser.panel.pipUnavailable")));
   };
 
   const heldElsewhere = control?.controller === "another-viewer";
   const commandsReady = connected && !heldElsewhere;
   const you = control?.controller === "you";
+  // A page nobody can see keeps the stream off. A viewer holding the browser keeps it: their hold pauses the bot, so
+  // closing the view to save frames would hand the browser over while nobody watches.
+  const shown = pageVisible || you;
+  useEffect(() => {
+    if (shown) return;
+    setConnected(false);
+    setError("");
+  }, [shown]);
   const typingReady = connected && you;
   const pipSupported = stream && supportsBrowserPictureInPicture();
   const passkeyWall = passkeyWallAt(nav.url);
-  return <div ref={panel} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline/40 bg-card text-ink" data-browser-transport={stream ? "stream" : "live"}>
+  return <div ref={panel} className={maximized
+    ? "fixed inset-0 z-50 flex flex-col overflow-hidden bg-card text-ink"
+    : "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline/40 bg-card text-ink"} data-browser-transport={stream ? "stream" : "live"}>
     <ChromeRow
       ref={address}
       botName={bot.name}
@@ -234,9 +289,11 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
       connected={connected}
       control={control}
       takeStatus={takeStatus}
+      hint={t(kept || signInOpen ? "browser.control.keptHint" : "browser.control.yoursHint", { name: bot.name })}
       commandsReady={commandsReady}
       profileName={profileName}
       fullscreen={fullscreen}
+      maximized={maximized}
       onCommand={interact}
       onAddress={(text) => {
         const url = resolveAddressBarInput(text);
@@ -246,6 +303,7 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
       onTake={takeControl}
       onHandBack={handBack}
       onFullscreen={toggleFullscreen}
+      onMaximize={toggleMaximize}
       onProfiles={() => { browserControl.current?.handBack(); setShowProfiles(true); }}
       menu={<MoreMenu
         stream={stream}
@@ -267,27 +325,28 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
     {takeStatus === "stale" && <div role="status" className="shrink-0 border-b border-hairline/30 px-3 py-1.5 text-[12px] text-accent-text">{t("browser.control.stale", { name: bot.name })}</div>}
     {passkeyWall && passkeyDismissed !== nav.url && <PasskeyNotice wall={passkeyWall} botName={bot.name} onDismiss={() => setPasskeyDismissed(nav.url)} />}
     <div className="relative flex min-h-0 flex-1 flex-col bg-inset/40">
-      <StreamSurface
-        key={`${attempt}:${stream ? "stream" : "live"}:${bot.browserProfile ?? ""}`}
-        ref={surface}
-        connect={connect}
-        input={interact}
-        followSize={stream}
-        label={`${bot.name}’s browser page`}
-        onClient={onClient}
-        onControl={onControl}
-        onMessage={onMessage}
-        onConnectedChange={(next) => { setConnected(next); if (next) { setStarting(false); setGone(false); setError(""); } }}
-        onFirstFrame={() => setStarting(false)}
-        onUnauthorized={() => { if (stream) setFallback(true); else setGone(true); }}
-        onGone={() => setGone(true)}
-        onClose={(code, reason) => { if (code === 1013 && reason) setError(reason); }}
-        onLeave={() => address.current?.focus()}
-      />
+      {shown ? (
+        <StreamSurface
+          key={`${attempt}:${stream ? "stream" : "live"}:${bot.browserProfile ?? ""}`}
+          ref={surface}
+          connect={connect}
+          input={interact}
+          label={t("browser.panel.pageLabel", { name: bot.name })}
+          onClient={onClient}
+          onControl={onControl}
+          onMessage={onMessage}
+          onConnectedChange={(next) => { setConnected(next); if (next) { setStarting(false); setGone(false); setError(""); } }}
+          onFirstFrame={() => setStarting(false)}
+          onUnauthorized={() => { if (stream) setFallback(true); else setGone(true); }}
+          onGone={() => setGone(true)}
+          onClose={(code, reason) => { if (code === 1013 && reason) setError(reason); }}
+          onLeave={() => address.current?.focus()}
+        />
+      ) : null}
       {asleep || heldElsewhere || gone || !connected || starting ? (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card/95 p-6 text-center text-[13px] text-ink-secondary">
           {asleep ? <Moon size={24} /> : heldElsewhere ? <Hand size={24} /> : gone ? <Globe size={24} /> : <Loader2 size={24} className="animate-spin" />}
-          <span>{asleep ? t("browser.panel.asleep") : heldElsewhere ? BROWSER_HELD_ELSEWHERE : gone ? t("browser.panel.disconnected") : !starting ? t("browser.panel.opening") : stream ? "Starting the browser…" : t("browser.live.botBusy", { name: bot.name })}</span>
+          <span>{asleep ? t("browser.panel.asleep") : heldElsewhere ? BROWSER_HELD_ELSEWHERE : gone ? t("browser.panel.disconnected") : !starting ? t("browser.panel.opening") : stream ? t("browser.panel.starting") : t("browser.live.botBusy", { name: bot.name })}</span>
           {asleep ? <button type="button" disabled={asleep === "waking"} className="rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink hover:bg-inset disabled:opacity-60" onClick={wake}>{t(asleep === "waking" ? "browser.panel.waking" : "browser.panel.wake")}</button>
             : gone ? <button type="button" className="rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink hover:bg-inset" onClick={reconnect}>{t("browser.panel.reconnect")}</button> : null}
         </div>
@@ -305,13 +364,13 @@ export function LiveBrowser({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn 
         e.preventDefault(); const field = e.currentTarget.elements.namedItem("pageText") as HTMLInputElement;
         if (typingReady && field.value) { interact({ type: "text", text: field.value }); field.value = ""; setShowTyping(false); }
       }}><input key={masked ? "secret" : "text"} name="pageText" type={masked ? "password" : "text"} aria-label={masked ? t("browser.typeSecret.field") : t("browser.panel.typeTextField")} autoComplete={masked ? "new-password" : "off"} spellCheck={false} maxLength={4096} placeholder={masked ? "••••••••" : t("browser.panel.typeTextPlaceholder")} className="rounded-lg bg-inset px-3 py-2 text-[13px] outline-none focus:ring-1 focus:ring-accent" />
-        {masked && <p className="flex items-center gap-1 text-[11.5px] text-ink-tertiary"><LockKeyhole size={11} aria-hidden="true" />{t("browser.typeSecret.note")}</p>}
+        {masked && <p className="flex items-center gap-1 text-[12px] text-ink-tertiary"><LockKeyhole size={11} aria-hidden="true" />{t("browser.typeSecret.note")}</p>}
         <button disabled={!typingReady} className="self-end rounded-lg bg-accent px-4 py-2 text-[12px] text-accent-ink disabled:opacity-40">{t("browser.panel.typeButton")}</button></form>
     </dialog>
   </div>;
 }
 
-export function BrowserPanel({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn }) {
+export function BrowserPanel({ bot, signIn, page }: { bot: Bot; signIn?: BrowserSignIn; page?: BrowserPage }) {
   const { state } = useStore();
   const engine = state.config?.browserEngine;
   const [requested, setRequested] = useState(false);
@@ -326,10 +385,10 @@ export function BrowserPanel({ bot, signIn }: { bot: Bot; signIn?: BrowserSignIn
     finally { setRequested(false); }
   };
   if (bot.browser === false) return <div className="p-5 text-[13px] text-ink-secondary">{t("browser.panel.enableBot")}</div>;
-  if (engine?.kind === "engine" && !installing && !engine.installError) return <LiveBrowser key={bot.id} bot={bot} signIn={signIn} />;
+  if (engine?.kind === "engine" && !installing && !engine.installError) return <LiveBrowser key={bot.id} bot={bot} signIn={signIn} page={page} />;
   return <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 rounded-xl bg-card p-5">
     <div className="text-[15px] font-medium text-ink">{engine?.kind === "engine" ? t("browser.panel.installIncomplete") : t("browser.panel.engineNotInstalled")}</div>
-    <p className="text-[13px] leading-relaxed text-ink-secondary">{engine?.kind === "engine" ? t("browser.panel.installIncompleteHelp") : browserUnavailableReason(state.config)}</p>
+    <p className="text-[13px] leading-relaxed text-ink-secondary">{engine?.kind === "engine" ? t("browser.panel.installIncompleteHelp") : engine?.installable && admin !== false ? t("browser.panel.engineNotInstalledHelp", { name: bot.name }) : browserUnavailableReason(state.config)}</p>
     {engine?.installable || engine?.kind === "engine" ? <button type="button" onClick={() => void install()} disabled={installing || admin !== true} className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-ink disabled:opacity-60">{installing ? t("browser.panel.installing") : engine?.kind === "engine" ? t("browser.panel.retryInstall") : t("browser.panel.installEngine")}</button> : null}
     {(engine?.installError || error) && <p role="alert" className="text-[12px] text-danger">{error ?? engine?.installError}</p>}
   </div>;

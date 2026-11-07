@@ -247,18 +247,28 @@ test("the link signs in like the poll, takes My Cloud's word for this computer's
   const stop = new AbortController();
   let opened = 0;
   const connects = [];
-  const running = runDeviceLink({ url: end.url, headers: { cookie: "omb_session=s", "x-omb-computer-secret": "a".repeat(64) }, signal: stop.signal, onOpen: () => opened++, openMs: 100,
+  const running = runDeviceLink({ url: end.url, headers: { cookie: "omb_session=s", "x-omb-computer-secret": "a".repeat(64) }, signal: stop.signal, onOpen: () => opened++,
     egress: { interfaces: () => ({}), resolve: async () => [{ address: SEEN_AS, family: 4 }], connect: (options) => { connects.push(options); return tcpConnect(1, "127.0.0.1"); } } });
   await until(() => end.sessions.length === 1 && opened === 1, "the link to open");
   assert.equal(end.sessions[0].headers.cookie, "omb_session=s");
   assert.equal(end.sessions[0].headers["x-omb-computer-secret"], "a".repeat(64));
-  await delay(250); // past the opening limit: a link that opened is not ended by it
   assert.deepEqual(await end.sessions[0].mux.open({ host: "home-router.test", port: 443 }), { refused: "home-network" }, "the home's own public address is home");
   assert.equal(connects.length, 0);
   stop.abort();
   assert.deepEqual(await running, { code: 1000, reason: "stopped" });
   assert.equal(linkUrl("https://omb-u-1.fly.dev", "/api/shared-computers/c/link"), "wss://omb-u-1.fly.dev/api/shared-computers/c/link");
   assert.equal(linkUrl("http://127.0.0.1:9", "/x"), "ws://127.0.0.1:9/x");
+});
+
+test("a link that opened is never ended by its opening limit", async () => {
+  class OpensAtOnce { constructor() { queueMicrotask(() => this.onopen?.()); } send() {} close() {} }
+  const stop = new AbortController();
+  let opened = 0;
+  const running = runDeviceLink({ url: "ws://127.0.0.1:9/link", WebSocket: OpensAtOnce, signal: stop.signal, openMs: 20, onOpen: () => opened++, egress: { interfaces: () => ({}) } });
+  await delay(100);
+  stop.abort();
+  assert.equal(opened, 1);
+  assert.deepEqual(await running, { code: 1000, reason: "stopped" });
 });
 
 test("a My Cloud that stops answering ends the link here within the silence limit, so nothing hangs on it", async (t) => {
@@ -296,4 +306,48 @@ test("a link that cannot open says so at once, with the close code My Cloud gave
   await new Promise((resolve) => refusing.listen(0, "127.0.0.1", resolve));
   t.after(() => refusing.close());
   assert.equal((await runDeviceLink({ url: `ws://127.0.0.1:${refusing.address().port}/link`, egress: { interfaces: () => ({}) } })).code, 1006);
+});
+
+test("a Chrome stream reaches the computer as { chrome: true } and never carries a host or port", async (t) => {
+  const targets = [];
+  const sent = [];
+  let device;
+  const cloud = createLinkMux({ send: (frame) => { sent.push(frame); setImmediate(() => device.receive(frame)); } });
+  device = createLinkMux({ send: (frame) => setImmediate(() => cloud.receive(frame)), accept: async (target) => { targets.push(target); return { failed: "no-chrome" }; } });
+  t.after(() => { cloud.close(); device.close(); });
+  assert.deepEqual(await cloud.open({ chrome: true }), { failed: "no-chrome" });
+  assert.deepEqual(targets, [{ chrome: true }]);
+  assert.deepEqual(JSON.parse(sent[0]), { t: "open", id: 1, chrome: true });
+  assert.deepEqual(await cloud.open({ host: "example.test", port: 443 }), { failed: "no-chrome" });
+  assert.deepEqual(targets[1], { host: "example.test", port: 443 });
+});
+
+test("the computer opens a Chrome stream only while it lends Chrome, and a web stream only while it lends its internet connection", async (t) => {
+  const end = await cloudEnd(t);
+  const stop = new AbortController();
+  t.after(() => stop.abort());
+  const echo = await echoServer(t);
+  let grant = { internet: false, chrome: false };
+  const streams = [];
+  const running = runDeviceLink({ url: end.url, signal: stop.signal, lends: () => grant, onStream: (target, result) => streams.push({ target, result }),
+    egress: { interfaces: () => ({}), resolve: async () => [{ address: "93.184.215.14", family: 4 }], connect: () => tcpConnect(echo, "127.0.0.1") },
+    chrome: { open: async () => ({ socket: tcpConnect(echo, "127.0.0.1") }) } });
+  await until(() => end.sessions.length === 1, "the link to open");
+  const { mux } = end.sessions[0];
+  assert.deepEqual(await mux.open({ chrome: true }), { refused: "not-lent" });
+  assert.deepEqual(await mux.open({ host: "example.com", port: 443 }), { refused: "not-lent" });
+  assert.equal(streams.length, 2, "onStream hears refusals too");
+  grant = { internet: false, chrome: true };
+  assert.deepEqual(await mux.open({ host: "example.com", port: 443 }), { refused: "not-lent" }, "lending Chrome does not lend the internet connection");
+  const opened = await mux.open({ chrome: true });
+  assert.ok(opened.join, JSON.stringify(opened));
+  const { near, far } = await socketPair(t);
+  opened.join(far);
+  let echoed = "";
+  near.on("data", (chunk) => { echoed += chunk; });
+  near.write("hello chrome");
+  await until(() => echoed === "hello chrome", "the echo");
+  near.destroy();
+  stop.abort();
+  await running;
 });

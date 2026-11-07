@@ -1,16 +1,35 @@
+import { t } from "./i18n";
+import { serverErrorText } from "./server-error";
+
 export interface EnvironmentDescriptor {
   environmentId: string;
   label: string;
   platform: string;
   version: string;
-  capabilities: { remoteSessions: true; selfUpdate: "desktop-managed" | "operator"; emailSignIn?: boolean; sharedComputers?: true; cloudHome?: true };
+  capabilities: { remoteSessions: true; selfUpdate: "desktop-managed" | "operator"; emailSignIn?: boolean; sharedComputers?: true; cloudHome?: true; cloudTeam?: true };
 }
+
+/** A Team Cloud's session: the team and this person's role in it (owner, admin or member). */
+export interface TeamSession { id: string; name: string; role: string }
 
 export type SessionState =
   | { kind: "loopback"; trust?: "service" }
-  | { kind: "session"; id: string; label: string; scopes: string[]; expiresAt: number; cloudGuest?: true; openedThreads?: string[]; reactor?: string }
+  | { kind: "session"; id: string; label: string; email?: string; scopes: string[]; expiresAt: number; cloudGuest?: true; openedThreads?: string[]; reactor?: string; team?: TeamSession }
   | { kind: "unauthenticated"; error: string }
   | { kind: "unreachable"; error: string };
+
+type SessionProfile = { name?: string; email?: string; avatarUrl?: string };
+
+/** The sidebar's "you". The configured profile is the owner's: an admin (the owner on a My Cloud) keeps it, and a Team
+ * Cloud already sends each person their own. Anyone else sees their own email, never the owner's name or picture. */
+export function profileForSession(profile: SessionProfile | undefined, sessionState: SessionState | null): SessionProfile | undefined {
+  if (!sessionState) return undefined;
+  if (sessionState.kind !== "session") return sessionState.kind === "loopback" ? profile : undefined;
+  if (sessionState.team || sessionState.scopes.includes("admin")) return profile;
+  const email = sessionState.email;
+  if (!email?.trim()) return undefined;
+  return profile?.email?.trim().toLowerCase() === email.trim().toLowerCase() ? profile : { email };
+}
 
 export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise<SessionState> {
   let res: Response;
@@ -30,9 +49,11 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
       kind: "session",
       id: record.id,
       label: typeof record.label === "string" ? record.label : "",
+      ...(typeof record.email === "string" ? { email: record.email } : {}),
       scopes: Array.isArray(record.scopes) ? record.scopes.filter((s): s is string => typeof s === "string") : [],
       expiresAt: typeof record.expiresAt === "number" ? record.expiresAt : 0,
       ...(typeof record.reactor === "string" ? { reactor: record.reactor } : {}),
+      ...(teamSessionOf(record.team) ? { team: teamSessionOf(record.team)!, openedThreads: Array.isArray(record.openedThreads) ? record.openedThreads.filter((id): id is string => typeof id === "string") : [] } : {}),
       ...(record.cloudGuest === true ? {
         cloudGuest: true as const,
         openedThreads: Array.isArray(record.openedThreads) ? record.openedThreads.filter((id): id is string => typeof id === "string") : [],
@@ -40,6 +61,11 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
     };
   }
   return record.trust === "service" ? { kind: "loopback", trust: "service" } : { kind: "loopback" };
+}
+
+function teamSessionOf(value: unknown): TeamSession | null {
+  const team = Object(value) as { id?: unknown; name?: unknown; role?: unknown };
+  return typeof team.id === "string" && typeof team.name === "string" && typeof team.role === "string" ? { id: team.id, name: team.name, role: team.role } : null;
 }
 
 export const SERVICE_TRUST_REASON = "This server does not treat this computer as its owner. Sign in or pair this browser to continue.";
@@ -92,6 +118,11 @@ export function newAttemptId(): string {
   return typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
+function refusalText(body: unknown, res: Response): string {
+  const error = Reflect.get(Object(body), "error");
+  return serverErrorText(body, typeof error === "string" ? error : `${res.status} ${res.statusText}`);
+}
+
 export async function pairWithCode(
   input: { code: string; label: string; attemptId?: string; browser?: boolean },
   fetchImpl: typeof fetch = fetch,
@@ -105,12 +136,11 @@ export async function pairWithCode(
       body: JSON.stringify({ code: input.code, label: input.label, cookie: true, attemptId: input.attemptId ?? newAttemptId(), ...(input.browser ? { browser: true } : {}) }),
     });
   } catch (error) {
-    return { ok: false, error: `could not reach the server (${error instanceof Error ? error.message : String(error)})` };
+    return { ok: false, error: t("pair.unreachable", { error: error instanceof Error ? error.message : String(error) }) };
   }
   const body: unknown = await res.json().catch(() => ({}));
   if (res.ok) return { ok: true };
-  const error = Reflect.get(Object(body), "error");
-  return { ok: false, error: typeof error === "string" ? error : `${res.status} ${res.statusText}` };
+  return { ok: false, error: refusalText(body, res) };
 }
 
 export async function previewBrowserSignIn(credential: string, fetchImpl: typeof fetch = fetch): Promise<{ owner: string } | null> {
@@ -142,12 +172,11 @@ async function postAuth(path: string, body: Record<string, unknown>, fetchImpl: 
   try {
     res = await fetchImpl(path, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   } catch (error) {
-    return { ok: false, error: `could not reach the server (${error instanceof Error ? error.message : String(error)})` };
+    return { ok: false, error: t("pair.unreachable", { error: error instanceof Error ? error.message : String(error) }) };
   }
   const parsed: unknown = await res.json().catch(() => ({}));
   if (res.ok) return { ok: true };
-  const error = Reflect.get(Object(parsed), "error");
-  return { ok: false, error: typeof error === "string" ? error : `${res.status} ${res.statusText}` };
+  return { ok: false, error: refusalText(parsed, res) };
 }
 
 export function startEmailSignIn(email: string, fetchImpl: typeof fetch = fetch): Promise<{ ok: true } | { ok: false; error: string }> {

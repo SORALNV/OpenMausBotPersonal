@@ -1,128 +1,87 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PlanRow } from "../../electron/cloud-send-parts.mjs";
-import type { CloudSendNotice, CloudSendSnapshot } from "../../electron/cloud-send.mjs";
 import { setLocale } from "@/lib/i18n";
-import { failedLine, moveLine, resultLines, sendStateLine, statusLine, stripLine } from "./cloud-send";
-
-const row = (key: string, kind: PlanRow["kind"], label: string, state: PlanRow["state"], extra: Partial<PlanRow> = {}): PlanRow => ({ key, kind, label, state, ...extra });
-const noneArrived = { bots: 0, updatedBots: 0, skills: 0, logins: 0, onePassword: false, settings: 0, chats: { conversations: 0, messages: 0 } };
-const snapshot = (extra: Partial<CloudSendSnapshot> = {}): CloudSendSnapshot => ({
-  cloud: "ready", running: null, pending: 0, chats: null, signature: "", dismissed: "", last: null, whole: null, arrived: noneArrived, cloudVersion: "0.1.117", localVersion: "0.1.117",
-  rows: [
-    row("bot:ember", "bot", "Ember", "only-here", { id: "ember" }),
-    row("skill:ember:notes", "skill", "notes", "only-here", { bot: "ember" }),
-    row("bot:juno", "bot", "Juno", "to-update", { id: "juno" }),
-    row("login:github.com|amit", "login", "github.com", "only-here", { detail: "amit" }),
-    row("login:bank.test|amit", "login", "bank.test", "on-both", { detail: "amit" }),
-    row("1password", "1password", "1Password", "only-here"),
-    row("setting:profile", "setting", "profile", "to-update"),
-    row("setting:language", "setting", "language", "on-both"),
-  ],
-  cloudOnly: ["Miso", "Atlas", "Kit", "Lark", "Nova", "Pip", "Rune", "Sage", "Wren", "Yuki"].map((name) => ({ key: `bot:${name}`, kind: "bot" as const, label: name })),
-  ...extra,
-});
-const notice = (extra: Partial<CloudSendNotice> = {}): CloudSendNotice => ({
-  ready: true, bots: [], updatedBots: [], skills: 0, logins: 0, onePassword: false, settings: 0, signature: "s", dismissed: false, running: false, last: null, whole: null, ...extra,
-});
+import { readFileSync } from "node:fs";
+import en from "@/locales/en.json";
+import ptBr from "@/locales/pt-br.json";
+import { ipcErrorText, moveLine } from "./cloud-send";
 
 beforeEach(() => { setLocale("en"); });
 afterEach(() => { setLocale("en"); });
 
-describe("This computer and My Cloud, in words", () => {
-  it("says what is not on My Cloud yet, by kind and with the chats still to go; that all is there; or what is sending", () => {
-    expect(sendStateLine(snapshot({ chats: { waiting: 12 } }), null)).toEqual({ kind: "waiting",
-      text: "Not on My Cloud yet: 1 bot, changes to 1 bot, 1 login, 1Password, your settings, and 12 chats." });
-    const done = snapshot({ rows: [row("bot:ember", "bot", "Ember", "on-both")], chats: { waiting: 0 } });
-    expect(sendStateLine(done, null)).toEqual({ kind: "done", text: "Everything from this computer is on My Cloud." });
-    expect(sendStateLine({ ...done, chats: { waiting: 1 } }, null).text).toBe("Not on My Cloud yet: 1 chat.");
-    expect(sendStateLine(snapshot({ running: { reason: "move", progress: { done: 2, total: 9 } } }), null)).toEqual({ kind: "sending", text: "Sending to My Cloud… 2 of 9" });
-  });
-
-  it("says what a send did in one sentence, then what is worth knowing", () => {
-    const sent = resultLines({ at: 1, reason: "button", result: { bots: ["Ember"], updatedBots: ["Juno"], skills: 2, logins: 1, onePassword: true, settings: ["profile"], chats: null, failed: [],
-      notes: [{ kind: "model", bot: "Ember" }, { kind: "narrowed", login: "crm" }] } });
-    expect(sent.text).toBe("Sent to My Cloud: Ember, changes to Juno, 2 skills, 1 login, 1Password, and your settings.");
-    expect(sent.notes).toEqual([
-      "Ember uses My Cloud's own AI: the one it uses here isn't set up on My Cloud.",
-      "A login kept to bots that stay on this computer reaches no bot on My Cloud yet. Choose Who can use it in My Cloud's Settings → Logins.",
-    ]);
-    expect(resultLines({ at: 1, reason: "button", result: { bots: [], updatedBots: [], skills: 0, logins: 0, onePassword: false, settings: [], chats: null, failed: [], notes: [] } }).text)
-      .toBe("My Cloud already has everything from this computer.");
-    const failed = resultLines({ at: 1, reason: "button", result: { bots: [], updatedBots: [], skills: 0, logins: 0, onePassword: false, settings: [], chats: null, notes: [],
-      failed: [{ key: "bot:ember", kind: "bot", label: "Ember", error: "this workspace is limited to 50 bots" }] } });
-    expect(failed).toMatchObject({ failed: true, text: "Ember couldn't be sent: this workspace is limited to 50 bots" });
-  });
-
-  it("says what did not go by kind, with the first reason, and why a send stopped", () => {
-    const none = { bots: [], updatedBots: [], skills: 0, logins: 0, onePassword: false, settings: [], chats: null, notes: [] };
-    const partly = resultLines({ at: 1, reason: "my-cloud", result: { ...none, bots: ["Ember"], chats: { conversations: 48, messages: 900 }, failed: [
-      { key: "login:a.test|amit", kind: "login", label: "a.test", error: "OpenMausBot on this computer did not answer. Try again." },
-      { key: "login:b.test|amit", kind: "login", label: "b.test", error: "OpenMausBot on this computer did not answer. Try again." },
-      { key: "1password", kind: "1password", label: "1Password", error: "1Password did not accept this computer's token on My Cloud." },
-    ] } });
-    expect(partly.text).toBe("Sent to My Cloud: Ember and 48 chats. 2 logins couldn't be sent: OpenMausBot on this computer did not answer. Try again. "
-      + "1Password couldn't be sent: 1Password did not accept this computer's token on My Cloud.");
-    expect(partly.text).not.toContain("a.test");
-    expect(resultLines({ at: 1, reason: "button", result: { ...none, chats: { conversations: 0, messages: 7 }, failed: [] } }).text).toBe("Sent to My Cloud: 7 new messages.");
-    expect(resultLines({ at: 1, reason: "button", result: { ...none, bots: Array.from({ length: 12 }, (_, i) => `Bot ${i}`), skills: 3, chats: { conversations: 48, messages: 900 }, failed: [] } }).text)
-      .toBe("Sent to My Cloud: 12 bots, 3 skills, and 48 chats.");
-    expect(resultLines({ at: 1, reason: "button", error: "This app could not sign in to My Cloud. Try again.", result: { ...none, failed: [] } }))
-      .toMatchObject({ failed: true, text: "Send to My Cloud stopped: This app could not sign in to My Cloud. Try again." });
-    const nothing = { bots: [], skills: 0, logins: 0, onePassword: false, settings: 0, chats: false };
-    expect(failedLine({ reasons: [{ what: { ...nothing, chats: true }, error: "My Cloud is busy." }] })).toBe("The chats couldn't be sent: My Cloud is busy.");
-    expect(failedLine({ reasons: [{ what: { ...nothing, bots: ["A", "B", "C", "D", "E"] }, error: "this workspace is limited to 100 bots" }] }))
-      .toBe("5 bots couldn't be sent: this workspace is limited to 100 bots");
-    expect(failedLine({})).toBeNull();
-  });
-
-  it("names My Cloud's version, says when it is older, and why it can't compare", () => {
-    expect(statusLine(snapshot(), false)).toEqual({ text: "My Cloud is online · version 0.1.117", tone: "status" });
-    expect(statusLine(snapshot({ cloudVersion: "0.1.116" }), false)?.text).toBe("My Cloud runs 0.1.116 and this computer runs 0.1.117. My Cloud updates by itself.");
-    expect(statusLine(snapshot({ cloud: "outdated" }), false)?.text).toContain("My Cloud needs an update");
-    expect(statusLine(snapshot({ cloud: "asleep" }), false)?.text).toContain("asleep");
-    expect(statusLine(snapshot({ cloud: "unreachable" }), true)?.text).toBe("Comparing this computer and My Cloud…");
-    expect(statusLine(snapshot({ cloud: "none" }), false)).toBeNull();
-  });
-});
-
-describe("My Cloud's strip", () => {
-  const counts = { bots: 0, updatedBots: 0, skills: 0, logins: 0, onePassword: false, settings: 0, chats: null };
-  it("shows the move arriving, then what came; nothing for a send from this computer's Settings that went well", () => {
-    expect(stripLine(notice({ running: true, runningReason: "move", progress: { done: 2, total: 9 }, phase: "chats" }), false, null))
-      .toEqual({ kind: "sending", text: "Bringing this computer's chats here… 2 of 9" });
-    expect(stripLine(notice({ running: true, runningReason: "button" }), false, null)).toBeNull();
-    expect(stripLine(notice({ running: true, runningReason: "first" }), false, null)?.kind, "an older desktop's first send by itself").toBe("sending");
-    expect(stripLine(notice({ last: { at: 1, reason: "first", failed: 0, seen: false, sent: { ...counts, bots: 2 } } }), false, null)?.text).toBe("2 bots came over from This computer.");
-    expect(stripLine(notice({ last: { at: 1, reason: "move", failed: 0, seen: false, sent: { ...counts, bots: 1, chats: { conversations: 0, messages: 7 } } } }), false, null))
-      .toEqual({ kind: "done", text: "1 bot and 7 new messages came over from This computer." });
-    expect(stripLine(notice({ last: { at: 1, reason: "move", failed: 0, seen: false, sent: counts } }), false, null)?.text).toBe("Everything from This computer is here.");
-    expect(stripLine(notice({ last: { at: 1, reason: "move", failed: 0, seen: true, sent: counts } }), false, null)).toBeNull();
-    expect(stripLine(notice({ last: { at: 1, reason: "button", failed: 0, seen: false, sent: { ...counts, bots: 2 } } }), false, null)).toBeNull();
-    expect(stripLine(notice(), true, null)?.kind).toBe("sending");
-    expect(stripLine(notice(), false, "My Cloud is asleep.")).toEqual({ kind: "failed", text: "Send to My Cloud stopped: My Cloud is asleep." });
-  });
-
-  it("names apps and keys a move could not carry, by count", () => {
-    const nothing = { bots: [], skills: 0, logins: 0, onePassword: false, settings: 0, chats: false };
-    expect(failedLine({ reasons: [{ what: { ...nothing, connections: 2 }, error: "My Cloud said: no such engine" }] })).toBe("2 apps and keys couldn't be sent: My Cloud said: no such engine");
-    expect(resultLines({ at: 1, reason: "move", result: { bots: ["Ember"], updatedBots: [], skills: 0, logins: 0, onePassword: false, settings: [], connections: 1, chats: null, failed: [], notes: [] } }).text)
-      .toBe("Sent to My Cloud: Ember and 1 app or key.");
-  });
-});
-
 describe("the one-time move's line", () => {
+  it("never says everything is here when a connector stayed on this computer, and says why", () => {
+    const done = { phase: "done" as const, phone: false, held: [], counts: { bots: 13, skills: 0, logins: 0, onePassword: false, chats: 0, routines: 0 } };
+    expect(moveLine(done, "cloud")?.text).toContain("Everything from this computer is here");
+    const line = moveLine({ ...done, stayed: [{ name: "fetch", needs: "uvx" }, { name: "easy" }] }, "cloud");
+    expect(line).toMatchObject({ kind: "done", text: "Everything else from this computer is here. These stayed on it:" });
+    expect(line?.extra).toEqual([
+      "fetch: it needs uvx, which isn't here, so bots here can't use it.",
+      "easy: it only works on that computer, so bots here can't use it.",
+    ]);
+    expect(moveLine({ ...done, place: "Garage server", stayed: [{ name: "easy" }] }, "cloud")?.extra).toEqual(["easy: it only works on that computer, so bots here can't use it."]);
+  });
+
   it("says where the move is on whichever page is open, and who it waits for", () => {
     expect(moveLine({ phase: "copy" }, "local")).toMatchObject({ kind: "sending", text: "Moving your bots to My Cloud…" });
     expect(moveLine({ phase: "copy", chats: { done: 34, total: 120 } }, "local")?.text).toBe("Moving your bots to My Cloud… 34 of 120 chats");
     expect(moveLine({ phase: "copy", chats: { done: 34, total: 120 } }, "cloud")?.text).toBe("Bringing this computer's bots to My Cloud… 34 of 120 chats");
     expect(moveLine({ phase: "wait", waitingFor: "Scout" }, "local")?.text).toBe("Moving your bots to My Cloud… waiting for Scout to finish");
-    expect(moveLine({ phase: "wait", waitingFor: "" }, "local")?.text).toBe("Moving your bots to My Cloud… waiting for your bots to finish");
+    expect(moveLine({ phase: "wait", waitingFor: "Launch room", waitingWhat: "room" }, "cloud")?.text).toBe("Moving your bots to My Cloud… waiting for Launch room to finish");
+    expect(moveLine({ phase: "wait", waitingFor: "", waitingWhat: "sign-in" }, "local")?.text, "no name: what it is").toBe("Moving your bots to My Cloud… waiting for a sign-in to finish");
+    expect(moveLine({ phase: "wait" }, "local")?.text, "a quiet moment, nobody holding it").toBe("Moving your bots to My Cloud…");
     expect(moveLine({ phase: "finishing" }, "cloud")).toMatchObject({ kind: "sending", text: "Moving to My Cloud… almost done" });
+  });
+
+  it("to a server of the person's own, names it on this computer's page, with Try again after a day of failing, and nowhere else", () => {
+    const place = "Garage server";
+    expect(moveLine({ phase: "copy", place }, "local")).toEqual({ kind: "sending", text: "Moving your bots to Garage server…", extra: [], place });
+    expect(moveLine({ phase: "copy", chats: { done: 3, total: 9 }, place }, "local")?.text).toBe("Moving your bots to Garage server… 3 of 9 chats");
+    expect(moveLine({ phase: "wait", waitingFor: "Scout", place }, "local")?.text).toBe("Moving your bots to Garage server… waiting for Scout to finish");
+    expect(moveLine({ phase: "wait", waitingFor: "", waitingWhat: "sign-in", place }, "local")?.text).toBe("Moving your bots to Garage server… waiting for a sign-in to finish");
+    expect(moveLine({ phase: "wait", waitingFor: "", place }, "local")?.text).toBe("Moving your bots to Garage server… waiting for your bots to finish");
+    expect(moveLine({ phase: "finishing", place }, "local")?.text).toBe("Moving to Garage server… almost done");
+    expect(moveLine({ phase: "copy", updating: true, place }, "local")?.text).toBe("Update OpenMausBot on Garage server. Your bots move there once it's updated.");
+    expect(moveLine({ phase: "copy", failing: { error: "Garage server has other people on it now, so your bots can't move there." }, place }, "local"))
+      .toMatchObject({ kind: "failed", text: "Your bots couldn't move to Garage server yet: Garage server has other people on it now, so your bots can't move there.", retry: true, place });
+    expect(moveLine({ phase: "finishing", failing: { error: null }, place }, "local")).toMatchObject({ kind: "failed", text: "Your bots couldn't move to Garage server yet.", retry: true });
+    expect(moveLine({ phase: "copy", place }, "cloud"), "only this computer's page hears of it").toBeNull();
+    expect(moveLine({ phase: "done", phone: true, held: [], place }, "local"), "once done the window shows Garage server").toBeNull();
+    expect(JSON.stringify(moveLine({ phase: "copy", place }, "local"))).not.toContain("My Cloud");
+  });
+
+  it("with My Cloud too old to take a move, says it is updating and the move starts after, on either page", () => {
+    for (const page of ["local", "cloud"] as const) {
+      expect(moveLine({ phase: "copy", updating: true }, page)).toEqual({ kind: "sending", text: "My Cloud is updating. Your move starts when it's done.", extra: [] });
+    }
   });
 
   it("after a day of failing says why, with Try again", () => {
     expect(moveLine({ phase: "copy", failing: { error: "My Cloud did not answer." } }, "local")).toMatchObject({ kind: "failed", text: "Your bots couldn't move to My Cloud yet: My Cloud did not answer.", retry: true });
     expect(moveLine({ phase: "finishing", failing: { error: null } }, "local")?.text).toBe("Your bots couldn't move to My Cloud yet.");
+  });
+
+  it("keeps a coded failure in the reader's language for My Cloud and a server of the person's own", () => {
+    const place = "Garage server";
+    const failing = { error: "Sign in to Garage server in the app first.", errorKey: "serverError.team.signInFirst", errorParams: { team: place } };
+    expect(moveLine({ phase: "copy", failing, place }, "local")).toMatchObject({
+      text: "Your bots couldn't move to Garage server yet: Sign in to Garage server in the app first.", reason: failing.error,
+    });
+    setLocale("pt-br");
+    expect(moveLine({ phase: "copy", failing }, "local")?.reason).toBe("Primeiro, faça login em Garage server no app.");
+    expect(moveLine({ phase: "copy", failing, place }, "local")).toMatchObject({
+      text: "Seus bots ainda não conseguiram ir para Garage server: Primeiro, faça login em Garage server no app.", reason: "Primeiro, faça login em Garage server no app.",
+    });
+  });
+
+  it("names what did not move and why, on a failing line and on the done line, for My Cloud and a server of the person's own", () => {
+    const items = [{ label: "tidy", error: "OpenMausBot on this computer did not answer." }, { label: "Reply to email", error: "This app automation stays on the computer it came from." }];
+    const lines = ["tidy: OpenMausBot on this computer did not answer.", "Reply to email: This app automation stays on the computer it came from."];
+    expect(moveLine({ phase: "copy", failing: { error: "Some of this computer's things did not reach My Cloud.", items } }, "local")).toMatchObject({ kind: "failed", retry: true, extra: lines });
+    expect(moveLine({ phase: "copy", failing: { error: null, items }, place: "Garage server" }, "local")).toMatchObject({ kind: "failed", retry: true, extra: lines, place: "Garage server" });
+    const left = items.slice(1);
+    expect(moveLine({ phase: "done", phone: false, held: [], left }, "cloud")).toMatchObject({ kind: "done", text: "Everything else from this computer is here. These stayed on it:", extra: lines.slice(1) });
+    expect(moveLine({ phase: "done", phone: false, held: [], left, place: "Garage server" }, "cloud")).toMatchObject({ kind: "done", extra: lines.slice(1), place: "Garage server" });
+    expect(moveLine({ phase: "done", phone: false, held: [], left, place: "Garage server" }, "local")).toBeNull();
   });
 
   it("says once on My Cloud's page what arrived, a key kept for after the trial, and the phone to pair; on this computer, coming home", () => {
@@ -139,5 +98,64 @@ describe("the one-time move's line", () => {
   it("is in every language's own words", () => {
     setLocale("de");
     expect(moveLine({ phase: "copy" }, "local")?.text).toBe("Deine Bots ziehen in die Cloud um…");
+    expect(moveLine({ phase: "copy", updating: true }, "local")?.text).toBe("My Cloud wird gerade aktualisiert. Dein Umzug beginnt, sobald das erledigt ist.");
+    expect(moveLine({ phase: "wait", waitingFor: "", waitingWhat: "sign-in" }, "local")?.text).toBe("Deine Bots ziehen in die Cloud um… warte, bis eine Anmeldung fertig ist");
+  });
+});
+
+describe("the line on a computer whose bots came home to another one", () => {
+  const since = Date.UTC(2026, 9, 21, 12);
+  it("names that computer and the date of this computer's own copy, with automations off, and closes like the others", () => {
+    expect(moveLine({ phase: "back", elsewhere: { name: "MacBook Air", since } }, "local"))
+      .toEqual({ kind: "done", text: "Your bots came back to MacBook Air. This computer keeps its copy from October 21, 2026, with automations off.", extra: [] });
+    expect(moveLine({ phase: "back", elsewhere: { name: "MacBook Air" } }, "local")?.text, "a copy already deleted is not offered").toBe("Your bots came back to MacBook Air.");
+    expect(moveLine({ phase: "back", elsewhere: { name: "MacBook Air", since } }, "cloud")).toBeNull();
+    setLocale("de");
+    expect(moveLine({ phase: "back", elsewhere: { name: "MacBook Air", since } }, "local")?.text)
+      .toBe("Deine Bots sind zurück auf MacBook Air. Dieser Computer behält seine Kopie vom 21. Oktober 2026, mit ausgeschalteten Automatisierungen.");
+  });
+});
+
+describe("the line on a computer whose bots come home because the person keeps them here", () => {
+  it("says they are on their way on either page (or wait for My Cloud's update), and once home, on this computer only, that they run here", () => {
+    for (const page of ["local", "cloud"] as const) {
+      expect(moveLine({ phase: "keeping" }, page)).toEqual({ kind: "sending", text: "Bringing this computer's bots back from My Cloud…", extra: [] });
+      expect(moveLine({ phase: "keeping", updating: true }, page)?.text).toBe("My Cloud is updating. This computer's bots come back once it's done.");
+    }
+    expect(moveLine({ phase: "back", kept: true }, "local"))
+      .toEqual({ kind: "done", text: "This computer's bots are back here, and their automations run on this computer. My Cloud keeps a copy of them with their automations off.", extra: [] });
+    expect(moveLine({ phase: "back", kept: true }, "cloud")).toBeNull();
+  });
+});
+
+describe("a refusal the preload words before main is asked", () => {
+  const unclicked = en["cloudAccount.keepHere.unclicked"];
+  const keys = ["cloudAccount.keepHere.unclicked", "cloudSend.move.unclicked", "teamMove.unclicked"] as const;
+
+  it("is the preload's own sentence", () => {
+    const preload = readFileSync(new URL("../../electron/preload.cjs", import.meta.url), "utf8");
+    for (const key of keys) expect(preload, key).toContain(`new Error(${JSON.stringify(en[key])})`);
+  });
+
+  it("each one shown on a page reads in pt-BR", () => {
+    setLocale("pt-br");
+    for (const key of keys) expect(ipcErrorText(new Error(en[key])), key).toBe(ptBr[key]);
+  });
+
+  it("shows in the app's language, and main's own words stay as main wrote them", () => {
+    expect(ipcErrorText(new Error(unclicked))).toBe(unclicked);
+    setLocale("pt-br");
+    expect(ipcErrorText(new Error(unclicked))).toBe(ptBr["cloudAccount.keepHere.unclicked"]);
+    expect(ipcErrorText(new Error("Error invoking remote method 'one-home:keep-set': Error: Os bots deste computador estão voltando.")))
+      .toBe("Os bots deste computador estão voltando.");
+    expect(ipcErrorText("not an error")).toBeNull();
+  });
+});
+
+describe("the line on a computer whose Cloud is gone while My Cloud is another", () => {
+  it("says once, on this computer only, that the bots are back as they were at the move, with their automations off", () => {
+    expect(moveLine({ phase: "back", gone: true }, "local")).toEqual({ kind: "done", extra: [],
+      text: "The Cloud your bots moved to has ended, so they're back on this computer as they were when they moved. Their automations are off: switch on the ones you want." });
+    expect(moveLine({ phase: "back", gone: true }, "cloud")).toBeNull();
   });
 });

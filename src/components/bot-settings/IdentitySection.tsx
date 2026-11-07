@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DefaultBotHideRow } from "../DefaultBotControls";
 import { BookOpen } from "lucide-react";
 
 import { useStore, type Bot } from "@/state/store";
@@ -13,7 +14,7 @@ import { useBotEditor } from "./BotEditorContext";
 import { PackageProvenance } from "./PackageProvenance";
 import { ProposalStatus } from "./ProposalStatus";
 import { randomBotName } from "@/lib/random-bot-name";
-import { t } from "@/lib/i18n";
+import { intlLocale, t } from "@/lib/i18n";
 
 export type IdentityPart = "avatar" | "provenance" | "name" | "title" | "blurb";
 
@@ -82,7 +83,7 @@ export function IdentitySection({
           <button
             type="button"
             onClick={() => setInstructionsOpen(true)}
-            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11.5px] font-medium text-accent-text hover:bg-accent/10"
+            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] font-medium text-accent-text hover:bg-accent/10"
           >
             <BookOpen size={12} /> {t("botSettings.identity.viewFull")}
           </button>
@@ -101,12 +102,13 @@ export function IdentitySection({
           <span>{t("botSettings.identity.blurbHelp")}</span>
           {bot.description.length > 3_000 && (
             <span className="shrink-0 tabular-nums">
-              {bot.description.length.toLocaleString()} / {BOT_PROFILE_LIMITS.description.toLocaleString()}
+              {bot.description.length.toLocaleString(intlLocale())} / {BOT_PROFILE_LIMITS.description.toLocaleString(intlLocale())}
             </span>
           )}
         </div>
       </div>}
 
+      <DefaultBotHideRow bot={bot} />
       {instructionsOpen && <BotInstructionsDialog bot={bot} inline={draft} onClose={() => setInstructionsOpen(false)} />}
     </div>
   );

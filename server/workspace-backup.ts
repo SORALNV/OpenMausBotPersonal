@@ -5,16 +5,17 @@ import {
   fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync,
   readSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync,
 } from "node:fs";
-import { isAbsolute, join, parse, posix, relative, resolve, win32 } from "node:path";
+import { isAbsolute, join, parse, posix, relative, resolve, sep, win32 } from "node:path";
 import { homedir } from "node:os";
 import { backup, DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
 import { Worker } from "node:worker_threads";
-import * as tar from "tar";
 import { writeFileAtomic } from "./atomic.ts";
+import { userErrorFields, userErrorThrown } from "./user-errors.ts";
 import { WORKSPACE_BACKUP_CLIENT_KEYS } from "../shared/workspace-backup-client.ts";
 import { INSTRUCTION_FILE, restorePaths, validRelative } from "./workspace-backup-paths.ts";
 import { ephemeralWorkspaceTokenPath, excludedWorkspaceAuthPath, liveDataEnginePath, managedTaskSkillLink, portableWorkspaceConfig, redownloadedOrgLibraryPath, restoredWorkspaceConfig } from "./workspace-backup-policy.ts";
+import { omittedAsTeamPrivate, stripTeamPrivate, TEAM_PRIVATE_NOTE, teamPrivateAttachments, teamPrivateThreads, withoutTeamPrivate } from "./workspace-backup-team-private.ts";
 import type { WorkspaceBackupClientState, WorkspaceBackupPrivateMetadata, WorkspaceBackupSummary, WorkspaceLeftBehind } from "../shared/workspace-backup.ts";
 
 export type { WorkspaceBackupSummary, WorkspaceBackupPrivateMetadata } from "../shared/workspace-backup.ts";
@@ -26,6 +27,7 @@ const MAGIC = Buffer.from("OMB-WORKSPACE-1\n");
 const HEADER_BYTES = MAGIC.length + 16 + 12;
 const TAG_BYTES = 16;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const WAITS_FILE = "waits.json";
 const EXCLUDED = new Set([
   ".backups", "tools", "browser", "agent-browser-profiles", "cache", ".cache", "tmp", ".tmp", "dist-native", "tunnel-runtime", "evidence",
   ".openmausbot-server-child", "environment-id", "sessions.json", "tunnel-account.json",
@@ -37,6 +39,12 @@ const EXCLUDED = new Set([
   "sync",
   // "Also use my Claude Code skills": a link to the person's own ~/.claude/skills, made again on each turn.
   "claude-user-skills",
+  // The bot box's live sockets and seccomp filter (bot-box/box.ts), made again each time the server starts.
+  "box",
+  // A Team Cloud's engine homes (engine-homes/layout.ts): CLI login homes, each audience's own transcripts and the held
+  // folder, which no admin reads.
+  "engine-homes",
+  WAITS_FILE,
 ]);
 const EXCLUSION_NOTES = [
   "Device pairing, server identity, live leases and runtime files (existing destination identities are preserved).",
@@ -46,8 +54,9 @@ const EXCLUSION_NOTES = [
   "Installed dependency folders (node_modules) and symbolic links inside conversation work folders; reinstall or recreate them in the project.",
   "External project folders, CLI login homes, browser session homes, OS keychains, companion devices and other servers.",
   "VM/container disk layers and remote cloud data; durable files inside this workspace are included.",
+  "Waits bots set up: they end within a week, so ask the bot again after restoring.",
 ];
-const RESTORE_WARNING = "Restoring pauses routines, webhooks and calendar calls, and does not resume pending delegations, queued chat messages or queued runs. Definitions and historical receipts are retained; review before enabling them again.";
+const RESTORE_WARNING = "Restoring pauses routines, webhooks and calendar calls, ends every wait, and does not resume pending delegations, queued chat messages or queued runs. Definitions and historical receipts are retained; review before enabling them again.";
 
 type Entry = { path: string; type: "file" | "directory"; size: number; mode: number; sha256?: string };
 interface Manifest extends WorkspaceBackupPrivateMetadata {
@@ -87,9 +96,9 @@ function forbiddenArchivePath(path: string): boolean {
     (path !== folded && ["config.json", "webhooks.json"].includes(folded));
 }
 function preserved(name: string): boolean {
-  // An existing WAL/SHM belongs to the old database: it must never accompany a different restored main database.
+  // An existing WAL/SHM belongs to the old database, and existing waits to the old chats: neither may accompany restored ones.
   const folded = name.toLowerCase();
-  return excluded(folded) && !LIVE_DATABASE_SIDECARS.has(folded);
+  return excluded(folded) && !LIVE_DATABASE_SIDECARS.has(folded) && folded !== WAITS_FILE;
 }
 const SNAPSHOT_DATABASES: Record<string, string> = { "messages.db": "messages-snapshot.db", "runtime.db": "runtime-snapshot.db" };
 const LIVE_DATABASE_SIDECARS = new Set(Object.keys(SNAPSHOT_DATABASES).flatMap((name) => [`${name}-wal`, `${name}-shm`]));
@@ -273,9 +282,9 @@ export async function createWorkspaceBackup(dataDir: string, options: CreateWork
     });
     const result = await new Promise<CreatedWorkspaceBackup>((resolveBackup, reject) => {
       const failed = () => reject(new Error("The backup worker stopped before completing. Try again."));
-      worker!.once("message", (reply: { result?: CreatedWorkspaceBackup; error?: string }) => {
+      worker!.once("message", (reply: { result?: CreatedWorkspaceBackup; error?: string } & ReturnType<typeof userErrorFields>) => {
         if (reply.result) resolveBackup(reply.result);
-        else if (reply.error) reject(new Error(reply.error));
+        else if (reply.error) reject(Object.assign(new Error(reply.error), userErrorFields(reply)));
         else failed();
       });
       worker!.once("error", failed);
@@ -304,6 +313,7 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
   let skippedLinks = 0;
   let skippedDependencies = 0;
   let skippedWorkLinks = 0;
+  let copiedLinks = 0;
   try {
     const root = realpathSync(dataDir);
     for (const [name, snapshotName] of Object.entries(SNAPSHOT_DATABASES)) {
@@ -319,16 +329,23 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
       const snapshotDb = new DatabaseSync(join(snapshot, snapshotName));
       try { snapshotDb.exec("PRAGMA journal_mode = DELETE"); } finally { snapshotDb.close(); }
     }
-    const walk = (directory: string, prefix = "") => {
+    const teamPrivate = teamPrivateThreads({ starters: join(root, "thread-starters.json"), groups: join(root, "groups.json"), bots: join(root, "bots.json") });
+    const privacy = teamPrivate && { ...teamPrivate, attachments: teamPrivateAttachments(root, join(snapshot, SNAPSHOT_DATABASES["messages.db"]!), teamPrivate) };
+    if (privacy) {
+      stripTeamPrivate({ messages: join(snapshot, SNAPSHOT_DATABASES["messages.db"]!), runtime: join(snapshot, SNAPSHOT_DATABASES["runtime.db"]!) }, privacy);
+      warnings.push(TEAM_PRIVATE_NOTE);
+    }
+    const walk = (directory: string, prefix = "", chain: string[] = [root]) => {
       for (const name of readdirSync(directory).sort()) {
         if (!prefix && excluded(name)) continue;
         const path = prefix ? `${prefix}/${name}` : name;
         if (excludedWorkspaceAuthPath(path) || ephemeralWorkspaceTokenPath(path) || redownloadedOrgLibraryPath(path) || liveDataEnginePath(path)) continue;
+        if (privacy && omittedAsTeamPrivate(path, privacy)) continue;
         // Reject noncanonical spellings: a case-sensitive host must not export auth paths active on Windows/Mac.
         if (forbiddenArchivePath(path)) throw new Error("A workspace filename conflicts with a protected authentication or runtime path.");
         if (!validRelative(path)) throw new Error(`Cannot back up a name that cannot be restored on every supported platform, such as one with ":" or "\\", a trailing dot or space, or a Windows device name like CON or AUX; rename it first: ${path}`);
-        const source = join(directory, name);
-        const stat = lstatSync(source);
+        let source = join(directory, name);
+        let stat = lstatSync(source);
         if (name === "node_modules" && (stat.isDirectory() || stat.isSymbolicLink())) {
           skippedDependencies++;
           continue;
@@ -344,13 +361,23 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
           if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel)) {
             throw new Error(`Cannot back up symbolic link outside the workspace: ${path}`);
           }
+          const portableRel = rel.replaceAll("\\", "/");
           // Only the app's disposable native-discovery links may be omitted; any other link is user data.
-          if (!/^workspaces\/[^/]+\/\.(?:claude|agents|grok)\/skills\/[^/]+$/.test(path) ||
-            !rel.replaceAll("\\", "/").startsWith(`workspaces/${path.split("/")[1]}/skills/`)) {
+          if (/^workspaces\/[^/]+\/\.(?:claude|agents|grok)\/skills\/[^/]+$/.test(path) &&
+            portableRel.startsWith(`workspaces/${path.split("/")[1]}/skills/`)) {
+            skippedLinks++;
+            continue;
+          }
+          const workspace = /^workspaces\/[^/]+\//.exec(path)?.[0];
+          if (!workspace || !portableRel.startsWith(workspace)) {
             throw new Error(`Cannot back up user-created symbolic link; replace it with regular files first: ${path}`);
           }
-          skippedLinks++;
-          continue;
+          if (chain.some((folder) => folder === target || folder.startsWith(`${target}${sep}`))) {
+            throw userErrorThrown("serverError.backup.recursiveLink", { path });
+          }
+          source = target;
+          stat = lstatSync(source);
+          copiedLinks++;
         }
         if (entries.length >= MAX_WORKSPACE_BACKUP_FILES) throw new Error("The workspace exceeds the 100,000-entry backup limit.");
         const caseTwin = foldedPaths.get(path.toLowerCase());
@@ -360,12 +387,13 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
         if (stat.isDirectory()) {
           folder(destination);
           entries.push({ path, type: "directory", size: 0, mode: 0o700 });
-          walk(source, path);
+          walk(source, path, [...chain, source]);
         } else if (stat.isFile()) {
           let copied: { size: number; mode: number; sha256: string };
-          if (path === "config.json" || path === "webhooks.json") {
+          if (path === "config.json" || path === "webhooks.json" || (privacy && path === "bots.json")) {
             const value = privateJson(source);
             if (path === "config.json") writeJson(destination, portableWorkspaceConfig(value));
+            else if (path === "bots.json") writeJson(destination, withoutTeamPrivate(value, privacy!));
             else {
               if (!record(value)) throw new Error("Invalid webhook definitions in workspace backup.");
               if (Array.isArray(value.webhooks)) for (const webhook of value.webhooks) if (record(webhook)) { delete webhook.secretHash; delete webhook.sealedSecret; }
@@ -383,6 +411,7 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
     walk(root);
     if (skippedLinks) warnings.push(`${skippedLinks} managed skill discovery link(s) were omitted and are recreated by the app.`);
     if (skippedDependencies) warnings.push(`${skippedDependencies} installed dependency folder(s) (node_modules) were omitted; reinstall them in the project after restoring.`);
+    if (copiedLinks) warnings.push(`${copiedLinks} symbolic link(s) inside a workspace were saved as copies of what they point to; restoring creates regular files and folders there.`);
     if (skippedWorkLinks) warnings.push(`${skippedWorkLinks} symbolic link(s) in conversation work folders were omitted; what they point to is outside this backup.`);
     const summary: WorkspaceBackupSummary = {
       format: "openmaus.workspace-backup", version: 1, id: job.id, createdAt: new Date().toISOString(),
@@ -403,6 +432,7 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
     const cipher = createCipheriv("aes-256-gcm", key, iv);
     cipher.setAAD(header);
     writeFileSync(path, header, { mode: 0o600, flag: "wx" });
+    const tar = await import("tar");
     await pipeline(tar.c({ cwd: snapshot, portable: true, strict: true }, ["manifest.json", "data"]), cipher, createWriteStream(path, { flags: "a", mode: 0o600 }));
     const fd = openSync(path, "a");
     try { writeSync(fd, cipher.getAuthTag()); fsyncSync(fd); } finally { closeSync(fd); }
@@ -495,6 +525,7 @@ async function inspectTar(path: string): Promise<Map<string, { type: string; siz
   const names = new Set<string>();
   let bytes = 0;
   let problem = "";
+  const tar = await import("tar");
   await tar.t({ file: path, strict: true, brotli: false, zstd: false, onReadEntry(entry) {
     const name = entry.type === "Directory" ? entry.path.replace(/\/$/, "") : entry.path;
     const expectedRoot = name === "manifest.json" || name === "data" || name.startsWith("data/");
@@ -572,6 +603,7 @@ export async function stageWorkspaceBackup(dataDir: string, archivePath: string,
     const expected = await inspectTar(plaintext);
     const staged = join(job.directory, "staged");
     folder(staged);
+    const tar = await import("tar");
     await tar.x({ file: plaintext, cwd: staged, strict: true, preservePaths: false, umask: 0o077, noChmod: true, brotli: false, zstd: false });
     const manifest = validateStaged(staged, expected);
     const versions = [manifest.summary.appVersion, options.currentAppVersion ?? ""].map((version) => /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version)?.slice(1).map(Number));
@@ -753,6 +785,10 @@ function prepareRestore(dataDir: string, id: string, manifest: Manifest): string
   changeJson("calendar-calls.json", (value) => {
     if (!record(value)) throw new Error("Invalid calendar definitions in workspace backup.");
     if (Array.isArray(value.calls)) for (const call of value.calls) if (record(call)) call.nextRunAt = null;
+  });
+  changeJson("app-triggers.json", (value) => {
+    if (!record(value)) throw new Error("Invalid app automations in workspace backup.");
+    if (Array.isArray(value.triggers)) for (const trigger of value.triggers) if (record(trigger)) trigger.enabled = false;
   });
   if (existsSync(join(prepared, "delegations.json"))) writeJson(join(prepared, "delegations.json"), {});
   if (existsSync(join(prepared, "browser-cleanups.json"))) writeJson(join(prepared, "browser-cleanups.json"), []);

@@ -1,7 +1,7 @@
 // The one-time move to the person's own Cloud, end to end: this computer's server and a Cloud home
 // (scripts/testing/cloud-send-fixture.ts) with main's own wiring between them, the move run and checked as main runs and
-// checks it, the connected-apps service with a fake Composio behind it, a fake sign-in server for an MCP server's own
-// account and a fake HighLevel. Disposable homes; no network.
+// checks it, the connected-apps service with a fake Composio behind it and a fake sign-in server for an MCP server's
+// own account. Disposable homes; no network.
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -11,12 +11,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createComputerSharing } from "../electron/computer-sharing.mjs";
-import { createCloudMove } from "../electron/cloud-move.mjs";
 import { itemKey } from "../electron/cloud-send-parts.mjs";
-import type { CloudSendOutcome } from "../electron/cloud-send.mjs";
 import { launchCloudSendFixture, type CloudSendFixture } from "../scripts/testing/cloud-send-fixture.ts";
 import { startBrokerFake, type BrokerFake } from "./testing/broker-fake.ts";
-import { FAKE_LOCATION_ID, startFakeHighLevel, startFakeRelay, type FakeHighLevel, type FakeRelay } from "./testing/fake-highlevel.ts";
 import { hostTimeout } from "./testing/host-timeout.ts";
 
 // Obvious fakes only.
@@ -27,14 +24,11 @@ const DODO_KEY = `dodo_test_fake_${hex(12)}`;
 const DOCS_TOKEN = `fake-docs-token-${hex(8)}`;
 const CLIENT_SECRET = `fake-client-secret-${hex(8)}`;
 const OPENROUTER_KEY = `sk-or-v1-fake${hex(16)}`;
-const PIT = `pit-fake-move-${hex(8)}`;
 const ACCESS = `fake-access-${hex(8)}`, REFRESH = `fake-refresh-${hex(8)}`;
-const SECRETS = [TOKEN, PASSWORD, DODO_KEY, DOCS_TOKEN, CLIENT_SECRET, OPENROUTER_KEY, PIT, ACCESS, REFRESH];
+const SECRETS = [TOKEN, PASSWORD, DODO_KEY, DOCS_TOKEN, CLIENT_SECRET, OPENROUTER_KEY, ACCESS, REFRESH];
 const LINEAR_URL = "https://mcp.linear.example.test/mcp";
 
 let broker: BrokerFake;
-let hl: FakeHighLevel;
-let relay: FakeRelay;
 let fx: CloudSendFixture;
 let signIns: Server;
 let tokenEndpoint = "";
@@ -49,9 +43,7 @@ beforeAll(async () => {
   mkdirSync(join(scratch, "turns"));
   writeFileSync(release, "");
   broker = await startBrokerFake();
-  hl = await startFakeHighLevel();
-  relay = await startFakeRelay({ onAccessToken: (token) => hl.tokens.add(token) });
-  fx = await launchCloudSendFixture({ onePasswordToken: TOKEN, broker, toolCalls: 36, env: { OMB_HIGHLEVEL_RELAY_URL: relay.url, OMB_HIGHLEVEL_API_URL: hl.url },
+  fx = await launchCloudSendFixture({ onePasswordToken: TOKEN, broker, toolCalls: 36,
     cloudEngine: `process.env.FAKE_CLAUDE_MODE = "hang"; process.env.FAKE_CLAUDE_RELEASE = ${JSON.stringify(release)};
 if (process.argv[2] !== "--version") { process.env.FAKE_CLAUDE_DUMP = ${JSON.stringify(join(scratch, "turns"))} + "/" + process.pid + ".json"; process.env.FAKE_CLAUDE_TEXT_DUMP = ${JSON.stringify(join(scratch, "one-shot.json"))}; }` });
   signIns = createServer((req, res) => {
@@ -71,8 +63,6 @@ afterAll(async () => {
   for (const proxy of proxies) proxy.kill();
   await fx?.close();
   await broker?.close();
-  await relay?.close();
-  await hl?.close();
   await new Promise((resolve) => signIns?.close(resolve));
   if (scratch) rmSync(scratch, { recursive: true, force: true });
 });
@@ -112,22 +102,15 @@ function everythingArrived(report: Awaited<ReturnType<CloudSendFixture["check"]>
   return report.ok;
 }
 
-/** Bring newer chats, as 0.1.117 to 0.1.119 copied a computer's chats to My Cloud: the rows arrive naming nobody. */
-async function bring() {
-  const copy = createCloudMove({
-    localRequest: (route, init) => fetch(`${fx.desktopBase}${route}`, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers)), "x-openmausbot-desktop-owner": fx.ownerCapability } }),
-    fetchImpl: ((url: string, init: RequestInit = {}) => fetch(url, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers)), ...fx.edge } })) as typeof fetch,
-    tempRoot: join(fx.root, "bring-temp"), availableBytes: async () => Number.MAX_SAFE_INTEGER, pollMs: 150, retryDelaysMs: [100, 300],
-  });
-  try {
-    const once = () => copy.bring({ id: "cloud", name: "My Cloud", origin: fx.cloudBase, kind: "cloud", grant: () => fx.grant("Copy from desktop") });
-    let brought = await once();
-    // A bot's turn can still be wrapping up after its reply; a backup refuses "busy" until it has.
-    for (let tries = 0; brought.error?.code === "busy" && tries < 40; tries++) { await new Promise((resolve) => setTimeout(resolve, 250)); brought = await once(); }
-    expect(brought.phase, JSON.stringify(brought)).toBe("done");
-  } finally {
-    await copy.close();
-  }
+/** As a Bring in 0.1.117 to 0.1.119 left a computer's chats on My Cloud: its owner's lines there name nobody. My Cloud
+ * starts again over its own data with those lines stripped of who wrote them, before anything reads them. */
+async function asABringLeftThem(threadIds: string[]) {
+  const strip = `import { DatabaseSync } from "node:sqlite"; import { join } from "node:path";
+const db = new DatabaseSync(join(process.env.OMB_DATA_DIR, "messages.db"));
+const forget = db.prepare("UPDATE messages SET json = json_remove(json, '$.sender') WHERE thread_id = ? AND role = 'user'");
+for (const id of ${JSON.stringify(threadIds)}) forget.run(id);
+db.close(); delete process.env.NODE_OPTIONS;`;
+  await fx.relaunch({ kill: false, cloud: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(strip).replaceAll("'", "%27")}` } });
 }
 
 let archie: { id: string; threadId: string }, cleo: { id: string; threadId: string }, pip: { id: string; threadId: string }, ember: { id: string; threadId: string };
@@ -151,14 +134,17 @@ async function turnDump(botId: string, threadId: string, seen: Set<string>) {
 
 it("lines My Cloud already held of this computer's become its owner's when the move names them, at once for what its bots recall", async () => {
   const { local, onCloud } = fx;
-  // Kai's and Lux's conversations reached My Cloud before My Cloud kept its owner's lines as theirs, as any send or Bring
-  // before this one left them. The move (next) names Kai's; Lux's are named here, over the owner's own session.
+  // Kai's and Lux's conversations reached My Cloud before My Cloud kept its owner's lines as theirs, as an older app's send
+  // or Bring left them. The move (next) names Kai's; Lux's are named here, over the owner's own session.
   kai = await newBot("Kai");
   await turn(local, kai, "Keep the Acme notes.");
   const lux = await newBot("Lux");
   await turn(local, lux, "Draft the launch memo.");
-  expect((await fx.call<CloudSendOutcome>("cloud-send:send", "local", { keys: [itemKey.bot(kai.id), itemKey.bot(lux.id)] })).result.bots.sort()).toEqual(["Kai", "Lux"]);
-  await bring();
+  // An older app's whole Send everything, which carried the chats too (a send of some items never does).
+  const sent = (await fx.olderSend()).result;
+  expect(sent.bots.sort()).toEqual(["Kai", "Lux"]);
+  expect(sent.chats?.messages, "the chats went with the bots").toBeGreaterThan(0);
+  await asABringLeftThem([kai.threadId, lux.threadId]);
   for (const bot of [kai, lux]) {
     const brought = (await history(onCloud, bot.threadId)).rows.filter((row) => row.role === "user");
     expect(brought.map((row) => row.sender?.id ?? null), "the line came over naming nobody").toEqual([null]);
@@ -207,11 +193,9 @@ it("a move carries everything, apps and keys first, and its check finds every ro
   expect((await local("PUT", `/api/bots/${ember.id}/memory/file`, { path: "memory/clients.md", text: "Acme pays on the 5th.\n" })).status).toBe(200);
   expect((await local("POST", "/api/logins", { site: "accounts.example.test", username: "alice", password: PASSWORD, totp: "JBSWY3DPEHPK3PXP", bots: [ember.id] })).status).toBe(201);
   expect((await local("POST", "/api/logins/1password", { token: TOKEN })).status).toBe(200);
-  // Kept here once with the switch that used to send by itself: a move takes it anyway.
-  expect((await fx.call("cloud-send:item", "local", itemKey.bot(ember.id), false))).toBeTruthy();
 
-  // Apps and keys: an MCP server's key and another's header token, a sign-in of its own, an AI key, HighLevel by its token,
-  // and the connected-apps account.
+  // Apps and keys: an MCP server's key and another's header token, a sign-in of its own, an AI key and the connected-apps
+  // account.
   for (const server of [
     { name: "dodo", command: "node", args: ["-e", "process.stdin.resume()"], env: { DODO_PAYMENTS_API_KEY: DODO_KEY } },
     { name: "docs", type: "http", url: "https://mcp.docs.example.test/mcp", headers: { Authorization: `Bearer ${DOCS_TOKEN}` } },
@@ -224,8 +208,6 @@ it("a move carries everything, apps and keys first, and its check finds every ro
   writeFileSync(desktopSignIns, JSON.stringify({ servers: { linear: { url: LINEAR_URL, state: "signed-in", clientId: "omb-fixture-client", tokenAuth: "client_secret_post",
     tokenEndpoint, tokens: { access: ACCESS, refresh: REFRESH, expiresAt: Date.now() + 3_600_000 } } } }));
   expect((await local("PATCH", "/api/config", { openrouter: { key: OPENROUTER_KEY } })).status).toBe(200);
-  hl.tokens.add(PIT);
-  expect((await local("POST", "/api/highlevel/token", { token: PIT, locationId: FAKE_LOCATION_ID })).status).toBe(200);
   const gmail = broker.account(fx.desktopInstallation!.userId, "gmail");
 
   // The first pass: everything but the sign-in that refreshes itself, which stays here while this computer is home.
@@ -259,7 +241,7 @@ it("a move carries everything, apps and keys first, and its check finds every ro
   expect(report.attachments).toEqual([]);
   expect(report.secrets.differs).toEqual([]);
   expect(report.secrets.missing).toEqual([]);
-  expect(report.secrets.equal).toEqual(expect.arrayContaining([itemKey.login("example.test", "alice"), "1password", "key:openrouter", "mcp:dodo", "mcp:docs", "mcp:linear", "highlevel"]));
+  expect(report.secrets.equal).toEqual(expect.arrayContaining([itemKey.login("example.test", "alice"), "1password", "key:openrouter", "mcp:dodo", "mcp:docs", "mcp:linear"]));
 
   // Read back the way each side's chat view and bot read it.
   const [here, there] = [await history(local, archie.threadId), await history(onCloud, archie.threadId)];

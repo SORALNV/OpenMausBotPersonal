@@ -181,7 +181,7 @@ describe("needs you", () => {
     w.fail(w.atlas.threadId, at(9), "Invalid API key · Please run /login", { setup: true });
     w.fail(lou.threadId, at(8), "401 Unauthorized: OAuth token has expired");
     w.fail(kai.threadId, at(8, 30), TRIAL_CREDIT_REFUSED.paused);
-    w.fail(w.pepper.threadId, at(9, 30), "You've hit your usage limit. Try again at 3pm.");
+    w.fail(w.pepper.threadId, at(9, 30), "You've hit your usage limit. Try again at 3pm.", { text: { key: "chat.notice.usageLimit", params: { provider: "Codex", detail: "" } } });
     w.fail(rex.threadId, at(10), TRIAL_CREDIT_REFUSED.used_up);
     w.fail(rex.threadId, at(10, 5), "This month's cloud desktop hours are used up.", { place: { state: "cc-no-hours", params: { bot: "Rex" }, source: "works-on" } });
     w.fail(zed.threadId, at(10, 6), "Cloud computers can't start right now.", { place: { state: "cc-unavailable", params: { bot: "Zed" }, source: "works-on" } });
@@ -195,9 +195,6 @@ describe("needs you", () => {
     w.say(w.pepper.threadId, { role: "bot", kind: "options", at: at(12, 5), card: { title: "Switch to Claude?", subtitle: "Codex reached its limit", options: ["Switch", "Wait"], quotaSwitch: { engines: [{ instanceId: "claude", name: "Claude" }] } } });
     const drafts = w.store.createTask(rex.id, "Drafts", false)!;
     w.say(drafts.threadId, { role: "bot", kind: "options", at: at(12, 6), card: { title: "Which draft should go out?", subtitle: "Two drafts are ready", options: ["Short", "Long"] } });
-    const mia = w.store.createBot({ name: "Mia" });
-    w.say(mia.threadId, { role: "bot", kind: "options", at: at(12, 3), card: { title: "Which price?", subtitle: "", options: ["$10", "$20"], requestType: "question", requestId: "q3" } });
-    w.digest(mia.threadId, mia.id, at(12, 4), "rt", "Went with $20.", true);
     const parkedTask = w.store.createTask(w.pepper.id, "Outreach", false)!;
     w.parked.push({ id: "a1", botId: w.pepper.id, threadId: parkedTask.threadId, question: "Should I email the whole list or only last month's buyers?", createdAt: at(13) });
     w.engines.push({ instanceId: "grok", snapshot: { state: "available", authenticated: false } }, { instanceId: "claude", snapshot: { state: "available" } });
@@ -221,6 +218,7 @@ describe("needs you", () => {
     expect(needsYou.find((item) => item.kind === "signed-out" && item.instanceId === "grok")).toMatchObject({ botIds: [w.zed.id] });
     expect(needsYou.find((item) => item.kind === "signed-out" && item.instanceId === "claude")).toMatchObject({ botIds: [w.lou.id, w.atlas.id], threadId: w.atlas.threadId });
     expect(needsYou.find((item) => item.kind === "question" && item.threadId === w.zedTask.threadId)).toMatchObject({ botId: w.zed.id });
+    expect(needsYou.find((item) => item.kind === "usage-limit")).toMatchObject({ textCode: "chat.notice.usageLimit", textParams: { provider: "Codex", detail: "" } });
   });
 
   it("drops a failure once the bot finished a turn after it, an engine signed back in, or the app worked again", () => {
@@ -233,6 +231,58 @@ describe("needs you", () => {
       ["question", "Should I email the whole list or only last month's buyers?"],
       ["question", "Which draft should go out?"],
       ["question", "Which list should I send the newsletter to?"],
+    ]);
+  });
+
+  it.each(["Send the draft", ""])("codes approval titles without changing the English for %j", (title) => {
+    const w = world();
+    w.say(w.atlas.threadId, { role: "bot", kind: "options", at: at(12), card: { title, subtitle: "", options: ["Allow", "Deny"], requestType: "permission", requestId: "permission" } });
+    const items = todayReport(w.sources(), { ...ADMIN, asks: () => true }, MIDNIGHT, NOW).needsYou;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject(title ? { text: `Approve: ${title}`, textCode: "chat.notice.approve", textParams: { what: title } } : { text: "Approve:" });
+    if (!title) expect(items[0]).not.toHaveProperty("textCode");
+  });
+
+  it("keeps a question nobody answered after its turn ends, until the person answers it, within the week", () => {
+    const w = world();
+    const mia = w.store.createBot({ name: "Mia" });
+    const card = { title: "Which price?", subtitle: "", options: ["$10", "$20"], requestType: "question" as const, requestId: "q3" };
+    const asked = w.say(mia.threadId, { role: "bot", kind: "options", at: at(12, 3), card });
+    w.digest(mia.threadId, mia.id, at(12, 18), "rt", "Nobody answered, so I went with $20.", true);
+    w.digest(mia.threadId, mia.id, at(13), "next", "Done.", true);
+    expect(todayReport(w.sources(), ADMIN, MIDNIGHT, NOW).needsYou).toEqual([
+      { kind: "question", id: asked.id, at: at(12, 3), botId: mia.id, threadId: mia.threadId, text: "Which price?" },
+    ]);
+    expect(todayReport(w.sources(), ADMIN, MIDNIGHT, NOW + 8 * 24 * HOUR).needsYou).toEqual([]);
+
+    w.store.patchMessage(mia.threadId, asked.id, { card: { ...card, answered: "answer", answeredText: "$10", dismissed: false } });
+    expect(todayReport(w.sources(), ADMIN, MIDNIGHT, NOW).needsYou).toEqual([]);
+  });
+
+  it("lists a harness question card by its question, and leaves out one a bot is deciding or decided", () => {
+    const w = world();
+    const mia = w.store.createBot({ name: "Mia" });
+    const asked = w.say(mia.threadId, { role: "bot", kind: "options", at: at(12, 3),
+      card: { title: "Your bot has a question", subtitle: "CSV or Excel?", options: [], requestType: "question", requestId: "needs-input-a1-1" } });
+    w.say(w.atlas.threadId, { role: "bot", kind: "options", at: at(12, 4), card: { title: "Your bot has a question", subtitle: "Which region?", options: [],
+      requestType: "question", requestId: "needs-input-a2-1", answered: "answer", answeredBy: { kind: "bot", name: "Luchs" } } });
+    w.parked.push({ id: "a2", botId: w.atlas.id, threadId: w.atlas.threadId, question: "Which region?", decide: {}, createdAt: at(12, 4) });
+    expect(todayReport(w.sources(), ADMIN, MIDNIGHT, NOW).needsYou).toEqual([
+      { kind: "question", id: asked.id, at: at(12, 3), botId: mia.id, threadId: mia.threadId, text: "CSV or Excel?" },
+    ]);
+  });
+
+  it("drops a question the person closed, and lists a request asked again only where it was asked last", () => {
+    const w = world();
+    const mia = w.store.createBot({ name: "Mia" });
+    const card = { title: "Which price?", subtitle: "", options: ["$10", "$20"], requestType: "question" as const, requestId: "q3" };
+    w.say(mia.threadId, { role: "bot", kind: "options", at: at(12, 3), card: { ...card, dismissed: true } });
+    w.say(w.atlas.threadId, { role: "bot", kind: "options", at: at(12, 4), card: { ...card, requestId: "q4" } });
+    const task = w.store.createTask(w.atlas.id, "Pricing", false)!;
+    const again = w.say(task.threadId, { role: "bot", kind: "options", at: at(12, 5), card: { ...card, requestId: "q4" } });
+    w.digest(task.threadId, w.atlas.id, at(12, 20), "rt", "Went with $20.", true);
+    expect(todayReport(w.sources(), ADMIN, MIDNIGHT, NOW).needsYou).toEqual([
+      { kind: "question", id: again.id, at: at(12, 5), botId: w.atlas.id, threadId: task.threadId, text: "Which price?" },
     ]);
   });
 

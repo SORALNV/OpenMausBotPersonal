@@ -18,6 +18,13 @@
 //   FAKE_CODEX_ASYNC_QUESTIONS  async-question mode: JSON replacing the message's `questions`
 //   FAKE_CODEX_ASYNC_QUESTION_GATE  async-question mode: the turn keeps running until this file exists (default 300 ms)
 //   FAKE_CODEX_DUMP  path for {pid, argv, env, calls, decision}
+//   FAKE_CODEX_ACTION_LOG  early-tool-timeout/error: append an action before turn/start times out or fails
+//   FAKE_CODEX_ECHO_INPUT  "1": echo turn/start's input back as a userMessage item, as codex-cli 0.164.0 does
+//   FAKE_CODEX_COMMAND  the happy turn's one call, this command (default: "ls -la" and a web search);
+//     FAKE_CODEX_COMMAND_OUTPUT  JSON chunks it prints as item/commandExecution/outputDelta notifications, one every
+//     FAKE_CODEX_COMMAND_OUTPUT_MS (default all at once); FAKE_CODEX_COMMAND_GATE  the turn finishes once this file exists
+//   FAKE_CODEX_PATCH_BYTES  each turn first writes web/index.html by apply_patch, streamed as two
+//     item/fileChange/patchUpdated notifications (codex-cli 0.160.1's schema) of half and all this many bytes
 //   FAKE_CODEX_IGNORE_FEATURES  "1": config/read reports no `-c features.*` override
 //   FAKE_CODEX_SHELL_ENVIRONMENT_POLICY  JSON config/read reports, every field present and null unless set (codex-cli 0.160)
 //   FAKE_CODEX_APPROVAL_REQUEST  JSON {method, params} override in approval mode
@@ -41,11 +48,17 @@
 //   FAKE_CODEX_TEXT_REPLY  `codex exec` reply when no route matches (default "fake background answer")
 //   FAKE_CODEX_TEXT_LOG  `codex exec`: append {argv, cwd, prompt, env} per call
 //   FAKE_CODEX_TEXT_MODE  `codex exec`: ok (default) | fail | exit | hang | tool | noisy
+//   FAKE_CODEX_TEXT_REFUSE  `codex exec`: comma-separated models answered with the 400 a ChatGPT account gets for gpt-5.4-mini
 //   FAKE_CODEX_LUNA  "1": model/list also offers gpt-6-luna
 //   FAKE_CODEX_UPDATED_FILE  while this file exists, the CLI was updated in place: --version answers codex-cli 0.162.1
 //     and model/list also offers gpt-6.1-sol
 //   FAKE_CODEX_MCP_START  "1": on thread/start, start each `-c mcp_servers.*` mount as codex-cli 0.160.1 does
 //     (its initialize, or FAKE_CODEX_MCP_HANDSHAKE) and dump mcpStartup[name]
+//   FAKE_CODEX_MCP_READY_MS  each `-c mcp_servers.*` mount is reported starting after the thread/start or
+//     thread/resume reply and ready at once, as codex-cli 0.166.0 does; with this, ready only this many ms
+//     later, and the dump records mcpReadyAtTurnStart
+//   FAKE_CODEX_ROLLOUT  rollout path thread/start and thread/resume report as `thread.path`; each happy turn appends a
+//     namespace-less function_call for retry_thread and codex's "unsupported call: retry_thread" output to it
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
@@ -87,6 +100,10 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
     process.stderr.write("Not logged in\n");
     process.exit(1);
   }
+  if (mode === "api-key-configured") {
+    process.stderr.write("API key configured - sk-fake-****\nAuthentication is checked when you send a request.\n");
+    process.exit(0);
+  }
   // Codex 0.147.0 reports a successful login on stderr; older versions wrote it on stdout.
   const statusStream = mode === "logged-in-stdout" ? process.stdout : process.stderr;
   statusStream.write("Logged in using ChatGPT\n");
@@ -116,6 +133,13 @@ if (process.argv[2] === "exec") {
   }
   event({ type: "thread.started", thread_id: "fake-exec-thread" });
   event({ type: "turn.started" });
+  const model = process.argv[process.argv.indexOf("--model") + 1] ?? "";
+  if (process.env.FAKE_CODEX_TEXT_REFUSE?.split(",").includes(model)) {
+    const message = `unexpected status 400 Bad Request: {"type":"invalid_request_error","message":"The '${model}' model is not supported when using Codex with a ChatGPT account."}`;
+    event({ type: "error", message });
+    event({ type: "turn.failed", error: { message } });
+    process.exit(1);
+  }
   if (textMode === "fail") {
     event({ type: "error", message: "unexpected status 401 Unauthorized" });
     event({ type: "turn.failed", error: { message: "unexpected status 401 Unauthorized" } });
@@ -264,7 +288,34 @@ const startMcpServers = async (): Promise<Record<string, McpStartup>> => {
   return Object.fromEntries(entries);
 };
 
+let mcpPending: string[] = [];
+let mcpReadyAtTurnStart: boolean | undefined;
+// codex-cli 0.166.0 answers the thread request first and reports each server's startup after it.
+const announceMcpStartup = () => {
+  const report = (name: string, status: string, error: string | null = null) =>
+    out({ jsonrpc: "2.0", method: "mcpServer/startupStatus/updated", params: { threadId: null, name, status, error, failureReason: null } });
+  mcpPending = Object.entries(mcpMounts())
+    .filter(([name, fields]) => "command" in fields && fields.enabled !== false && name !== process.env.FAKE_CODEX_MCP_FAILED)
+    .map(([name]) => name);
+  for (const name of mcpPending) report(name, "starting");
+  const settle = (name: string) => {
+    mcpPending = mcpPending.filter((pending) => pending !== name);
+    const started = mcpStartup?.[name];
+    if (started?.status === "failed") report(name, "failed", started.error);
+    else report(name, "ready");
+  };
+  const delayMs = Number(process.env.FAKE_CODEX_MCP_READY_MS) || 0;
+  for (const [index, name] of [...mcpPending].entries()) {
+    const delay = delayMs * (process.env.FAKE_CODEX_MCP_STAGGER === "1" ? index + 1 : 1);
+    if (delay > 0) setTimeout(() => settle(name), delay);
+    else settle(name);
+  }
+};
 const threadReply = (response: unknown) => {
+  replyToThread(response);
+  announceMcpStartup();
+};
+const replyToThread = (response: unknown) => {
   if (!process.env.FAKE_CODEX_RESTORED_USAGE) return out(response);
   const restored = {
     jsonrpc: "2.0", method: "thread/tokenUsage/updated",
@@ -301,12 +352,21 @@ const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
     writeDumpAtomic(
       process.env.FAKE_CODEX_DUMP,
-      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: process.env, calls, decision, ...(mcpStartup ? { mcpStartup } : {}) }, null, 2),
+      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: process.env, calls, decision, ...(mcpStartup ? { mcpStartup } : {}),
+        ...(mcpReadyAtTurnStart !== undefined ? { mcpReadyAtTurnStart } : {}) }, null, 2),
     );
   }
 };
 
 const finishTurn = () => {
+  const patchBytes = Number(process.env.FAKE_CODEX_PATCH_BYTES);
+  if (patchBytes > 0) {
+    const change = (bytes: number) => [{ path: `${process.cwd()}/web/index.html`, kind: { type: "add" }, diff: "+".repeat(bytes) }];
+    notify("item/started", { item: { id: "p1", type: "fileChange", status: "inProgress", changes: [] } });
+    notify("item/fileChange/patchUpdated", { itemId: "p1", changes: change(Math.floor(patchBytes / 2)) });
+    notify("item/fileChange/patchUpdated", { itemId: "p1", changes: change(patchBytes) });
+    notify("item/completed", { item: { id: "p1", type: "fileChange", status: "completed", changes: change(patchBytes) } });
+  }
   notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed", aggregatedOutput: "README.md\nAPI_KEY=codex-output-secret", exitCode: 0 } });
   notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
   if (mode === "stream") {
@@ -332,6 +392,12 @@ const finishTurn = () => {
     last: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 },
     modelContextWindow: 272000,
   } });
+  if (process.env.FAKE_CODEX_ROLLOUT) {
+    const line = (payload: unknown) => `${JSON.stringify({ timestamp: new Date().toISOString(), type: "response_item", payload })}\n`;
+    appendFileSync(process.env.FAKE_CODEX_ROLLOUT,
+      line({ type: "function_call", name: "retry_thread", arguments: "{}", call_id: "call_unsupported" }) +
+      line({ type: "function_call_output", call_id: "call_unsupported", output: "unsupported call: retry_thread" }));
+  }
   dump();
   if (mode === "late-request") process.stdout.cork();
   notify("turn/completed", { turn: { status: "completed" } });
@@ -398,7 +464,7 @@ process.stdin.on("data", (chunk) => {
       case "initialize": {
         experimentalApi = msg.params?.capabilities?.experimentalApi === true;
         logStartup("initialize");
-        const reply = () => out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
+        const reply = () => out({ jsonrpc: "2.0", id: msg.id, result: { ok: true, userAgent: process.env.FAKE_CODEX_USER_AGENT ?? "codex_cli_rs/0.166.0" } });
         if (process.env.FAKE_CODEX_STARTUP_DELAY_MS) setTimeout(reply, Number(process.env.FAKE_CODEX_STARTUP_DELAY_MS));
         else reply();
         break;
@@ -519,7 +585,7 @@ process.stdin.on("data", (chunk) => {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "experimental API required for permissions" } });
         } else if (mode === "resume" || mode === "review-events" || mode === "helper-events" || mode === "instructions-unsupported" || mode === "config-profile" || mode === "config-profile-unsupported" || mode === "async-question" ||
             (mode === "resume-then-missing" && !existsSync(process.env.FAKE_CODEX_STATE ?? ""))) {
-          threadReply({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId }, sandbox: resolvedSandbox(msg.params ?? {}) } });
+          threadReply({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId, ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) }, sandbox: resolvedSandbox(msg.params ?? {}) } });
         } else {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: `no rollout found for thread id ${msg.params?.threadId}` } });
         }
@@ -574,13 +640,20 @@ process.stdin.on("data", (chunk) => {
           const reply = { jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-thread-1" }, model: "fake-codex-model", sandbox: resolvedSandbox(msg.params ?? {}) } };
           void startMcpServers().then((startup) => { mcpStartup = startup; dump(); threadReply(reply); });
         } else {
-          threadReply({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-thread-1" }, model: "fake-codex-model", sandbox: resolvedSandbox(msg.params ?? {}) } });
+          threadReply({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-thread-1", ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) }, model: "fake-codex-model", sandbox: resolvedSandbox(msg.params ?? {}) } });
         }
         break;
       case "turn/start": {
+        if (process.env.FAKE_CODEX_MCP_READY_MS) mcpReadyAtTurnStart = mcpPending.length === 0;
         dump();
         logStartup("turn/start");
         nativeThreadId = msg.params?.threadId ?? nativeThreadId;
+        if (mode === "early-tool-timeout" || mode === "early-tool-error") {
+          if (process.env.FAKE_CODEX_ACTION_LOG) appendFileSync(process.env.FAKE_CODEX_ACTION_LOG, `${JSON.stringify({ action: "record", pid: process.pid })}\n`);
+          notify("item/completed", { item: { id: "early-tool", type: "commandExecution", command: "record", status: "completed", aggregatedOutput: "recorded" } });
+          if (mode === "early-tool-error") out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "connection reset by peer" } });
+          break;
+        }
         // Counts turn launches only, not the catalog spawn during create().
         if (process.env.FAKE_CODEX_LAUNCH_CRASHES && process.env.FAKE_CODEX_STATE) {
           let launched = 0;
@@ -699,6 +772,14 @@ process.stdin.on("data", (chunk) => {
             break;
           }
         }
+        if (mode === "plan-model-refused") {
+          out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
+          // The reporter's words (2026-11-03): ChatGPT lists gpt-6.1-sol, then refuses it for a ChatGPT account.
+          const error = { message: "unexpected status 400 Bad Request: invalid_request_error model_not_found: The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.", codexErrorInfo: null, additionalDetails: null };
+          notify("error", { willRetry: false, error });
+          notify("turn/completed", { turn: { status: "failed", error } });
+          break;
+        }
         if (mode === "usage-limit") {
           out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
           const error = { message: "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 5:23 PM.", codexErrorInfo: "usageLimitExceeded", additionalDetails: null };
@@ -768,6 +849,11 @@ process.stdin.on("data", (chunk) => {
         if (mode === "early-turn-events") finishTurn();
         out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
         if (mode === "early-turn-events") break;
+        if (process.env.FAKE_CODEX_ECHO_INPUT === "1") {
+          const prompt = { type: "userMessage", id: "u1", content: msg.params?.input ?? [] };
+          notify("item/started", { item: prompt });
+          notify("item/completed", { item: prompt });
+        }
         if (mode === "helper-events") {
           for (const scope of [
             { threadId: "helper-thread", turnId: "helper-turn" },
@@ -792,9 +878,16 @@ process.stdin.on("data", (chunk) => {
               "-Command",
               `"Get-Content -Raw -LiteralPath 'C:\\Users\\Ada\\workspaces\\${"very-long-folder\\".repeat(8)}NOTES.md'"`,
             ].join(" ")
-          : "ls -la";
+          : process.env.FAKE_CODEX_COMMAND || "ls -la";
         notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
-        notify("item/started", { item: { id: "w1", type: "webSearch", query: "OpenMausBot" } });
+        const printed = JSON.parse(process.env.FAKE_CODEX_COMMAND_OUTPUT ?? "[]") as string[];
+        const every = Number(process.env.FAKE_CODEX_COMMAND_OUTPUT_MS) || 0;
+        printed.forEach((delta, index) => {
+          const print = () => notify("item/commandExecution/outputDelta", { itemId: "i1", delta });
+          if (every > 0) setTimeout(print, every * (index + 1));
+          else print();
+        });
+        if (!process.env.FAKE_CODEX_COMMAND) notify("item/started", { item: { id: "w1", type: "webSearch", query: "OpenMausBot" } });
         const reviewOnce = process.env.FAKE_CODEX_REVIEW_ONCE_FILE;
         if (process.env.FAKE_CODEX_REVIEW_EVENTS && (!reviewOnce || !existsSync(reviewOnce))) {
           if (reviewOnce) writeFileSync(reviewOnce, "1");
@@ -933,6 +1026,8 @@ process.stdin.on("data", (chunk) => {
             ? JSON.parse(process.env.FAKE_CODEX_APPROVAL_REQUEST)
             : { method: "execCommandApproval", params: { command: approvalCommand } };
           out({ jsonrpc: "2.0", id: 100, ...approval });
+        } else if (process.env.FAKE_CODEX_COMMAND_GATE) {
+          void waitForGate(process.env.FAKE_CODEX_COMMAND_GATE, 10 * 60_000).then(() => finishTurn());
         } else {
           finishTurn();
           if (process.env.FAKE_CODEX_REVIEW_AFTER_COMPLETION) {

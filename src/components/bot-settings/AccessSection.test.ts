@@ -16,7 +16,7 @@ vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
   return { ...original, useStore: () => ({ state: { ...original.initialState, config: fixture.config ?? original.initialState.config }, dispatch: fixture.dispatch }) };
 });
-// The connected-apps list (Composio accounts plus the native HighLevel connection) is seeded per test.
+// The connected-apps list (Composio accounts plus the native Email connection) is seeded per test.
 vi.mock("./useBotApps", async (importOriginal) => ({
   ...await importOriginal<typeof import("./useBotApps")>(),
   useBotApps: () => fixture.apps,
@@ -28,7 +28,7 @@ vi.mock("@/lib/mcp-servers", async (importOriginal) => ({
 
 // DesktopCapabilities reads window.ogb at module scope, and this suite runs in the node environment.
 vi.mock("../DesktopCapabilities", () => ({
-  useDesktopCapabilities: () => ({ capabilities: { host: { homeDir: undefined } } }),
+  useDesktopCapabilities: () => ({ capabilities: { host: { homeDir: undefined }, localComputer: {} } }),
 }));
 
 const { AccessSection } = await import("./AccessSection");
@@ -105,7 +105,7 @@ describe("owner tool selection status", () => {
 
   it("shows corrupt saved restrictions as a blocked setup, never all tools", () => {
     const corrupt = render(makeBot({ toolScope: { allow: "native:*" } } as unknown as Partial<Bot>));
-    expect(corrupt).toContain("Invalid saved selection. This bot cannot start until it is repaired.");
+    expect(corrupt).toContain("This bot&#x27;s saved tool selection is damaged, so the bot can&#x27;t start. Choose its tools again to fix it.");
     expect(corrupt).toContain('role="alert"');
   });
 
@@ -334,21 +334,12 @@ describe("AccessSection Record browser steps", () => {
 describe("AccessSection per-app scopes", () => {
   const app = (slug: string, label: string) => ({ slug, label, blurb: "", card: { logo: null, domain: null, label }, scope: "write" as const });
 
-  it("lists HighLevel by name next to the Composio apps once the server reports it connected", () => {
-    fixture.apps = { phase: "ready", connectedSlugs: ["gmail", "highlevel"], apps: [app("gmail", "Gmail"), app("highlevel", "HighLevel")] };
+  it("lists Email by name next to the Composio apps once the server reports a mailbox connected", () => {
+    fixture.apps = { phase: "ready", connectedSlugs: ["email", "gmail"], apps: [app("email", "Email"), app("gmail", "Gmail")] };
     const html = render(makeBot({ connectorScopes: { apps: { gmail: "write" } } }));
-    expect(html).toContain('aria-label="highlevel access"');
-    expect(html).toMatch(/<span class="min-w-0 text-\[13px\] text-ink">HighLevel</);
+    expect(html).toContain('aria-label="email access"');
+    expect(html).toMatch(/<span class="min-w-0 text-\[13px\] text-ink">Email</);
     expect(html).not.toContain("not connected");
-    // Tool-by-tool grants are Composio's list; HighLevel is scoped by read/write only.
-    expect([...html.matchAll(/truncate font-mono text-\[12\.5px\] text-ink">([^<]*)</g)].map((match) => match[1])).toEqual(["gmail"]);
-  });
-
-  it("leaves HighLevel out while it is not connected", () => {
-    fixture.apps = { phase: "ready", connectedSlugs: ["gmail"], apps: [app("gmail", "Gmail")] };
-    const html = render(makeBot({ connectorScopes: { apps: { gmail: "write" } } }));
-    expect(html).not.toContain("HighLevel");
-    expect(html).not.toContain("highlevel");
   });
 
   it("shows no scope rows until the account list is known", () => {
@@ -370,5 +361,19 @@ describe("AccessSection parts", () => {
     const folder = renderToStaticMarkup(createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot(), derived: makeDerived(), parts: ["folder"] })));
     expect(folder).toContain("Working folder");
     expect(folder).not.toContain("Let this bot use notes");
+  });
+});
+
+describe("working folder note", () => {
+  const folderCard = (bot: Bot) => renderToStaticMarkup(createElement(StoreProvider, null, createElement(AccessSection, { bot, derived: makeDerived(), parts: ["folder"] })));
+  const inFolder = (cwd: string | null, botCwd?: string) => makeBot({ ...(botCwd ? { cwd: botCwd } : {}), tasks: [{ threadId: "thread-1", cwd }] as unknown as Bot["tasks"] });
+
+  it("calls a thread pinned only to a folder chosen for it, or to an earlier working folder, never to its own folder", () => {
+    for (const own of ["/data/.openmausbot/task-workspaces/bot-1/thread-1", "C:\\Users\\Ada\\.openmausbot\\task-workspaces\\bot-1\\thread-1"]) {
+      expect(folderCard(inFolder(own, "/projects/site"))).not.toContain("This task is pinned");
+      expect(folderCard(inFolder(own))).not.toContain("This task is pinned");
+    }
+    expect(folderCard(inFolder("/projects/old", "/projects/site"))).toContain("This task is pinned to /projects/old.");
+    expect(folderCard(inFolder("/projects/site", "/projects/site"))).not.toContain("This task is pinned");
   });
 });

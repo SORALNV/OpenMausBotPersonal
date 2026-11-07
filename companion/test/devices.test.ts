@@ -9,6 +9,7 @@ import {
   DeviceRegistry,
   MAX_PAIRING_ATTEMPTS,
   PAIRING_TTL_MS,
+  UNCONFIRMED_DEVICE_MS,
 } from "../src/devices.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
@@ -47,6 +48,28 @@ describe("DeviceRegistry", () => {
     expect(registry.pairing()?.token).toBe(second.token);
     expect(registry.closePairing(second.token)).toBe(true);
     expect(registry.pairing()).toBeNull();
+  });
+
+  it("drops a paired device its phone never used, and keeps one it did", () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const dropped: string[] = [];
+      registry.onDropped((id) => dropped.push(id));
+      const unused = pair(registry, "Lost reply");
+      const used = pair(registry, "Used");
+      const viaSession = pair(registry, "Encrypted");
+      expect(registry.authenticate(used.token)?.id).toBe(used.device.id);
+      registry.confirm(viaSession.device.id);
+      vi.advanceTimersByTime(UNCONFIRMED_DEVICE_MS - 1);
+      expect(registry.list()).toHaveLength(3);
+      vi.advanceTimersByTime(1);
+      expect(dropped).toEqual([unused.device.id]);
+      expect(registry.list().map((device) => device.name)).toEqual(["Used", "Encrypted"]);
+      expect(registry.authenticate(unused.token)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("survives a restart", () => {
@@ -306,6 +329,31 @@ describe("authenticate under a failing disk", () => {
     expect(registry.authenticate(token)?.id).toBe(device.id);
     expect(attempted).toBe(1);
     expect(registry.authenticate(token)?.id).toBe(device.id);
+  });
+});
+
+describe("a removal that cannot be saved", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("keeps the device in memory, matching the file, and lets the removal be retried", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+    const writable = registry as unknown as { persist: () => void };
+    const persist = writable.persist;
+    writable.persist = () => {
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+
+    expect(() => registry.revoke(device.id)).toThrow(/ENOSPC/);
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+    expect(new DeviceRegistry().authenticate(token)?.id).toBe(device.id);
+
+    writable.persist = persist;
+    expect(registry.revoke(device.id)).toBe(true);
+    expect(registry.authenticate(token)).toBeNull();
+    expect(new DeviceRegistry().authenticate(token)).toBeNull();
   });
 });
 

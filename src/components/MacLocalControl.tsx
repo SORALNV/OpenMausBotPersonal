@@ -63,8 +63,8 @@ export function MacLocalControl() {
       <div className="flex items-start gap-3">
         <Shield size={16} className="mt-0.5 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-medium text-ink">Allow control of this computer</div>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
+          <div className="text-[14px] font-medium text-ink">{t("computer.mac.allowTitle")}</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
             {permissionMessage ?? t("computer.mac.permission.generic")}
           </p>
           {reason && <details className="mt-2 text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("computer.mac.permission.driverDetail")}</summary><p className="mt-1 break-words">{reason}</p></details>}
@@ -81,19 +81,19 @@ export function MacLocalControl() {
                 type="button"
                 onClick={() => void openSettings()}
                 disabled={pending}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
               >
-                Open System Settings
+                {t("computer.mac.openSystemSettings")}
               </button>
             )}
             <button
               type="button"
               onClick={() => void retry()}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] font-medium text-ink hover:bg-raised disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-hairline/50 px-3 py-1.5 text-[13px] font-medium text-ink hover:bg-raised disabled:opacity-50"
             >
               {pending && <Loader2 size={13} className="animate-spin" />}
-              Retry
+              {t("commandAllowlist.retry")}
             </button>
           </div>
         </div>

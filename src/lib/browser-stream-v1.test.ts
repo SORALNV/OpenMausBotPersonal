@@ -39,6 +39,19 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+describe("the v1 view of one conversation's browser", () => {
+  it("asks for that conversation's browser on a Team Cloud, and for the bot's own browser elsewhere", () => {
+    createLiveStreamClient("scout", events(), vi.fn(), { viewer: "" }, { threadId: "ada-chat" });
+    createLiveStreamClient("scout", events(), vi.fn(), { viewer: "v-1" }, { threadId: "ada-chat" });
+    createLiveStreamClient("scout", events(), vi.fn());
+    expect(FixtureEventSource.instances.map((source) => source.url)).toEqual([
+      "/api/bots/scout/browser/live?threadId=ada-chat",
+      "/api/bots/scout/browser/live?resume=v-1&threadId=ada-chat",
+      "/api/bots/scout/browser/live",
+    ]);
+  });
+});
+
 describe("the v1 view in the stream's words", () => {
   it("turns v2 input into the frozen v1 actions, within their limits", () => {
     expect(liveAction({ type: "mouse", action: "down", x: -4, y: 9000, button: "left", buttons: 1, clickCount: 7, modifiers: 2 }))
@@ -61,10 +74,11 @@ describe("the v1 view in the stream's words", () => {
     }
   });
 
-  it("names who holds the browser as v2 does", () => {
-    expect(liveControl({ held: true, owned: true, controlling: true }, 3)).toEqual({ canOperate: true, controller: "you", generation: 3, dialog: null });
-    expect(liveControl({ held: true, owned: true, controlling: false }, 1).controller).toBe("agent");
+  it("names who holds the browser as v2 does, and that the person holds it from another view of theirs", () => {
+    expect(liveControl({ held: true, owned: true, controlling: true }, 3)).toEqual({ canOperate: true, controller: "you", generation: 3, dialog: null, owned: true });
+    expect(liveControl({ held: true, owned: true, controlling: false }, 1)).toMatchObject({ controller: "agent", owned: true });
     expect(liveControl({ held: true, owned: false }, 1).controller).toBe("another-viewer");
+    expect(liveControl({ held: true, owned: false }, 1)).not.toHaveProperty("owned");
     expect(liveControl({ held: false }, 1).controller).toBe("unclaimed");
     expect(liveControl({ held: true, owned: true, controlling: true, dialog: { type: "confirm", message: "Leave?", defaultValue: "" } }, 1).dialog)
       .toEqual({ type: "confirm", message: "Leave?", defaultValue: "" });
@@ -101,6 +115,45 @@ describe("the v1 live client", () => {
     source.emit("url", { url: "https://a.test/next" });
     expect(handlers.onMessage).toHaveBeenCalledWith({ type: "tabs", tabs: [{ tabId: "t1", title: "A", url: "https://a.test/", active: true }] });
     expect(handlers.onMessage).toHaveBeenCalledWith({ type: "url", url: "https://a.test/next" });
+  });
+
+  it("opens at the panel's size and sends each new size to its view while it only watches, the newest once the last is answered", async () => {
+    const post = vi.fn<(body: Record<string, unknown>, viewerId: string) => Promise<unknown>>().mockResolvedValue({ ok: true });
+    const client = createLiveStreamClient("pepper", events(), post, { viewer: "" }, {}, { width: 365.4, height: 686 });
+    const source = FixtureEventSource.instances.at(-1)!;
+    expect(source.url).toBe("/api/bots/pepper/browser/live?width=365&height=686");
+    expect(client.send({ type: "resize", width: 400, height: 700 })).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+    source.emit("ready", { viewerId: "v1" });
+    expect(post).toHaveBeenLastCalledWith({ type: "resize", width: 400, height: 700 }, "v1");
+    source.emit("control", { held: false, owned: false, controlling: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const answer = deferred();
+    post.mockReturnValueOnce(answer.promise.then(() => ({ ok: true })));
+    client.send({ type: "resize", width: 420, height: 700 });
+    client.send({ type: "resize", width: 440, height: 700 });
+    client.send({ type: "resize", width: 460, height: 720 });
+    expect(post.mock.calls.filter(([body]) => body.type === "resize")).toHaveLength(2);
+    answer.resolve();
+    await vi.waitFor(() => expect(post).toHaveBeenLastCalledWith({ type: "resize", width: 460, height: 720 }, "v1"));
+    expect(post.mock.calls.filter(([body]) => body.type === "resize")).toHaveLength(3);
+  });
+
+  it("keeps going when a server without resizing refuses a size", async () => {
+    const post = vi.fn<(body: Record<string, unknown>, viewerId: string) => Promise<unknown>>()
+      .mockImplementation(async (body) => { if (body.type === "resize") throw Object.assign(new Error("Invalid browser action."), { status: 400 }); return { ok: true }; });
+    const handlers = events({ onMessage: vi.fn(), onGone: vi.fn() });
+    const client = createLiveStreamClient("pepper", handlers, post, { viewer: "" }, {}, { width: 365, height: 686 });
+    const source = FixtureEventSource.instances.at(-1)!;
+    source.emit("ready", { viewerId: "v1" });
+    source.emit("control", { held: true, owned: true, controlling: true });
+    client.send({ type: "resize", width: 500, height: 700 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    client.transport.send({ type: "text", text: "hi" });
+    await client.transport.settle();
+    expect(post).toHaveBeenLastCalledWith({ type: "input_keyboard", eventType: "char", text: "hi" }, "v1");
+    expect(handlers.onMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "notice" }));
+    expect(handlers.onGone).not.toHaveBeenCalled();
   });
 
   it("takes control with a POST, then sends input in order while it controls", async () => {
@@ -185,6 +238,20 @@ describe("the v1 live client", () => {
     expect(FixtureEventSource.instances).toHaveLength(6);
     expect(handlers.onGone).toHaveBeenCalledOnce();
     expect(post.mock.calls.some(([body]) => body.type === "input_keyboard")).toBe(false);
+  });
+
+  it("preserves coded error fields and English while reconnecting an unresponsive browser", () => {
+    vi.useFakeTimers();
+    const { client, handlers, source } = open();
+    const message = "The browser stopped responding, so it is being restarted. The live view reconnects by itself.";
+    source.fail({ retryable: true, message, errorKey: "serverError.browser.restartingUnresponsive", errorParams: {} });
+    expect(handlers.onMessage).toHaveBeenCalledExactlyOnceWith({ type: "notice", message, errorKey: "serverError.browser.restartingUnresponsive", errorParams: {} });
+    expect(handlers.onGone).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(999);
+    expect(FixtureEventSource.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FixtureEventSource.instances).toHaveLength(2);
+    client.stop();
   });
 
   it("does not retry the server's terminal refusal, and shows its reason", () => {

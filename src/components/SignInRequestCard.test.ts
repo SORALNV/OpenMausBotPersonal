@@ -13,9 +13,10 @@ vi.mock("react", async (importOriginal) => {
   } };
 });
 const dispatch = vi.fn();
+const bots = vi.hoisted(() => ({ value: [] as Array<{ id: string; name: string; browserProfile?: string }> }));
 vi.mock("@/state/store", async (original) => ({
   ...await original<typeof import("@/state/store")>(),
-  useStore: () => ({ dispatch }),
+  useStore: () => ({ state: { bots: bots.value }, dispatch }),
 }));
 const answerSignIn = vi.fn();
 const here = { value: true };
@@ -74,7 +75,7 @@ describe("SignInRequestCard while it waits", () => {
     expect(html).toContain("— Pepper");
     expect(html).toContain("Pepper’s built-in browser");
     for (const label of ["Open", "Done", "Cancel"]) expect(html).toContain(label);
-    expect(html).toContain("OpenMausBot never sees it.");
+    expect(html).toContain("MausBot never sees it.");
     expect(html).not.toContain("<input");
   });
 
@@ -88,7 +89,7 @@ describe("SignInRequestCard while it waits", () => {
 
   it("says the host computer, not this one, where this computer is somewhere else", () => {
     here.value = false;
-    expect(view({ place: "local" })).toContain("the computer OpenMausBot runs on");
+    expect(view({ place: "local" })).toContain("the computer MausBot runs on");
   });
 
   it("Open goes to the place the bot works", () => {
@@ -119,6 +120,19 @@ describe("SignInRequestCard while it waits", () => {
     expect(html).toContain("Save and continue");
     expect(html).not.toMatch(/>Done<|>Open</);
     expect(saveLoginFromCard).not.toHaveBeenCalled();
+  });
+
+  it("says a login saved here is for every bot that shares this browser, by name", () => {
+    bots.value = [{ id: "pepper", name: "Pepper", browserProfile: "work" }, { id: "basil", name: "Basil", browserProfile: "work" }, { id: "sage", name: "Sage", browserProfile: "guest" }];
+    try {
+      fixture.setters = []; fixture.states = { 2: true };
+      expect(view()).toContain("Pepper and the bots that share its browser (Basil) sign in with them from now on");
+      bots.value = [{ id: "pepper", name: "Pepper", browserProfile: "guest" }, { id: "sage", name: "Sage", browserProfile: "guest" }];
+      fixture.setters = []; fixture.states = { 2: true };
+      expect(view()).toContain("From now on Pepper signs in with them without you");
+    } finally {
+      bots.value = [];
+    }
   });
 
   it("names a sign-in page on another site, open in the browser, as a choice left unticked, and saves it only when ticked", async () => {

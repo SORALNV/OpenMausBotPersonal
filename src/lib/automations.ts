@@ -1,13 +1,16 @@
 // Automations as a person reads them: one plain sentence, one status word, "last ran" and "next". Built from the
 // store's schedules (routines), webhooks and runs, so the Automations page, its panel and the chat card never disagree.
-import { cronScheduleLabel } from "../../shared/cron-label";
+import { cronPresetText, cronText } from "@/lib/cron-text";
+import { clockOptions } from "@/lib/clock-time";
 import { activeLocale, t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
-import type { Routine, RoutineRun, RoutineSchedule } from "@/lib/routines";
+import { isRoutineProblemRun, type Routine, type RoutineRun, type RoutineSchedule } from "@/lib/routines";
 import type { WebhookAttempt, WebhookTrigger } from "@/lib/webhooks";
 import type { AppTrigger } from "@/lib/app-triggers";
 import { appProblem, appStatusParts, appWhen, skippedToday } from "@/lib/app-automations";
 import { limitResetWhen } from "@/lib/limit-resets";
+import { routineLineText } from "@/lib/activity-text";
+import { partlyDone } from "@/lib/routine-display";
 import type { OptionCardData } from "@/state/store";
 
 export type AutomationKind = "schedule" | "webhook" | "app";
@@ -26,6 +29,12 @@ export interface Automation {
   nextRunAt: number | null;
   /** This automation's runs, newest first. */
   runs: RoutineRun[];
+  /** A routine with checks: when they last found nothing new, and why they cannot read an app. */
+  checkedAt?: number;
+  checkTrouble?: string;
+  checkTroubleCode?: string;
+  /** Its runs read and draft only. */
+  readsAndDrafts?: boolean;
 }
 
 const runTime = (run: RoutineRun) => run.startedAt ?? run.scheduledFor ?? run.createdAt;
@@ -39,6 +48,8 @@ export function automationsFrom(sources: { routines: readonly Routine[]; webhook
     ...sources.routines.map((routine): Automation => ({
       kind: "schedule", id: routine.id, name: routine.name, botId: routine.botId, instructions: routine.prompt, enabled: routine.enabled,
       schedule: routine.schedule, nextRunAt: routine.enabled ? routine.nextRunAt : null, runs: runsOf(routine.id),
+      ...(routine.checkedAt !== undefined ? { checkedAt: routine.checkedAt } : {}), ...(routine.checkTrouble ? { checkTrouble: routine.checkTrouble, ...(routine.checkTroubleCode ? { checkTroubleCode: routine.checkTroubleCode } : {}) } : {}),
+      ...(routine.access === "read-and-draft" ? { readsAndDrafts: true } : {}),
     })),
     ...sources.webhooks.map((webhook): Automation => ({
       kind: "webhook", id: webhook.id, name: webhook.name, botId: webhook.botId, instructions: webhook.prompt, enabled: webhook.enabled,
@@ -49,6 +60,12 @@ export function automationsFrom(sources: { routines: readonly Routine[]; webhook
       appTrigger: trigger, nextRunAt: null, runs: runsOf(trigger.id),
     })),
   ].filter((automation) => !botIds || botIds.has(automation.botId));
+}
+
+/** An unseen failed or missed run the person can clear: it belongs to an automation in `automations`, and opening that
+ * automation marks it seen. A run whose automation or bot was deleted has nothing to open, so it never asks for attention. */
+export function hasUnseenProblemRun(automations: readonly Automation[]): boolean {
+  return automations.some((automation) => automation.runs.some((run) => isRoutineProblemRun(run) && !run.seenAt));
 }
 
 export function automationFor(ref: { kind: AutomationKind; id: string }, sources: Parameters<typeof automationsFrom>[0]): Automation | null {
@@ -82,7 +99,7 @@ const locale = () => activeLocale();
 /** 9 AM on the hour, 9:30 AM otherwise, in the person's language. */
 export function clock(at: number, dropZeroMinutes = false): string {
   const date = new Date(at);
-  return date.toLocaleTimeString(locale(), dropZeroMinutes && date.getMinutes() === 0 ? { hour: "numeric" } : { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString(locale(), clockOptions(locale(), dropZeroMinutes && date.getMinutes() === 0));
 }
 
 /** When something last happened: "today 9:02 AM", "yesterday", "Mon 9:00 AM", or "Oct 3". */
@@ -90,7 +107,7 @@ export function lastWhen(at: number, now = Date.now()): string {
   const days = Math.round((startOfDay(now) - startOfDay(at)) / DAY_MS);
   if (days <= 0) return t("automations.time.today", { time: clock(at) });
   if (days === 1) return t("automations.time.yesterday");
-  if (days < 7) return `${new Date(at).toLocaleDateString(locale(), { weekday: "short" })} ${clock(at)}`;
+  if (days < 7) return t("automations.time.dayAt", { day: new Date(at).toLocaleDateString(locale(), { weekday: "short" }), time: clock(at) });
   return new Date(at).toLocaleDateString(locale(), { month: "short", day: "numeric" });
 }
 
@@ -99,7 +116,7 @@ export function nextWhen(at: number, now = Date.now()): string {
   const days = Math.round((startOfDay(at) - startOfDay(now)) / DAY_MS);
   if (days <= 0) return t("automations.time.today", { time: clock(at) });
   if (days === 1) return t("automations.time.tomorrow", { time: clock(at) });
-  if (days < 7) return `${new Date(at).toLocaleDateString(locale(), { weekday: "long" })} ${clock(at)}`;
+  if (days < 7) return t("automations.time.dayAt", { day: new Date(at).toLocaleDateString(locale(), { weekday: "long" }), time: clock(at) });
   return new Date(at).toLocaleDateString(locale(), { month: "short", day: "numeric" });
 }
 
@@ -125,8 +142,7 @@ export function plainWhen(schedule: RoutineSchedule): string {
     // "Every 2 minutes" is a cron step: an interval runs at most every 5 minutes, so a bot asked for less writes this.
     const minutes = /^\*\/([1-5]?\d) \* \* \* \*$/.exec(schedule.expression.trim())?.[1];
     if (minutes && Number(minutes) >= 2) return t("automations.when.everyMinutes", { count: Number(minutes) });
-    const label = cronScheduleLabel(schedule);
-    return label.startsWith("Cron ") ? t("automations.when.custom") : label;
+    return cronPresetText(schedule) ? cronText(schedule) : t("automations.when.custom");
   }
   if (schedule.type === "interval") {
     const minutes = schedule.everyMinutes;
@@ -236,10 +252,11 @@ function ownerFix(run: RoutineRun): { reason: string; fix: AutomationFix } | nul
 /** Done when a one-time automation's time has passed, Paused when switched off. Needs you when its last run waits on the
  * person, its app needs reconnecting, failed for a reason only the person can fix, or failed twice running. A run that
  * failed and then recovered is Working. */
-export function automationStatus(automation: Pick<Automation, "enabled" | "runs"> & Partial<Pick<Automation, "schedule" | "appTrigger">>, now = Date.now()): AutomationStatus {
+export function automationStatus(automation: Pick<Automation, "enabled" | "runs"> & Partial<Pick<Automation, "schedule" | "appTrigger" | "checkTrouble" | "checkTroubleCode">>, now = Date.now()): AutomationStatus {
   if (!automation.enabled) return isDone(automation, now) ? { state: "done" } : { state: "paused" };
   const app = automation.appTrigger && appProblem(automation.appTrigger);
   if (app) return { state: "needs-you", ...app };
+  if (automation.checkTrouble) return { state: "needs-you", reason: routineLineText(automation.checkTroubleCode, automation.checkTrouble), fix: SIGNED_OUT.test(automation.checkTrouble) ? "reconnect" : "run" };
   const settled = automation.runs.filter((run) => run.status !== "cancelled" && run.status !== "queued");
   const latest = settled[0];
   if (latest?.status === "waiting") return { state: "needs-you", reason: t("automations.reason.answer"), fix: "answer" };
@@ -274,16 +291,27 @@ export function orderAutomations<T extends Automation>(automations: readonly T[]
     .map(({ automation }) => automation);
 }
 
-/** The grey line under a sentence: "Working · last ran today 9:02 AM · next Monday 9:00 AM". */
+/** Before an automation has ever run, what a person wants to know is when it first will: "First run Monday 9:00 AM". */
+export function firstRunLine(automation: Automation, now = Date.now()): string | null {
+  if (automation.nextRunAt == null || automation.appTrigger || automation.checkedAt !== undefined) return null;
+  if (automationStatus(automation, now).state !== "working" || automation.runs.some((run) => run.status !== "queued")) return null;
+  return t("automations.firstRun", { when: nextWhen(automation.nextRunAt, now) });
+}
+
+/** The grey line under a sentence: "On · last ran today 9:02 AM · next Monday 9:00 AM", or "First run Monday 9:00 AM". */
 export function statusLine(automation: Automation, now = Date.now()): string {
+  const first = firstRunLine(automation, now);
+  if (first) return automation.readsAndDrafts ? `${first} · ${t("automations.readsAndDrafts")}` : first;
   const status = automationStatus(automation, now);
   const latest = automation.runs.find((run) => run.status !== "queued");
   const parts = [t(STATUS_WORD[status.state])];
   if (latest?.status === "running") parts.push(t("automations.runningNow"));
-  else if (latest) parts.push(`${t("automations.lastRan", { when: lastWhen(runTime(latest), now) })}${isProblem(latest) ? " ✗" : ""}`);
+  else if (automation.checkedAt !== undefined && (!latest || automation.checkedAt >= (latest.finishedAt ?? runTime(latest)))) parts.push(t("automations.checkedNothingNew", { when: lastWhen(automation.checkedAt, now) }));
+  else if (latest) parts.push(`${t("automations.lastRan", { when: lastWhen(runTime(latest), now) })}${partlyDone(latest) ? " !" : isProblem(latest) ? " ✗" : ""}`);
   else if (!automation.appTrigger) parts.push(t("automations.notRunYet"));
   if (automation.appTrigger) parts.push(...appStatusParts(automation.appTrigger, Boolean(latest)), ...[skippedToday(automation.appTrigger, now) ?? []].flat());
   if (automation.nextRunAt != null) parts.push(t("automations.next", { when: nextWhen(automation.nextRunAt, now) }));
+  if (automation.readsAndDrafts) parts.push(t("automations.readsAndDrafts"));
   else if (automation.enabled && automation.schedule?.type === "limit_reset") parts.push(t("automations.limit.timeUnknown"));
   return parts.join(" · ");
 }
@@ -296,8 +324,13 @@ export function runLine(run: RoutineRun, now = Date.now()): { when: string; mark
   if (run.status === "completed") return { when, mark: "✓", text: run.report?.state === "quiet" ? t("automations.run.nothingNew") : short(firstLine(run.output)) || t("automations.run.done") };
   if (run.status === "waiting") return { when, mark: "!", text: t("automations.reason.answer") };
   if (run.status === "running" || run.status === "queued") return { when, mark: "…", text: t("automations.runningNow") };
-  if (run.status === "cancelled") return { when, mark: "✗", text: t("automations.run.stopped") };
-  return { when, mark: "✗", text: ownerFix(run)?.reason ?? (short(firstLine(run.error)) || t("automations.run.failed")) };
+  if (run.status === "cancelled") {
+    const reason = short(firstLine(run.error && routineLineText(run.errorCode, run.error, run.errorParams)));
+    return { when, mark: "✗", text: reason ? t("automations.run.stoppedBecause", { reason }) : t("automations.run.stopped") };
+  }
+  const reason = short(firstLine(run.error && routineLineText(run.errorCode, run.error, run.errorParams)));
+  if (partlyDone(run)) return { when, mark: "!", text: t("automations.run.partial", { reason }) };
+  return { when, mark: "✗", text: ownerFix(run)?.reason ?? (reason || t("automations.run.failed")) };
 }
 
 export const AUTOMATION_FIX_LABEL: Record<AutomationFix, LocaleKey> = {
@@ -352,4 +385,11 @@ export function lastReceived(webhook: Pick<WebhookTrigger, "id" | "verificationS
     .reduce<WebhookAttempt | null>((newest, attempt) => (!newest || attempt.receivedAt > newest.receivedAt ? attempt : newest), null);
   if (latest) return { at: latest.receivedAt, preview: latest.preview! };
   return webhook.verificationSample?.preview ? { at: webhook.verificationSample.receivedAt, preview: webhook.verificationSample.preview } : null;
+}
+
+/** Under an automation's name: when it runs and which bot runs it, or its whole sentence when it waits on an app. */
+export function automationSubtitle(automation: Automation, botName: string): string {
+  return automation.kind === "schedule" && automation.schedule
+    ? `${plainWhen(automation.schedule)} · ${botName}`
+    : automationSentence(automation, botName);
 }

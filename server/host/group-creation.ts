@@ -2,6 +2,8 @@ import type { GroupDefaultResponder, GroupRecord, Store } from "../store.ts";
 import { sameAudience } from "../bot-visibility.ts";
 import { checkedGroupResponder } from "../routes/groups.ts";
 import { parseGroupPermissions } from "../../shared/group-permissions.ts";
+import { fitsOnOneLine } from "../bot-profile.ts";
+import { userError, userErrorFields } from "../user-errors.ts";
 
 export function createGroupCreation({ store, autoRoutingReady }: { store: Pick<Store, "bot" | "createGroup" | "patchGroup">; autoRoutingReady: () => boolean }) {
 
@@ -56,6 +58,7 @@ export function createGroupCreation({ store, autoRoutingReady }: { store: Pick<S
     }
     const name = body.name?.trim() || `${store.bot(memberIds[0])!.name} & co.`;
     if (name.length > 100) throw Object.assign(new Error("channel name must be at most 100 characters"), { status: 400 });
+    if (!fitsOnOneLine(name)) throw Object.assign(Object.assign(new Error("room name must fit on one line"), userErrorFields(userError("serverError.room.nameOneLine"))), { status: 400 });
     let section: string | undefined;
     if (body.section !== undefined && body.section !== null) {
       if (typeof body.section !== "string") throw Object.assign(new Error("context must be a string"), { status: 400 });

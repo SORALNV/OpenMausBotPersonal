@@ -5,6 +5,7 @@ import { deflateSync } from "node:zlib";
 import environments from "./environments.cjs";
 import { CHECKOUT_SOURCES } from "./cloud-account.mjs";
 import { CLOUD_HOME_NAME } from "./cloud-home.mjs";
+import nativeText from "./native-text.cjs";
 
 export const CLOUD_COLORS = environments.ENTRY_COLORS;
 export const DEFAULT_CLOUD_COLOR = "blue";
@@ -108,7 +109,7 @@ export function createCloudLook({ store, accountId, homeEntry, saveEntry }) {
 /** openmausbot://cloud, the same with or without a checkout waiting: the sheet while a purchase made here is under way
  * (a checkout opened in the last day, a payment being linked, setup), else Settings, which signs in or opens the Cloud. */
 export function cloudLinkOpensSheet(state) {
-  return Boolean((state?.checkout && !state.checkout.done) || state?.purchase || state?.machine?.status === "provisioning");
+  return Boolean((state?.checkout && !state.checkout.done) || (state?.adding && !state.adding.done) || state?.purchase || state?.machine?.status === "provisioning");
 }
 
 /** Paid, and the Cloud still being made: a payment linked, no machine yet, or one setting up. */
@@ -120,7 +121,7 @@ const settingUp = state => state?.status === "connected" && (Boolean(state.purch
  * app restarted mid-setup). Not when the sheet is open in the focused window: the sheet opens the Cloud itself
  * ("Opening in 3…"). A click opens the Cloud.
  */
-export function createCloudReadyNotice({ Notification, focused, sheetOpen, name, open, shown = () => {} }) {
+export function createCloudReadyNotice({ Notification, focused, sheetOpen, name, open, shown = () => {}, t = nativeText.englishText.t }) {
   let announced = null, watched = false;
   return state => {
     if (settingUp(state)) { watched = true; return false; }
@@ -128,7 +129,7 @@ export function createCloudReadyNotice({ Notification, focused, sheetOpen, name,
     if (!key || state.status !== "connected" || state.machine?.status !== "ready" || announced === key) return false;
     announced = key; watched = false;
     if ((focused() && sheetOpen()) || !Notification.isSupported()) return false;
-    const note = new Notification({ title: `${name()} is ready`, body: "Click to open it. It keeps your bots running 24/7." });
+    const note = new Notification({ title: t("native.cloud.ready.title", { name: name() }), body: t("native.cloud.ready.body") });
     note.on("click", () => open());
     note.show();
     shown();

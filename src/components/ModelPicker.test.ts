@@ -26,7 +26,9 @@ vi.mock("@/state/store", async (importOriginal) => ({
 // These cases cover the full picker; Simple mode has its own file.
 vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => true, setAdvancedMode: () => {} }));
 
-const { ClaudeAccountSelect, EffortRow, ModelEngineRail, ModelPicker, ModelVariantRow, modelSelectionForPick } = await import("./ModelPicker");
+const { EffortRow, ModelPicker, ModelVariantRow } = await import("./ModelPicker");
+const { ClaudeAccountSelect, ModelEngineRail } = await import("./ModelPickerFull");
+const { modelSelectionForPick } = await import("@/lib/model-choices");
 
 afterAll(() => vi.unstubAllGlobals());
 
@@ -156,7 +158,8 @@ describe("OpenCode model variants", () => {
         selection: { instanceId: "opencode", model: "provider/model", ...(variant !== undefined ? { variant } : {}) } });
     }
     const markup = renderToStaticMarkup(createElement(ModelVariantRow, { bot: { ...selected("removed"), busy: true }, compact: true }));
-    expect(markup).toContain('disabled=""');
+    // A reasoning variant is read when each turn starts, so it stays changeable while the bot works.
+    expect(markup).not.toMatch(/<select[^>]* disabled=/);
     expect(markup).toContain("removed (unverified)");
     expect(markup).toContain("Use session setting");
   });
