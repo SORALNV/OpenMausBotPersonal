@@ -922,7 +922,7 @@ export function Composer({
           }}
           // Not disabled during an upload: a disabled element drops keyboard focus for good. send() refuses while one
           // is pending.
-          disabled={blocking || locked}
+          disabled={locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={composerPlaceholder({
             simple: !advanced, locked: setupLocked, approval: blocking, attaching: attachmentPending, listening: recording,

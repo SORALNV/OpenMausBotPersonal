@@ -81,6 +81,7 @@ it("coordinates in a room that mixes departments, with a Chief that manages none
   await f.api(`/api/bots/${chief.id}`, { managedSections: [] }, "PATCH");
   const outsider = (await f.cli("new-bot", "--name", "Outsider", "--section", "Finance")).bot;
   await f.tool("update_channel", { channel_id: f.source.id, member_ids: [f.sender.id, f.target.id, chief.id, outsider.id] });
+  await f.api(`/api/groups/${f.source.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } }, "PATCH");
   f.plan[outsider.id] = { reply: "Finance numbers checked" };
   f.plan[f.sender.id].steps = [{ arguments: { bot_ids: [chief.id, outsider.id], message: "Review the work here" } }];
   await f.start(); expect((await f.wait()).status).toBe("settled");
@@ -175,6 +176,7 @@ it("lets an explicitly authorized Chief coordinate another team, which can consu
 
 it("withholds a cross-department result if the sender's peers list cuts the recipient off while it runs", () => withRooms(async f => {
   await f.api(`/api/bots/${f.target.id}`, { section: "Engineering" }, "PATCH");
+  await f.api(`/api/bots/${f.sender.id}`, { chiefOfStaff: true, managedSections: ["Engineering"], acknowledgePeerScope: true }, "PATCH");
   const gateFile = join(f.session.info.dataDir, "cross-team-revocation.gate");
   f.plan[f.target.id] = { gateFile, reply: "PRIVATE_RESULT_AFTER_REVOCATION" };
   await f.start();
@@ -192,6 +194,9 @@ it("hands work to a bot in another department, into a room whose readers are in 
   await f.api(`/api/bots/${f.target.id}`, { section: "Other company" }, "PATCH");
   const outsider = (await f.cli("new-bot", "--name", "Outsider", "--section", "Elsewhere")).bot;
   for (const room of [f.source, f.destination]) await f.tool("update_channel", { channel_id: room.id, member_ids: [...room.memberIds, outsider.id] });
+  await f.api(`/api/groups/${f.source.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } }, "PATCH");
+  await f.api(`/api/groups/${f.destination.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } }, "PATCH");
+  await f.api(`/api/bots/${f.sender.id}`, { chiefOfStaff: true, managedSections: ["Other company"], acknowledgePeerScope: true }, "PATCH");
   await f.start(); expect((await f.wait()).status).toBe("settled");
   const node = f.handoffs()[0];
   expect(node).toMatchObject({ botId: f.target.id, groupId: f.destination.id, status: "completed" });

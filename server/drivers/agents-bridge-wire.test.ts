@@ -74,7 +74,7 @@ function profiles(): Record<string, Record<string, string>> {
 
 const PROFILES = profiles();
 /** Refused by the server to every bot that is not a Chief of Staff. */
-const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "create_room", "manage_room", "retry_thread", "manage_thread_wait"];
+const CHIEF_ONLY_TOOLS = ["create_bot", "list_team_setup", "propose_team_setup", "propose_bot_deletion", "manage_room", "retry_thread"];
 /** The profile that mounts the most: its bridged list is checked in whole. */
 const FULL = "skills+shared+voice+escalations+x+team+images";
 
@@ -84,13 +84,13 @@ const FULL = "skills+shared+voice+escalations+x+team+images";
  * than another bot's only by the Chief-only names in find_tool's description. */
 const BUDGET_BASELINE: Record<string, number> = {
   "default": 17486,
-  "voice": 17909,
+  "voice": 18289,
   "shared": 17526,
-  "shared+voice": 17949,
+  "shared+voice": 18329,
   "skills": 17513,
-  "skills+voice": 17936,
+  "skills+voice": 18316,
   "skills+shared": 17553,
-  "skills+shared+voice": 17990,
+  "skills+shared+voice": 18356,
   "non-chief": 17369,
   "voice+non-chief": 18150,
   "shared+non-chief": 17409,
@@ -99,14 +99,14 @@ const BUDGET_BASELINE: Record<string, number> = {
   "skills+voice+non-chief": 18177,
   "skills+shared+non-chief": 17436,
   "skills+shared+voice+non-chief": 18217,
-  "skills+shared+voice+cloud-home": 17992,
+  "skills+shared+voice+cloud-home": 18372,
   "skills+shared+voice+non-chief+cloud-home": 18233,
-  "skills+shared+voice+escalations": 18008,
-  "skills+shared+voice+escalations+x": 18069,
+  "skills+shared+voice+escalations": 18374,
+  "skills+shared+voice+escalations+x": 18435,
   "skills+shared+voice+escalations+x+team": 18085,
   "default+legacy-switches": 17486,
   "default+mausbot": 17538,
-  "skills+shared+voice+mausbot": 18042,
+  "skills+shared+voice+mausbot": 18408,
   "default+no-computer-pick": 16274,
   "default+room": 16213,
   "non-chief+room": 16096,

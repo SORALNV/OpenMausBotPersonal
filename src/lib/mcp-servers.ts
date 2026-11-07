@@ -65,7 +65,7 @@ export function mcpServersOfBot(all: McpServerSummary[], botId: string): McpServ
 }
 
 export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined, botId?: string): McpServerSummary[] {
-  const enabled = all.filter((server) => server.delegated ? Boolean(botId && server.delegated.bots.some(bot => bot.id === botId)) : server.enabled);
+  const enabled = mcpServersOfBot(all, botId ?? "").filter((server) => server.delegated ? Boolean(botId && server.delegated.bots.some(bot => bot.id === botId)) : server.enabled);
   if (own == null) return enabled;
   return enabled.filter((server) => own.includes(server.name));
 }

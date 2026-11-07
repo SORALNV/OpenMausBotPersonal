@@ -71,7 +71,7 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy 
       const sharedGrant = destinationRoom && groupCrossSection(destinationRoom) && destinationRoom.memberIds.includes(from.id) && (!source || source.id === destinationRoom.id);
       // Supervision alone never grants a direct chat or another room's access.
       const sharedSupervisor = source && group && source.id === group.id && parent.threadId === node.threadId && hasTeamAuthority(bot, from.section);
-      if ((!hasTeamAuthority(from, bot.section) && !sharedSupervisor && !sharedGrant) || (source && !groupCrossSection(source) && outsideSection(source, from))) return "Room work cannot cross the sender's section boundary";
+      if ((!hasTeamAuthority(from, bot.section) && !sharedSupervisor && !sharedGrant) || (source && group?.id === source.id && !groupCrossSection(source) && outsideSection(source, from))) return "Room work cannot cross the sender's section boundary";
       if (source && group && source.id === group.id && parent.threadId !== node.threadId) return "Same-room work must stay in the originating conversation";
       if (!peerAllowed(from, bot)) return reachRefusal(from, bot, lookedAfterBy)!;
     }
