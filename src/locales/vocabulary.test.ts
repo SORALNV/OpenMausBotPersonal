@@ -61,6 +61,14 @@ const ALLOWED: ReadonlyArray<{ file: string; snippet?: string; why: string }> = 
   { file: "src/lib/boat-offer.ts", snippet: "MausBot introduced me", why: "the email a person sends Boat to claim its credit" },
   { file: "server/workspace-backup.ts", snippet: "OMB-WORKSPACE-1", why: "a backup file's format marker" },
   { file: "electron/company-backups.mjs", snippet: "OMB-WORKSPACE-1", why: "a backup file's format marker" },
+  { file: "src/components/NativeConnectSettings.tsx", why: "the Personal fork's own Antigravity connection settings copy" },
+  { file: "src/components/NativeDshDestination.tsx", why: "the Personal fork's own destination settings copy" },
+  { file: "src/components/NativeOmpSettings.tsx", why: "the Personal fork's own OhMyPi settings copy" },
+  { file: "server/drivers/agents-native-connect.ts", why: "the Personal fork's NativeConnect tool description" },
+  { file: "server/native-connect.ts", why: "the Personal fork's NativeConnect delegation prompt" },
+  { file: "server/native-omp-local.ts", why: "the Personal fork's OhMyPi management copy" },
+  { file: "server/native-omp-service.ts", why: "the Personal fork's OhMyPi service copy" },
+  { file: "server/native-omp-sessions.ts", why: "the Personal fork's OhMyPi session router copy" },
 ];
 
 function* sources(dir: string): Generator<string> {
