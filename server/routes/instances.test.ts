@@ -245,4 +245,3 @@ describe("hiding a provider", () => {
     expect((await call("GET", "/api/instances/hidden")).instances).toEqual([]);
   });
 });
-

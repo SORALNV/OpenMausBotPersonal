@@ -211,9 +211,11 @@ export interface ModelSelection {
 }
 
 export interface Task extends Pick<WireTask, "private" | "setupRequest" | "inbox" | "openAsks"> {
+  nativeOmpStatus?: import("../../shared/wire").WireTask["nativeOmpStatus"];
   waitingForTeammates?: boolean; sharedChat?: true;
   threadId: string;
   routineRunId?: string;
+  background?: boolean;
   projectId?: string;
   title: string;
   createdAt: number;
@@ -244,6 +246,9 @@ export interface Task extends Pick<WireTask, "private" | "setupRequest" | "inbox
 }
 
 export interface ThreadOpener {
+  kind?: "pair" | "work";
+  threadId?: string;
+  roomLane?: true;
   botId: string;
   name: string;
   delegationId?: string;
@@ -2387,7 +2392,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "steerQueued":
           void api(`/api/bots/${action.botId}/queue/${action.queueId}/steer`, { method: "POST", body: JSON.stringify({ threadId: action.threadId }) })
             .then((body) => {
-              if (body?.steered === true && Array.isArray(body.messages) && typeof body.threadId === "string") {
+              if ((body?.steered === true || body?.handledLocally === true) && Array.isArray(body.messages) && typeof body.threadId === "string") {
                 for (const message of body.messages) {
                   rawDispatch({ type: "messageAdded", threadId: body.threadId, message });
                 }

@@ -1,3 +1,6 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch } from "react";
 import { createPortal } from "react-dom";
@@ -456,7 +459,7 @@ export function BotThreadList({ bot, selected, query, pendingQueued, reveal, loc
 }) {
   const now = useRelativeNow();
   const tasks = (bot.tasks ?? [{ threadId: bot.threadId, title: t("task.newShort"), createdAt: 0 }])
-    .filter((task) => !task.routineRunId)
+    .filter((task) => !isBackgroundThread(task))
     .map((task) => ({ ...task, queued: Boolean(pendingQueued[task.threadId]?.length) }));
   const projects = bot.projects ?? NO_FOLDERS;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -697,14 +700,14 @@ export function useVisibleMessages(bot: Bot): Message[] {
 export const BotListItem = memo(function BotListItem(props: BotRowProps) {
   const advanced = useAdvancedMode();
   const { bot, selected, deleting, mascotMotion, reveal, pendingQueued, instances, liveCall, density, query, dispatch, onMenu, renameRequest, botDrag: drag, botDrop: drop, botDragging: dragging } = props;
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   const liveMedia = useLiveMedia();
   const remoteClient = typeof window !== "undefined" && window.ogb?.remoteClient?.active === true;
   const [renaming, setRenaming] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [threadsOpen, setThreadsOpen] = useSearchDisclosure(`bot:${bot.id}`, showThreads ? query : "", searchMatchesThreads(query, bot.tasks, bot.projects));
   useEffect(() => { if (reveal && showThreads) setThreadsOpen(true); }, [reveal, showThreads]);
-  const hasThreadList = (bot.tasks?.filter((task) => !task.routineRunId).length ?? 1) > 1 || (bot.projects?.length ?? 0) > 0 || Boolean(query);
+  const hasThreadList = (bot.tasks?.filter((task) => !isBackgroundThread(task)).length ?? 1) > 1 || (bot.projects?.length ?? 0) > 0 || Boolean(query);
   const iconOnly = density === "icons";
   const expanded = showThreads && !iconOnly && threadsOpen && hasThreadList;
   useEffect(() => { if (iconOnly) setRenaming(false); }, [iconOnly]);
@@ -729,6 +732,8 @@ export const BotListItem = memo(function BotListItem(props: BotRowProps) {
   );
   const { waiting, working, teammateWait, queued } = sidebarBotStatus(bot, pendingQueued);
   const { unread, noticing } = useBotUnread(bot);
+  const activityTasks = sidebarBotActivityTasks(bot, pendingQueued);
+  const nativeNotice = !activityTasks.some(task => task.busy && !nativeOmpStatusLabel(task.nativeOmpStatus)) ? activityTasks.map(task => nativeOmpStatusLabel(task.nativeOmpStatus)).find(Boolean) : undefined;
   const onLiveCall = liveBadgeFor(bot.id, liveMedia, liveCall);
   const body = (
     <>
@@ -828,7 +833,7 @@ export const BotListItem = memo(function BotListItem(props: BotRowProps) {
             </span>
           ) : (
             <span className={cn("flex min-w-0 items-center gap-1.5 truncate text-[13px] leading-[18px]", waiting ? simpleRow ? "text-warning" : "font-semibold text-warning" : "text-ink-secondary")}>
-              {working ? (
+              {nativeNotice ? <span role="status">{nativeNotice}</span> : working ? (
                 <SidebarWorkingStep bot={bot} last={last} />
               ) : (
                 <span dir="auto" className="truncate">{waiting ? t("sidebar.preview.waiting") : teammateWait ? t("sidebar.preview.waitingOnTeammate") : queued ? t("task.queued") : botPreview(bot, visible, instances, advanced)}</span>
@@ -865,7 +870,7 @@ export const BotListItem = memo(function BotListItem(props: BotRowProps) {
           !renaming && iconOnly
             ? deleting
               ? t("sidebar.bot.deletingAria", { name: bot.name })
-              : `${bot.name}${bot.title?.trim() ? ` · ${bot.title.trim()}` : ""}${bot.chiefOfStaff ? ` · ${t("sidebar.bot.chiefOfStaff")}` : ""}${onLiveCall ? ` · ${t("call.live.badge")}` : ""}${waiting ? ` · ${t("sidebar.preview.waiting")}` : working ? ` · ${t("chat.activity.working")}` : teammateWait ? ` · ${t("sidebar.preview.waitingOnTeammate")}` : queued ? ` · ${t("task.queued")}` : ""}${unread ? ` · ${t("task.unread")}` : ""}`
+              : `${bot.name}${bot.title?.trim() ? ` · ${bot.title.trim()}` : ""}${bot.chiefOfStaff ? ` · ${t("sidebar.bot.chiefOfStaff")}` : ""}${onLiveCall ? ` · ${t("call.live.badge")}` : ""}${waiting ? ` · ${t("sidebar.preview.waiting")}` : nativeNotice ? ` · ${nativeNotice}` : working ? ` · ${t("chat.activity.working")}` : teammateWait ? ` · ${t("sidebar.preview.waitingOnTeammate")}` : queued ? ` · ${t("task.queued")}` : ""}${unread ? ` · ${t("task.unread")}` : ""}`
             : undefined
         }
         aria-busy={deleting || undefined} aria-keyshortcuts={drag ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
@@ -1096,7 +1101,7 @@ export function Sidebar({ open, onClose, collapseToIcons = false }: {
         b.name.toLowerCase().includes(q) ||
         (b.title ?? "").toLowerCase().includes(q) ||
         botPreview(b, visibleMessages(b), state.instances, advanced).toLowerCase().includes(q) ||
-        b.tasks?.some((task) => !task.routineRunId && task.title.toLowerCase().includes(q)) ||
+        b.tasks?.some((task) => !isBackgroundThread(task) && task.title.toLowerCase().includes(q)) ||
         b.projects?.some((folder) => folder.name.toLowerCase().includes(q)),
     );
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q) || g.tasks?.some((task) => task.title.toLowerCase().includes(q)));

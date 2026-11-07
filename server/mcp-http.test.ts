@@ -72,3 +72,14 @@ describe("which plain http requests go through HTTP_PROXY", () => {
     expect(seen).toEqual(["https://mcp.example.test/mcp", "http://mcp.corp.internal/mcp", "http://127.0.0.1:4000/mcp"]);
   });
 });
+
+
+describe("network failure diagnostics", () => {
+  it.each(["EHOSTUNREACH", "EPERM", "private-token-in-error-code"])("only exposes known OS codes: %s", async code => {
+    client = new RemoteMcpClient({ type: "http", url: "http://fixture.invalid/mcp", headers: { Authorization: "Bearer private-token" } }, { fetch: async () => { throw Object.assign(new TypeError("private-token in message"), { cause: { code } }); } });
+    const failure = (await client.initialize("fixture", AbortSignal.timeout(1000)).catch(error => error)) as { networkCode?: string; message: string };
+    expect(failure.networkCode).toBe(code === "private-token-in-error-code" ? undefined : code);
+    expect(failure.message).not.toContain("private-token");
+    expect(JSON.stringify(failure)).not.toContain("private-token");
+  });
+});

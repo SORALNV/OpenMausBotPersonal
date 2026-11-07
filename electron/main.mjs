@@ -1,3 +1,4 @@
+import { configureExistingProfilePermission } from "./cua-profile-permission.mjs";
 import { runtimeResourcesPath, runtimeAppVersion } from "./runtime-resources.mjs";
 import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, Tray, WebContentsView, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, nativeTheme } from "electron";
 import { createRequire } from "node:module";
@@ -1544,6 +1545,12 @@ function refreshApplicationMenu() {
       onOrganizationSignIn: () => queueOrganizationEntry("openmausbot://organization"),
       onForget: (id) => void workspaceMenuAction(() => forgetEnvironment(id)),
       onOpenSettings: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("app:open-settings"); },
+      ...(process.platform === "darwin" && process.env.OMB_PERSONAL_BUILD === "1" ? { onChromePermission: () => {
+        void configureExistingProfilePermission({
+          userData: app.getPath("userData"), showMessageBox: options => dialog.showMessageBox(options),
+          restart: () => { app.relaunch({ args: process.argv.slice(1) }); app.quit(); },
+        }).catch(error => dialog.showErrorBox("Chromeへの接続許可", error.message));
+      } } : {}),
       openAtLogin: loginItem.available() ? { checked: loginItem.chosen(), onToggle: on => { loginItem.choose(on); refreshApplicationMenu(); } } : null,
       ...cloudMenuOptions(),
       home: homeWindow.cloudOrigin() ? { origin: homeWindow.cloudOrigin(), onBack: () => void showHome({ place: "cloud" }) } : null, t: nativeT,

@@ -19,7 +19,7 @@ type PeerAsk = NonNullable<Message["peerAsk"]>;
 export type EscalationOutcome = "chief" | "person" | "muted" | "off" | "skipped" | "failed";
 
 export interface ChiefNoticeDeps {
-  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createTask" | "appendMessage" | "messagesFor" | "activePath">;
+  store: Pick<Store, "bots" | "bot" | "tasks" | "taskByThread" | "groupByThread" | "createBackgroundTask" | "appendMessage" | "messagesFor" | "activePath">;
   assignerOf(threadId: string): unknown;
   notify(notification: Notification | null): void;
   threadBusy(botId: string, threadId: string): boolean;
@@ -162,7 +162,7 @@ export function createChiefNotices(deps: ChiefNoticeDeps) {
     if (!chief || !reachesChief(chief, bot, threadId)) return tellThePerson();
     const notices = store.tasks(chief.id).find((candidate) => (candidate.title === input.title || (input.title === INCIDENTS_THREAD_TITLE && candidate.title === OLD_INCIDENTS_THREAD_TITLE)) && !candidate.archivedAt &&
         (!routing || routing.startedBy(candidate.threadId) === (person ?? undefined)))
-      ?? store.createTask(chief.id, input.title, false, undefined, { botId: chief.id, name: chief.name, at: Date.now() });
+      ?? store.createBackgroundTask(chief.id, input.title, false, undefined, { botId: chief.id, name: chief.name, at: Date.now() });
     if (!notices || notices.threadId === threadId) return tellThePerson();
     if (routing && person && routing.startedBy(notices.threadId) === undefined) routing.open(notices.threadId, person);
     store.appendMessage(notices.threadId, {

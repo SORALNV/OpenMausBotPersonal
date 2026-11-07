@@ -1,3 +1,5 @@
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type DragEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, FolderPlus, Plus } from "lucide-react";
@@ -26,7 +28,7 @@ function useVisibleMessages(bot: Bot): Message[] {
 }
 
 function botHasThreadList(bot: Pick<Bot, "tasks" | "projects">, query: string): boolean {
-  return (bot.tasks?.filter((task) => !task.routineRunId).length ?? 1) > 1
+  return (bot.tasks?.filter((task) => !isBackgroundThread(task)).length ?? 1) > 1
     || (bot.projects?.length ?? 0) > 0
     || Boolean(query);
 }
@@ -52,8 +54,8 @@ function chunkPinnedCircles<T>(items: readonly T[], columns: number): T[][] {
 }
 
 export function PinnedCircleThreadPanel(props: BotRowProps) {
-  const showThreads = useShowThreads();
   const { bot, query, dispatch } = props;
+  const showThreads = botThreadsShown(bot, useShowThreads());
   const visible = useVisibleMessages(bot);
   const last = lastNonReceipt(visible);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -177,7 +179,7 @@ export const PinnedBotCircle = memo(function PinnedBotCircle({
   ...props
 }: BotRowProps & PinnedCircleDragProps & { threadPanelHost?: HTMLElement | null }) {
   const { bot, selected, mascotMotion, pendingQueued, reveal, density, query, dispatch, onMenu } = props;
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   const visible = useVisibleMessages(bot);
   const [threadsOpen, setThreadsOpen] = useSearchDisclosure(`bot:${bot.id}`, showThreads ? query : "", searchMatchesThreads(query, bot.tasks, bot.projects));
   // nonce, not the thread id: a second jump to the same thread opens it again

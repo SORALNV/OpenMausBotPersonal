@@ -119,7 +119,7 @@ export interface RoutineRun extends RoutineLineCodes {
   waitedMs?: number;
   triggerSource?: RoutineRunTrigger;
   /** "app": a connected-app event started it; "wait": a wait's follow-up did (its triggerSource stays "webhook", an outside event). */
-  eventSource?: "app" | "wait";
+  eventSource?: "app" | "wait" | "google-chat";
   webhookId?: string;
   deliveryId?: string;
   sourceThreadId?: string;
@@ -751,7 +751,7 @@ export class RoutineManager {
 
   enqueueWebhook(input: {
     webhookId: string; webhookName: string; prompt: string; botId: string; runOn: RoutineRunOn; deliveryId: string; receivedAt: number;
-    eventSource?: "app" | "wait";
+    eventSource?: "app" | "wait" | "google-chat";
     /** Where the run reports, instead of the event's own results chat. */
     resultsThreadId?: string;
   }): { id: string } {

@@ -473,3 +473,56 @@ now explicitly require real coordination receipts for named-bot participation;
 this is guidance, not a guarantee that every model report is truthful. The
 explicit nested run proves actual recipient execution, not merely a plausible
 final summary. These live results do not establish every provider's quality.
+
+## A teammate needs the person
+
+The coordinator distinguishes open handoffs from handoffs blocked on a person's
+input. The latter projects `waiting-on-you` into idle ancestor conversations
+without changing the underlying assignments or claiming that a provider turn
+is active. Descendant changes invalidate the ancestor conversations as well.
+
+The originating chat receives one Japanese explanation per blocked assignment
+and question, with the existing conversation link. Restoring the app must not
+duplicate that explanation, cancel the assignment, or treat authentication as
+completed. The existing Stop action cancels the waiting tree when the owner
+chooses it.
+
+```sh
+node node_modules/vitest/vitest.mjs run server/runtime-coordinator.test.ts server/teammate-wait.test.ts
+node scripts/teammate-wait-acceptance.mjs
+```
+
+The fixture seeds two synthetic needs-input trees in a disposable runtime DB,
+starts the full server, checks the source chat and wire status, restarts it,
+and explicitly stops both synthetic waits. It uses no production credentials
+and does not attempt sign-in or send new work to a live Bot.
+
+### Chiefによる不要な待機の解除
+
+Chiefに「連絡管理人の返答待ちを解除して」のように依頼する。
+`manage_thread_wait` の `list` は管理範囲内のBotの直接スレッドから、入力待ち・
+チームメイト待ち・コンピューター待ちを返す。`clear` はその一覧のBot ID、
+スレッドID、最新token、理由を必要とする。解除は待機の取り消しであり、承認、
+ログイン、作業完了、履歴削除、再送を行わない。実行中・終了済み・状態の変わった
+スレッドと、Chiefの管理範囲外への操作は拒否する。別途動いている委託先の作業は
+残る場合があり、結果の `teammatesLeftRunning` で報告する。解除履歴は対象と
+Chiefの両方のチャットへ残る。共有ルームでは一覧にある `waitId` も `wait_id` として指定し、古い質問・承認待ちの依頼だけを取り消す。共有ルーム全体の停止はこのツールの対象外。
+
+```sh
+node scripts/chief-waits-acceptance.mjs
+```
+
+一時HOME・データベースと偽エンジンを使用し、実際のChief用ツールから依存待ちと
+質問待ちを取り消す。古いtokenの拒否、質問を許可扱いにしないこと、元メッセージの
+保持、双方への記録、実行中Chiefへの非干渉、再起動後に待機が復活しないことを確認する。
+コンパイル済みサーバーを検証する場合は、その `index.js` の絶対パスを引数に指定する。
+
+個別チャットの入力欄では、別グループがそのBotを占有している場合に、その会話名と
+「待機先の会話を開く」を表示する。確認カードが開いていても追加指示を入力できるが、
+送信はキューに固定し、承認や実行中ターンへの差し込みとして扱わない。
+Bot全体の返答待ち表示は、個別スレッドの返答待ち、または実行中ルームの未回答カードを
+根拠にする。未回答カードがないルームを、返答待ちのまま表示しない。
+
+関連テストは `server/routes/internal-thread-waits.test.ts`、
+`server/runtime-coordinator.test.ts`、`server/visible-bot-wait.test.ts`、
+`src/components/ComposerRoomWait.test.ts`、`src/components/Composer.delivery.test.ts` にある。

@@ -1,12 +1,14 @@
-import { spawnSync } from "node:child_process";
+import { assertPersonalAppIdentity, setPersonalAppIdentity } from "./personal-app-identity.mjs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { withPersonalSigning } from "./personal-signing.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
+const packagingCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 const build = JSON.parse(readFileSync(join(repo, ".privacy-dev/evidence/personal-app-build.json"), "utf8"));
 const directory = join(repo, ".privacy-dev/personal-runtime", randomUUID());
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -34,11 +36,24 @@ rmSync(archive);
 await asar.createPackage(source, archive);
 const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHash("sha256").update(asar.getRawHeader(archive).headerString).digest("hex") } };
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), join(launcher, "Contents/Info.plist")]);
-withPersonalSigning(join(repo, ".privacy-dev/personal-signing"), ({ identity, keychain }) => {
+const preserveLauncher = process.argv.includes("--preserve-launcher");
+if (preserveLauncher) {
+  const installed = "/Applications/OpenMausBot Personal.app";
+  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", `=identifier "dev.sora.openmausbot.personal" and certificate leaf = H"${build.signing.certificateSha1}"`, installed]);
+  const metadata = JSON.parse(asar.extractFile(join(installed, "Contents/Resources/app.asar"), "personal-launcher.json").toString());
+  if (metadata.version !== 1 || metadata.fingerprint !== build.signing.certificateSha1) throw new Error("Existing fixed launcher identity differs");
+  rmSync(launcher, { recursive: true });
+  run("/usr/bin/ditto", [installed, launcher]);
+}
+const signingDir = process.env.OMB_PERSONAL_SIGNING_DIR ? resolve(process.env.OMB_PERSONAL_SIGNING_DIR) : join(repo, ".privacy-dev/personal-signing");
+if (process.env.OMB_PERSONAL_SIGNING_DIR && !existsSync(signingDir)) throw new Error("The requested existing signing identity is missing");
+withPersonalSigning(signingDir, ({ identity, keychain }) => {
   for (const app of [runtime, launcher]) {
+    setPersonalAppIdentity(app);
     run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);
     run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+    assertPersonalAppIdentity(app);
   }
 });
-writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+writeFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), JSON.stringify({ directory, runtime, launcher, sourceBuild: build.app, packagingCommit, preserveLauncher, fingerprint: build.signing.certificateSha1, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
 console.log(JSON.stringify({ directory, runtime, launcher }));

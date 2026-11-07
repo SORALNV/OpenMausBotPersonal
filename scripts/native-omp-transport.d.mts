@@ -2,6 +2,8 @@ import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 export interface OmpDestination {
+  harness?: "deepseek";
+  knownRequestIds?: string[];
   host: string;
   user: string;
   botId: string;
@@ -13,6 +15,9 @@ export interface OmpDestination {
   model?: string;
   expectedSessionId?: string;
   advisor?: boolean;
+  /** Resolved from the owner-selected native session catalog, never from model-generated shell arguments. */
+  sessionDir?: string;
+  sessionFile?: string;
 }
 export interface OmpQuestion {
   id: string;
@@ -28,8 +33,9 @@ export class NativeOmpTransport extends EventEmitter {
   constructor(child: ChildProcessWithoutNullStreams, sessionDir: string, options?: { timeoutMs?: number; turnTimeoutMs?: number });
   static connect(binding: OmpDestination, options?: { timeoutMs?: number; turnTimeoutMs?: number }): NativeOmpTransport;
   initialize(): Promise<OmpSession>;
-  submit(requestId: string, text: string): Promise<OmpReply>;
-  answerUi(id: string, answer: { cancelled?: boolean; confirmed?: boolean; value?: string }): void;
+  command(type: string, args?: Record<string, unknown>): Promise<any>;
+  submit(requestId: string, text: string, images?: readonly {type: "image"; data: string; mimeType: string}[]): Promise<OmpReply>;
+  answerUi(id: string, answer: { cancelled?: boolean; confirmed?: boolean; value?: string }): void | Promise<void>;
   stop(): Promise<boolean>;
   close(): void;
 }

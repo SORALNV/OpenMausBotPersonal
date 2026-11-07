@@ -53,6 +53,7 @@ describe("native dictation in the real composer", () => {
   const hear = (text: string) => flushSync(() => transcript({ text, partial: true }));
 
   beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ people: [], threads: [], skills: [] }), { status: 200, headers: { "content-type": "application/json" } })));
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
     speechStop = vi.fn().mockResolvedValue(undefined);

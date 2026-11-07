@@ -81,4 +81,3 @@ export function createTeamPeople(dataDir: string, now: () => number = Date.now) 
 }
 
 export type TeamPeople = ReturnType<typeof createTeamPeople>;
-

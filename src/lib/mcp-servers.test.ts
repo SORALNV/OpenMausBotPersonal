@@ -33,6 +33,14 @@ describe("mcpServersForBot", () => {
     expect(mcpServersForBot(owned, ["blender"], "pepe")).toEqual([]);
     expect(mcpServersOfBot(owned, "pepe").map((s) => s.name)).toEqual(["notes", "linear", "off"]);
   });
+
+  it("shows delegated access only for its granted bot independently of the shared switch", () => {
+    const servers = [{ name: "home", enabled: false, delegated: { bots: [{ id: "reporter", tools: ["nas_list"] }] } }];
+    expect(mcpServersForBot(servers, undefined, "reporter").map(s=>s.name)).toEqual(["home"]);
+    expect(mcpServersForBot(servers, undefined, "other")).toEqual([]);
+    expect(mcpServersForBot([{ ...servers[0]!, enabled: true }], undefined, "other")).toEqual([]);
+    expect(mcpServersForBot(servers, [], "reporter")).toEqual([]);
+  });
 });
 
 describe("shared MCP inventory", () => {

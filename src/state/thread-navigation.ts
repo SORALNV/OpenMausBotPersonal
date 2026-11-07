@@ -1,4 +1,6 @@
 import { notificationTrayPinned } from "@/lib/notification-preferences";
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import type { Action, AppState } from "./store";
 import { openOwnTeamChat, teamChats } from "./team-chats";
 
@@ -9,7 +11,7 @@ interface NotificationThreadOwner {
   tasks?: Array<RowThread>;
 }
 
-type RowThread = { threadId: string; activity?: string; unread?: boolean; busy?: boolean; routineRunId?: unknown; archivedAt?: unknown; updatedAt?: number; createdAt?: number };
+type RowThread = { threadId: string; activity?: string; unread?: boolean; busy?: boolean; routineRunId?: string; archivedAt?: number; updatedAt?: number; createdAt?: number; background?: boolean; openedBy?: { kind?: string } };
 
 interface NotificationRoutingState {
   bots: NotificationThreadOwner[];
@@ -28,7 +30,8 @@ export function visibleNotificationThread(
 }
 
 export function botOpensTo(bot: Pick<NotificationThreadOwner, "threadId" | "mainThreadId" | "tasks">, threadsShown: boolean): string {
-  return !threadsShown && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
+  const selected = bot.tasks?.find(task => task.threadId === bot.threadId);
+  return (!botThreadsShown(bot, threadsShown) || Boolean(selected && isBackgroundThread(selected))) && bot.mainThreadId && bot.tasks?.some((task) => task.threadId === bot.mainThreadId)
     ? bot.mainThreadId : bot.threadId;
 }
 

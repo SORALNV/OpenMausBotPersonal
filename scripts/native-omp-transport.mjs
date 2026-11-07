@@ -7,7 +7,7 @@ const FRAME_LIMIT = 1_048_576;
 const MESSAGE_LIMIT = 64 * 1_048_576;
 
 function remotePath(value) {
-  if (typeof value !== "string" || !/^\/[A-Za-z0-9_./-]+$/u.test(value) || value.split("/").includes("..")) throw new Error("Invalid remote path");
+  if (typeof value !== "string" || !/^\/[\p{L}\p{N}_./ -]+$/u.test(value) || value.split("/").includes("..")) throw new Error("Invalid remote path");
   return value;
 }
 
@@ -15,7 +15,8 @@ export function nativeOmpCommand(binding) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/u.test(binding.host ?? "") || !/^[a-z_][a-z0-9_-]{0,31}$/u.test(binding.user ?? "")) throw new Error("Invalid SSH destination");
   if (![binding.botId, binding.threadId].every(value => typeof value === "string" && value.trim() && value.length <= 200)) throw new Error("Explicit bot and thread required");
   const key = createHash("sha256").update(JSON.stringify([binding.botId, binding.threadId])).digest("hex");
-  const sessionDir = `${remotePath(binding.stateRoot).replace(/\/$/u, "")}/${key}`;
+  const sessionDir = binding.sessionDir === undefined ? `${remotePath(binding.stateRoot).replace(/\/$/u, "")}/${key}` : remotePath(binding.sessionDir);
+  if (binding.sessionFile !== undefined && (!remotePath(binding.sessionFile).startsWith(sessionDir + "/") || !binding.sessionFile.endsWith(".jsonl"))) throw new Error("Invalid native session file");
   const binary = remotePath(binding.binary);
   const profile = binding.profile ?? "omb-native";
   if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(profile)) throw new Error("Invalid native profile");
@@ -26,7 +27,7 @@ export function nativeOmpCommand(binding) {
   return {
     command: "/usr/bin/ssh",
     args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "--", `${binding.user}@${binding.host}`,
-      `exec '${binary}' --mode rpc-ui ${options.join(" ")} --session-dir '${sessionDir}' --continue`],
+      `exec '${binary}' --mode rpc-ui ${options.join(" ")} --session-dir '${sessionDir}' ${binding.sessionFile ? `--resume '${binding.sessionFile}'` : "--continue"}`],
     sessionDir,
   };
 }
@@ -110,11 +111,11 @@ export class NativeOmpTransport extends EventEmitter {
     return session;
   }
 
-  async submit(requestId, text) {
+  async submit(requestId, text, images = []) {
     if (!this.session) throw new Error("Initialize the pinned session first");
     if (this.failure) throw this.failure;
     if (typeof requestId !== "string" || !requestId.trim() || requestId.length > 200 || typeof text !== "string" || !text.trim() || text.length > 100_000) throw new Error("Invalid native request");
-    const digest = createHash("sha256").update(text).digest("hex");
+    const digest = createHash("sha256").update(JSON.stringify([text, images])).digest("hex");
     const previous = this.receipts.get(requestId);
     if (previous) {
       if (previous.digest !== digest) throw new Error("Request ID reused with different text");
@@ -126,7 +127,7 @@ export class NativeOmpTransport extends EventEmitter {
     void promise.catch(() => {});
     this.turn = { id: requestId, pending, texts: [], result: null, settled: false, messages: new Set() };
     this.receipts.set(requestId, { digest, promise });
-    try { this.send({ id: requestId, type: "prompt", message: text }); }
+    try { this.send({ id: requestId, type: "prompt", message: text, ...(images.length ? { images } : {}) }); }
     catch (error) { this.fail(error); }
     return promise;
   }
@@ -241,12 +242,14 @@ export class NativeOmpTransport extends EventEmitter {
       return;
     }
     if (["host_tool_call", "host_uri_request"].includes(frame.type)) throw new Error("Mac host tools are unavailable to remote OhMyPi");
-    if (["tool_execution_start", "tool_execution_end"].includes(frame.type)) this.emit("nativeTool", { type: frame.type, toolName: frame.toolName, toolCallId: frame.toolCallId, isError: frame.isError });
+    if (["tool_execution_start", "tool_execution_end"].includes(frame.type)) this.emit("nativeTool", { type: frame.type, toolName: frame.toolName, toolCallId: frame.toolCallId, isError: frame.isError, args: frame.args });
     const turn = this.turn;
     if (!turn) return;
     if (frame.type === "message_end" && frame.message?.role === "assistant") {
       const text = (frame.message.content ?? []).filter(item => item.type === "text").map(item => item.text).join("");
       if (text && !turn.messages.has(frame.messageId ?? text)) { turn.texts.push(text); turn.messages.add(frame.messageId ?? text); }
+      if (text && frame.message.stopReason === "toolUse") this.emit("nativeNarration", { text });
+      if (text && frame.message.stopReason === "stop") turn.finalText = text;
     }
     if (frame.type === "prompt_result" && frame.id === turn.id) {
       if (frame.status === "aborted") turn.aborted = true;
@@ -258,7 +261,7 @@ export class NativeOmpTransport extends EventEmitter {
     if (turn.result && turn.settled) {
       if (!turn.texts.length) { this.fail(new Error("Native turn returned no assistant text")); return; }
       this.turn = null;
-      turn.pending.resolve({ requestId: turn.id, sessionId: this.session.sessionId, sessionFile: this.session.sessionFile, text: turn.texts.join("\n\n") });
+      turn.pending.resolve({ requestId: turn.id, sessionId: this.session.sessionId, sessionFile: this.session.sessionFile, text: turn.finalText ?? turn.texts.join("\n\n") });
     }
   }
 }

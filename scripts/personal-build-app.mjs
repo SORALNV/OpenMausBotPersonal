@@ -1,8 +1,10 @@
+import { setPersonalAppIdentity } from "./personal-app-identity.mjs";
+import { personalLoginHome } from "./personal-login-home.mjs";
 import { parse as parseYaml } from "yaml";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -15,6 +17,7 @@ const revision = (ref) => {
   return result.stdout.trim();
 };
 const sourceCommit = revision("HEAD");
+const codexLoginHome = personalLoginHome({ home: homedir() });
 const upstreamBase = spawnSync("git", ["merge-base", "HEAD", "upstream/main"], { cwd: repo, encoding: "utf8" });
 if (upstreamBase.status !== 0) throw new Error("Cannot identify incorporated upstream revision");
 const upstreamCommit = revision(upstreamBase.stdout.trim());
@@ -57,7 +60,7 @@ mkdirSync(source);
 cpSync(join(repo, "electron"), join(source, "electron"), { recursive: true, filter: p => !/\.(?:test|node-test)\./.test(p) && !p.includes("/fixtures/") });
 const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
 writeFileSync(join(source, "package.json"), JSON.stringify({ name: "openmausbot-personal", productName: "OpenMausBot Personal", version: pkg.version, main: "electron/personal-main.mjs", type: "module" }));
-writeFileSync(join(source, "personal-build.json"), JSON.stringify({ repository: repo, version: pkg.version, sourceCommit, upstreamCommit, codexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex") }));
+writeFileSync(join(source, "personal-build.json"), JSON.stringify({ repository: repo, version: pkg.version, sourceCommit, upstreamCommit, codexHome: codexLoginHome }));
 const pnpm = join(repo, "node_modules", ".pnpm");
 const asarPackage = readdirSync(pnpm).find(name => name.startsWith("@electron+asar@"));
 if (!asarPackage) throw new Error("The installed ASAR build dependency is missing");
@@ -79,7 +82,10 @@ const raw = asar.getRawHeader(archive);
 const integrity = { "Resources/app.asar": { algorithm: "SHA256", hash: createHash("sha256").update(raw.headerString).digest("hex") } };
 run("/usr/bin/plutil", ["-replace", "ElectronAsarIntegrity", "-json", JSON.stringify(integrity), info]);
 rmSync(join(resources, "app-update.yml"), { force: true });
-const signing = withPersonalSigning(join(repo, ".privacy-dev", "personal-signing"), ({ identity, keychain }) => {
+setPersonalAppIdentity(app);
+const signingDir = process.env.OMB_PERSONAL_SIGNING_DIR ? resolve(process.env.OMB_PERSONAL_SIGNING_DIR) : join(repo, ".privacy-dev", "personal-signing");
+if (process.env.OMB_PERSONAL_SIGNING_DIR && !existsSync(signingDir)) throw new Error("The requested existing signing identity is missing");
+const signing = withPersonalSigning(signingDir, ({ identity, keychain }) => {
   run("/usr/bin/codesign", ["--force", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), join(resources, speechBundle)]);
   const speechHelperRequirement = personalSigningRequirement(join(resources, speechBundle), identity);
   run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--keychain", keychain, "--timestamp=none", "--options", "runtime", "--entitlements", join(repo, "build/entitlements.mac.plist"), app]);

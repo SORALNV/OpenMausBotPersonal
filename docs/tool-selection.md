@@ -130,3 +130,9 @@ both filtered, including URL-backed servers and zero result budgets.
 This is tool availability, not a sandbox for commands, file access or
 credentials. Allowing a shell tool still allows that tool's existing authority.
 Bot-proposed profile changes cannot edit this owner setting.
+
+## 管理BotへのMCP権限の委任
+
+アプリのMCP設定で、本人が「Bot別権限・Managerへの委任」を設定すると、管理Botは `manage_mcp_access` で本人の上限内だけを配布・解除できる。接続先・認証・本人の上限・配布対象・管理者・承認モードは変更できない。Bot自身のMCP除外・ツール除外も引き続き適用される。設定したサーバーは共通スイッチとは独立し、未付与Botへ一括配布されない。
+
+[設定・動作と隔離検証](verification/mcp-access.md)を参照。

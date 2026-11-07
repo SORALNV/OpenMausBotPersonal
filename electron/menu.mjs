@@ -82,7 +82,7 @@ const whereItLives = (environment) => (environment.kind === "local" ? environmen
  * @param {{ checked: boolean, onToggle: (on: boolean) => void } | null} [input.openAtLogin] Open at Login, in the app
  *   menu on macOS and the File menu elsewhere; absent when this build cannot add a login item.
  */
-export function buildApplicationMenu({ environments, activeId, onSwitch, onAddFromClipboard, onConnect, onForget, onOpenSettings, onOrganizationSignIn, onAddCloud, sublabels = {}, home = null, openAtLogin = null, t = nativeText.englishText.t }) {
+export function buildApplicationMenu({ environments, activeId, onSwitch, onAddFromClipboard, onConnect, onForget, onOpenSettings, onOrganizationSignIn, onAddCloud, onChromePermission, sublabels = {}, home = null, openAtLogin = null, t = nativeText.englishText.t }) {
   const isMac = process.platform === "darwin";
   const active = environments.find((e) => e.id === activeId) ?? null;
   const others = home ? environments.filter((e) => e.origin !== home.origin && e.kind !== "local") : [];
@@ -127,6 +127,7 @@ export function buildApplicationMenu({ environments, activeId, onSwitch, onAddFr
     submenu: [
       role(t, "about", "native.role.about", { app: app.name }),
       { label: t("native.menu.preferences"), accelerator: "CmdOrCtrl+,", click: () => onOpenSettings() },
+      ...(onChromePermission ? [{ label: "Chromeへの接続許可…", click: onChromePermission }] : []),
       ...atLogin,
       { type: "separator" },
       role(t, "hide", "native.role.hide", { app: app.name }),

@@ -1,11 +1,12 @@
+import { isBackgroundThread, type BackgroundThread } from "../../shared/background-thread";
 type UnreadBot = {
   unread?: boolean;
-  tasks?: ReadonlyArray<{ unread?: boolean; routineRunId?: string; archivedAt?: number; openAsks?: number }> | null;
+  tasks?: ReadonlyArray<{ unread?: boolean; routineRunId?: string; archivedAt?: number; openAsks?: number } & BackgroundThread> | null;
 };
 
 export function botShowsUnread(bot: UnreadBot): boolean {
   if (!bot.tasks?.length) return Boolean(bot.unread);
-  return bot.tasks.some((task) => Boolean(task.unread) && !task.routineRunId && task.archivedAt === undefined);
+  return bot.tasks.some((task) => Boolean(task.unread) && !isBackgroundThread(task) && task.archivedAt === undefined);
 }
 
 /** The asks waiting on the person in a bot's conversations: on a team, the ones in their inbox. */

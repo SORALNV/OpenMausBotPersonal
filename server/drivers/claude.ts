@@ -2057,6 +2057,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         sendTurn: (turn) => authRecovery.send(turn, sendTurn),
         steer,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        releaseIdleSession: (threadId) => {
+          if (!active.has(threadId) && !sessions.get(threadId)?.turn) closeSession(threadId, "idle");
+        },
         respondToRequest: async (threadId, requestId, decision) => {
           const elicited = await sessions.get(threadId)?.elicit.answer(requestId, decision.behavior);
           if (elicited === "failed") return "unavailable";

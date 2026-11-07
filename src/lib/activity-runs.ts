@@ -106,9 +106,9 @@ function assistantTurnFolds(messages: Message[]) {
   return settledTurnFolds(messages, isNarration);
 }
 
-/** A conversation keeps the bot's own progress lines and folds only its finished tool steps. */
+/** NativeConnect working notes fold when its answer arrives; ordinary conversations retain progress lines. */
 function toolStepFolds(messages: Message[]) {
-  return settledTurnFolds(messages, (message, turnId) => message.turnId === turnId && foldable(message));
+  return settledTurnFolds(messages, (message, turnId) => message.turnId === turnId && (foldable(message) || (turnId.startsWith("omp-") && isNarration(message, turnId))));
 }
 
 export function roomTurnFolds(messages: Message[]): {

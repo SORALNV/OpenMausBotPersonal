@@ -126,7 +126,7 @@ export async function nativeTurn(client: NativeClient, binding: DirectThreadBind
   signal.addEventListener("abort", stop, { once: true });
   try {
     const reply = await client.request("turn/start", { threadId: binding.codexThreadId, clientUserMessageId: input.requestId,
-      input: [{ type: "text", text: input.text, text_elements: [] }] });
+      input: [{ type: "text", text: input.text, text_elements: [] }, ...(input.images ?? []).map(image => ({ type: "localImage", path: image.path }))] });
     turnId = reply.turn?.id;
     if (!turnId) throw new Error("Native turn acknowledgement missing; do not resend automatically");
     started(turnId);

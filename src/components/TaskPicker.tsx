@@ -1,3 +1,6 @@
+import { nativeOmpStatusLabel } from "@/lib/native-omp-status";
+import { botThreadsShown } from "@/lib/bot-thread-visibility";
+import { isBackgroundThread } from "../../shared/background-thread";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Check, ChevronDown, FolderInput, Pin, PinOff, Search, SquarePen, Trash2 } from "lucide-react";
 import { useStore, type Bot, type BotProject, type Group, type Task } from "@/state/store";
@@ -63,7 +66,7 @@ function TaskUsage({ usage }: { usage: Task["usage"] }) {
   );
 }
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "updatedAt" | "pinned" | "busy" | "activity" | "unread" | "projectId" | "openedBy" | "closedBy" | "archivedAt" | "snoozedUntil" | "waitingForTeammates"> & { usage?: Task["usage"] };
+type PickerTask = Pick<Task, "threadId" | "nativeOmpStatus" | "title" | "createdAt" | "updatedAt" | "pinned" | "busy" | "activity" | "unread" | "projectId" | "openedBy" | "closedBy" | "archivedAt" | "snoozedUntil" | "waitingForTeammates"> & { usage?: Task["usage"] };
 
 export function groupThreadTasks(tasks: PickerTask[], projects: BotProject[], query: string) {
   const needle = query.trim().toLowerCase();
@@ -347,7 +350,7 @@ function ConversationTaskPicker({
                     >
                       <div dir="auto" className="truncate text-[14px] leading-[18px] text-ink">{localizedTaskTitle(task.title)}</div>
                       <div className="text-[11px] text-ink-secondary">
-                        {task.activity === "waiting-on-you" ? `${t("task.waiting")} · ` : task.waitingForTeammates ? `${t("task.waitingOnTeammate")} · ` : task.busy ? `${t("chat.activity.working")} · ` : task.unread ? `${t("task.unread")} · ` : ""}
+                        {nativeOmpStatusLabel(task.nativeOmpStatus) ? `${nativeOmpStatusLabel(task.nativeOmpStatus)} · ` : task.activity === "waiting-on-you" ? `${t("task.waiting")} · ` : task.waitingForTeammates ? `${t("task.waitingOnTeammate")} · ` : task.busy ? `${t("chat.activity.working")} · ` : task.unread ? `${t("task.unread")} · ` : ""}
                         <TaskUpdatedTime task={task} now={now} />
                         <TaskUsage usage={task.usage} />
                         {opener && ` · ${opener}`}
@@ -420,9 +423,11 @@ function ConversationTaskPicker({
 
 export function BotActivityPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  const showThreads = useShowThreads();
-  if (showThreads) return null;
-  const activity = threadsWhenTreeHidden(bot, state.pendingQueued).filter((task) => task.threadId !== bot.threadId);
+  const showThreads = botThreadsShown(bot, useShowThreads());
+  const background = (bot.tasks ?? []).filter(task => isBackgroundThread(task) && (task.busy || task.waitingForTeammates || task.activity === "waiting-on-you" || task.activity === "working"))
+    .map(task => ({ ...task, queued: Boolean(state.pendingQueued[task.threadId]?.length) }));
+  const activity = (showThreads ? background : [...threadsWhenTreeHidden(bot, state.pendingQueued), ...background])
+    .filter((task) => task.threadId !== bot.threadId);
   if (!activity.length) return null;
   return (
     <div className="flex shrink-0 items-center gap-2 px-5 py-2" data-background-activity>
@@ -433,7 +438,7 @@ export function BotActivityPicker({ bot }: { bot: Bot }) {
       >
         <option value="" disabled>{t("task.otherActivity", { count: activity.length })}</option>
         {activity.map((task) => <option key={task.threadId} value={task.threadId}>
-          {task.title} · {task.activity === "waiting-on-you" ? t("task.waiting") : task.waitingForTeammates ? t("task.waitingOnTeammate") : task.busy || task.activity === "working" ? t("chat.activity.working") : task.queued ? t("task.queued") : t("task.unread")}
+          {task.title} · {nativeOmpStatusLabel(task.nativeOmpStatus) ?? (task.activity === "waiting-on-you" ? t("task.waiting") : task.waitingForTeammates ? t("task.waitingOnTeammate") : task.busy || task.activity === "working" ? t("chat.activity.working") : task.queued ? t("task.queued") : t("task.unread"))}
         </option>)}
       </Select>
       <span dir="auto" className="truncate text-[12px] text-ink-secondary">{bot.tasks?.find((task) => task.threadId === bot.threadId)?.title}</span>
@@ -443,12 +448,12 @@ export function BotActivityPicker({ bot }: { bot: Bot }) {
 
 export function TaskPicker({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  const showThreads = useShowThreads();
+  const showThreads = botThreadsShown(bot, useShowThreads());
   if (!showThreads) return null;
   return (
     <ConversationTaskPicker
       threadId={bot.threadId}
-      tasks={orderedThreadList((bot.tasks ?? []).filter((task) => !task.routineRunId))}
+      tasks={orderedThreadList((bot.tasks ?? []).filter((task) => !isBackgroundThread(task)))}
       busy={false}
       bot={bot}
       attention={crossBotAttentionThreads(state.bots, state.pendingQueued, bot.id, state.groups)}

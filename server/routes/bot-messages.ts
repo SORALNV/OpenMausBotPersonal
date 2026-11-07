@@ -68,6 +68,8 @@ export interface BotMessageRouteDeps {
   cloudHome: boolean;
   DirectSendRefused: abstract new (...args: never[]) => { readonly status: number; readonly body: Record<string, unknown> };
   acceptDirectSend(input: DirectSendInput, guardedStart?: (currentAtStart: BotRecord) => Promise<DirectSendReceipt>): Promise<DirectSendReceipt>;
+  nativeSteer?(botId: string, threadId: string, text: string, fields: Partial<Pick<Message, "sendId" | "sender" | "queueId">>, queued?: { text: string; prompt?: string; sendId?: string; sender?: Message["sender"]; replyToId?: string; dataContext?: Message["dataContext"]; messageId: string }[]): Promise<Message | undefined>;
+  nativeApprovalControl?(botId: string, threadId: string, text: string, sendId?: string, sender?: ResolvedSender): Message | undefined;
   directSendRefusal(botId: string, threadId: string): { status: number; body: Record<string, unknown> } | null;
   startTurn(botId: string, text: string, opts?: {
     threadId?: string; replyTo?: Message; sendId?: string; sender?: ResolvedSender; trigger?: UsageTrigger; relayed?: boolean;
@@ -263,6 +265,10 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // acceptDirectSend checks these again; nothing awaits between.
       const refused = directSendRefusal(bot.id, threadId);
       if (refused) return json(res, refused.status, refused.body);
+      if (!guarded && !pressed && !body.replyToId && !body.dataContext && auth.scopes.includes("admin") && (auth.kind === "session" || DESKTOP_MANAGED)) {
+        const control = deps.nativeApprovalControl?.(bot.id, threadId, typed, parseSendId(body.sendId), messageSender(auth));
+        if (control) return json(res, 202, { ok: true, threadId, message: control });
+      }
       const appSent = fromAnApp ? prepareAppMessage(store, threadId, body.appMessage) : null;
       if (appSent && !appSent.ok) return json(res, appSent.status, { error: appSent.error });
       const pointed = pointing ? preparePointed(store, threadId, body.pointed) : null;
@@ -372,6 +378,15 @@ export function createBotMessageRoutes(deps: BotMessageRouteDeps): RouteHandler 
       // Hold the whole queue atomically: a racing settle drains it or this request steers it, never both.
       const held = holdSteeredQueue(bot.id, bot.threadId, m[2]);
       if (!held) return json(res, 404, { error: "no such queued message" });
+      try {
+        const message = await deps.nativeSteer?.(bot.id, bot.threadId, held.items.map(item => item.prompt).join("\n\n"), { queueId: held.items[0]?.messageId }, held.items);
+        if (message) {
+          settleHeldSteeredQueue(held);
+          const messages = store.messagesFor(bot.threadId).filter(row => held.items.some(item => item.messageId === row.queueId));
+          const steered = messages.some(row => row.steered);
+          return json(res, 200, { ok: true, steered, handledLocally: !steered, threadId: bot.threadId, messages, queueIds: held.items.map(item => item.messageId) });
+        }
+      } catch (error) { restoreHeldSteeredQueue(held); throw error; }
       const currentAtStart = store.projectBotForTask(bot.id, bot.threadId);
       const instance = currentAtStart?.busy ? runningTurnInstance(currentAtStart, bot.threadId) : undefined;
       const engineCanSteer = Boolean(currentAtStart?.busy && instance?.adapter.capabilities.queueing && instance.adapter.steer);

@@ -17,6 +17,7 @@ export interface DelegatedLevelDeps {
   sourceLevel: (botId: string, threadId: string) => ApprovalMode;
   /** The level a bot's turn in a thread runs at. */
   turnLevel: (bot: BotRecord, peerInitiated: boolean, threadId: string) => ApprovalMode;
+  conversationLevel?(threadId: string): ApprovalMode | undefined;
   driverKind: (bot: BotRecord) => string | undefined;
   guestDriven: (threadId: string) => boolean;
   /** Outside lineage inherits nothing (docs/runtime-contract.md §3). */
@@ -71,6 +72,8 @@ export function createDelegatedLevel(deps: DelegatedLevelDeps) {
   /** A room thread is shared, so a Chief's level rides the hand-off (`source`, the requester's node) and never lands on it. */
   function roomTurn(bot: BotRecord, threadId: string, source: Hop | undefined): ApprovalMode {
     if (deps.guestDriven(threadId)) return "ask";
+    const conversation = deps.conversationLevel?.(threadId);
+    if (conversation) return conversation;
     const own = deps.turnLevel(bot, source !== undefined, threadId);
     return handedDown(source, bot, own)?.level ?? own;
   }

@@ -1,8 +1,8 @@
+import { ComposerRoomWait } from "./ComposerRoomWait";
 import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { Mic, Paperclip, Square, X } from "lucide-react";
-import { PrivacyWorkbench } from "./PrivacyWorkbench";
 import { ComposerSpeechError } from "./ComposerSpeechError";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type InstanceInfo, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -148,7 +148,8 @@ export function Composer({
   const steerInstanceId = group
     ? members?.find((member) => member.id === groupBusyBotId)?.modelSelection.instanceId
     : bot?.modelSelection.instanceId;
-  const canSteer =
+  const nativeOmpStatus = bot?.tasks?.find(task => task.threadId === threadId)?.nativeOmpStatus;
+  const canSteer = nativeOmpStatus ? nativeOmpStatus.canSteer :
     state.instances.find((i) => i.instanceId === steerInstanceId)?.capabilities?.queueing === true;
   const composerTask = profile?.tasks?.find((task) => task.threadId === threadId);
   // Visible branch only: an approval left on an abandoned branch must not block the composer.
@@ -547,6 +548,7 @@ export function Composer({
     }
   };
   const send = (followUp: FollowUp | undefined = followUpFor(false)) => {
+    if (approval) followUp = "queue";
     if (locked || attachmentPending) return;
     if (followUp === "steer" && group && effectiveChannelMode === "goal") {
       dispatch({ type: "error", message: "目標モードはキューで送信してください。差し込みはチャットモードで使えます。" });
@@ -692,7 +694,6 @@ export function Composer({
     <div className={cn("pointer-events-none relative px-5", simpleDock ? "pb-4" : "pb-3")}>
       <ComposerSpeechError message={speechError} />
       <div className="pointer-events-auto relative w-full">
-        {import.meta.env.VITE_OMB_PERSONAL === "1" && <PrivacyWorkbench key={threadId} threadId={threadId} onApply={masked => editText(text ? `${text}\n\n${masked}` : masked)} />}
         {failedSends.map((failed) => (
           <div
             key={failed.id}
@@ -740,6 +741,7 @@ export function Composer({
           </div>
         )}
         {!group && <PointedChips threadId={threadId} />}{!group && bot && <SetupRequestChip bot={bot} threadId={threadId} />}
+        <ComposerRoomWait profile={profile} group={group} groups={state.groups} dispatch={dispatch} />
         <ComposerAttachments
           items={attachments}
           onAdd={addAttachments}

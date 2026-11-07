@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "../../shared/background-thread";
 import { useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -28,7 +29,7 @@ export function BotDeleteMenuItem({ deleting, onClick, className = "flex w-full 
 }
 
 export function allThreadRows(bot: Bot) {
-  return (bot.tasks ?? []).filter((task) => !task.routineRunId).map((task) => {
+  return (bot.tasks ?? []).filter((task) => !isBackgroundThread(task)).map((task) => {
     const thread = currentTaskBot(bot, task.threadId);
     return { ...task, busy: thread.busy, activity: thread.activity };
   });

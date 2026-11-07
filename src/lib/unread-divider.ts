@@ -1,3 +1,4 @@
+import { isBackgroundThread, type BackgroundThread } from "../../shared/background-thread";
 import { peerLine } from "@/lib/peer-message";
 import type { Message } from "@/state/store";
 
@@ -28,10 +29,10 @@ export function unreadMessageIds(messages: readonly Pick<Message, "id">[], messa
 export function threadOpensUnread(bot: {
   threadId: string;
   unread?: boolean;
-  tasks?: ReadonlyArray<{ threadId: string; unread?: boolean; routineRunId?: string }> | null;
+  tasks?: ReadonlyArray<{ threadId: string; unread?: boolean } & BackgroundThread> | null;
 }): boolean {
   const task = bot.tasks?.find((candidate) => candidate.threadId === bot.threadId);
-  if (task?.routineRunId) return false;
+  if (task && isBackgroundThread(task)) return false;
   return Boolean(task?.unread ?? bot.unread);
 }
 

@@ -33,6 +33,19 @@ describe("Store", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("persists background classification and its history without changing the selected conversation", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Background worker" });
+    const main = bot.threadId;
+    const task = store.createBackgroundTask(bot.id, "Synthetic job")!;
+    store.appendMessage(task.threadId, { role: "bot", kind: "text", text: "Synthetic completed result" });
+    store.setTaskActivity(bot.id, task.threadId, "idle");
+    const restored = new Store(selection);
+    expect(restored.bot(bot.id)?.threadId).toBe(main);
+    expect(restored.taskByThread(bot.id, task.threadId)).toMatchObject({ background: true, busy: false });
+    expect(restored.messagesFor(task.threadId).some(message => message.text === "Synthetic completed result")).toBe(true);
+  });
+
   it("retains tool selection across restarts and distinguishes clearing from no tools", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Scoped drafter" });

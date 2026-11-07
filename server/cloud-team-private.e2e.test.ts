@@ -335,4 +335,3 @@ it("when Bob leaves the team, his private chats and everything only his are dele
   // A My Cloud has no such route.
   expect((await fx.onCloud("POST", "/api/cloud/team/member-left", { email: BOB.email })).status).not.toBe(200);
 }, hostTimeout(90_000));
-

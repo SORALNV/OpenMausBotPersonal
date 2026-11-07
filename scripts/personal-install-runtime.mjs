@@ -1,3 +1,5 @@
+import { assertPersonalAppIdentity } from "./personal-app-identity.mjs";
+import { personalLoginHome } from "./personal-login-home.mjs";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -8,7 +10,10 @@ import { createRequire } from "node:module";
 import { runtimeRequirement, verifyPersonalRuntime } from "../electron/personal-runtime-verifier.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const pkg = JSON.parse(readFileSync(join(repo, ".privacy-dev/evidence/personal-runtime-package.json"), "utf8"));
+const packageIndex = process.argv.indexOf("--package");
+if (packageIndex >= 0 && !process.argv[packageIndex + 1]) throw new Error("--package requires a runtime package manifest");
+const packageFile = packageIndex >= 0 ? resolve(process.argv[packageIndex + 1]) : join(repo, ".privacy-dev/evidence/personal-runtime-package.json");
+const pkg = JSON.parse(readFileSync(packageFile, "utf8"));
 runtimeRequirement(pkg.fingerprint);
 const launcherRequirement = `=identifier "dev.sora.openmausbot.personal" and certificate leaf = H"${pkg.fingerprint}"`;
 const run = (command, args) => {
@@ -41,9 +46,14 @@ if (existsSync(active)) writeFileSync(join(backup, "active.json"), readFileSync(
 const pnpm = join(repo, "node_modules/.pnpm");
 const { readdirSync } = await import("node:fs");
 const asar = createRequire(import.meta.url)(join(pnpm, readdirSync(pnpm).find(name => name.startsWith("@electron+asar@")), "node_modules/@electron/asar/lib/asar.js"));
+const stagedMetadata = JSON.parse(asar.extractFile(join(version, "OpenMausBot Runtime.app/Contents/Resources/app.asar"), "personal-build.json").toString());
+if (typeof stagedMetadata.codexHome !== "string") throw new Error("Runtime shared Codex login home is missing");
+personalLoginHome({ home: homedir(), env: { OMB_PERSONAL_CODEX_LOGIN_HOME: stagedMetadata.codexHome } });
 let current;
 try { current = JSON.parse(asar.extractFile(join(destination, "Contents/Resources/app.asar"), "personal-launcher.json").toString()); } catch { current = null; }
 const migrate = !current || process.argv.includes("--migrate-launcher");
+assertPersonalAppIdentity(join(version, "OpenMausBot Runtime.app"));
+if (!migrate) assertPersonalAppIdentity(destination);
 if (current && (current.version !== 1 || current.fingerprint !== pkg.fingerprint)) throw new Error("Existing launcher identity differs; explicit migration required");
 run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", launcherRequirement, destination]);
 if (migrate) {

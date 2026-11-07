@@ -73,10 +73,13 @@ it("reports every run into the bot's main thread while fresh executions, approva
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: completed[0].threadId, text: "Explain that completed report." }, 202);
     evidence.push(await control(["wait", "--bot", bot.id, "--task", completed[0].threadId]));
     await api("POST", `/api/routine-runs/${completed[0].id}/seen`);
-    const promoted = (await currentBot()).tasks.find((task: any) => task.threadId === completed[0].threadId);
-    expect(promoted.routineRunId).toBeUndefined();
-    expect(promoted.unread).toBe(true);
-    const live = completed[0].threadId as string;
+    const inspected = (await currentBot()).tasks.find((task: any) => task.threadId === completed[0].threadId);
+    expect(inspected).toMatchObject({ routineRunId: completed[0].id, background: true });
+    expect((await currentBot()).mainThreadId).toBe(originalThread);
+    const { task: manual } = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Explicit new conversation" }, 201);
+    const live = manual.threadId as string;
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId: live, text: "Use this explicitly created conversation." }, 202);
+    evidence.push(await control(["wait", "--bot", bot.id, "--task", live]));
     expect((await currentBot()).mainThreadId).toBe(live);
     const { task: chosenTask } = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Chosen reports" }, 201);
     const dedicated = chosenTask.threadId as string;
@@ -125,8 +128,9 @@ it("reports every run into the bot's main thread while fresh executions, approva
 
     await api("DELETE", `/api/bots/${bot.id}/tasks/${dedicated}`);
     const fallback = (await currentBot()).tasks.find((task: any) => task.threadId === active.threadId);
-    expect(fallback.routineRunId).toBeUndefined();
-    expect(fallback.unread).toBe(true);
+    expect(fallback).toMatchObject({ routineRunId: pending.id, background: true, unread: false });
+    await expect.poll(async () => (await messages(live)).find((message) => message.card?.requestId === approval.card.requestId), { timeout: 15_000 })
+      .toMatchObject({ kind: "options", automation: { needsYou: true, executionThreadId: active.threadId } });
     expect((await runState(pending.id)).resultsThreadId).toBe(dedicated);
     await api("POST", `/api/bots/${bot.id}/respond`, { threadId: active.threadId, requestId: approval.card.requestId, behavior: "deny" });
     writeFileSync(gate, "complete the isolated turn");

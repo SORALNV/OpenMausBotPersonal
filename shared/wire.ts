@@ -1,3 +1,4 @@
+export { movesThreadToTop, orderedThreadList, isSnoozed, nextOpenThread } from "./thread-order.ts";
 /** The client-visible wire model for tasks, bots, messages and rooms. A field
  * here is one the server emits in every response and SSE frame that carries
  * the shape. */
@@ -149,6 +150,7 @@ export interface WireTask extends InboxTask {
   /** Organizational grouping only; never a directory or provider context. */
   projectId?: string;
   /** Detached routine execution, reachable through its visible results card. */ routineRunId?: string;
+  /** Automatic work stays out of the normal conversation list; false explicitly promotes it. */ background?: boolean;
   /** Work from outside (a webhook, an app's event) reached this conversation: what it starts or runs stays confined, for good. */ outside?: true;
   /** An outside caller opened this thread through the bot's API, so only it may continue it; such a thread is outside too. */ botApi?: true;
   /** Set when a bot, not a person, opened this thread. */ openedBy?: TaskOpenedBy;
@@ -185,6 +187,8 @@ export interface WireTask extends InboxTask {
   rewound?: boolean;
   pinnedMessageId?: string;
   /** Runtime-only state, reset on load and never persisted. */
+  /** Authoritative NativeConnect state and live steer availability; server-derived, never persisted. */
+  nativeOmpStatus?: { state: string; canSteer: boolean };
   activity?: BotActivity;
   busy?: boolean;
   /** Epoch ms when this task's current busy stretch began; runtime-only. */
@@ -615,36 +619,6 @@ export interface WireMessage extends ServerTextLine, HelperIntroField, SetupCard
   queued?: boolean;
   /** steer-queue entry this drained user line came from. */
   queueId?: string;
-}
-
-export const movesThreadToTop = (message: Pick<WireMessage, "role" | "kind" | "peerAsk" | "turnId" | "turnTerminal">): boolean =>
-  message.role === "user" ? !message.peerAsk : message.kind === "text" && (message.turnTerminal === true || !message.turnId);
-
-export function orderedThreadList<T extends { pinned?: boolean; lastThreadOrderAt?: number; createdAt?: number }>(tasks: readonly T[]): T[] {
-  return tasks
-    .map((task, index) => ({ task, index }))
-    .sort((a, b) => {
-      const pin = Number(b.task.pinned === true) - Number(a.task.pinned === true);
-      if (pin) return pin;
-      const recency = (b.task.lastThreadOrderAt ?? b.task.createdAt ?? 0) - (a.task.lastThreadOrderAt ?? a.task.createdAt ?? 0);
-      if (recency) return recency;
-      return a.index - b.index;
-    })
-    .map((entry) => entry.task);
-}
-
-/** 0 is the "until new activity" sentinel. The event stream never drops an expired snooze, so check the clock too. */
-export const isSnoozed = (task: Pick<WireTask, "snoozedUntil">, now = Date.now()): boolean =>
-  task.snoozedUntil !== undefined && (task.snoozedUntil === 0 || task.snoozedUntil > now);
-
-type OpenThreadCandidate = Pick<WireTask, "routineRunId" | "archivedAt" | "closedBy" | "openedBy" | "snoozedUntil" | "pinned" | "lastThreadOrderAt" | "createdAt">;
-
-/** The top row of the bot's thread list, so deleting the open thread never pulls a hidden one into view. */
-export function nextOpenThread<T extends OpenThreadCandidate>(tasks: readonly T[], now = Date.now()): T | undefined {
-  const own = tasks.filter((task) => !task.routineRunId);
-  const open = own.filter((task) => task.archivedAt === undefined);
-  const listed = open.filter((task) => task.pinned === true || !(task.closedBy || task.openedBy || isSnoozed(task, now)));
-  return [listed, open, own].map((candidates) => orderedThreadList(candidates)[0]).find((task) => task !== undefined);
 }
 
 export interface OptionCardData extends WaitCardField, ComputerAskField, AccessRequestCardField, OutsideWriteCardField {

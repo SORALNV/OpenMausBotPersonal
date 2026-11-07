@@ -12,8 +12,10 @@ export interface NativeOmpBinding {
   cwd: string;
   model: string;
   /** shared-tui attaches to the standard native TUI; no second session writer is started. */
-  connection?: "shared-tui";
-  /** mediator reviews bounded low-risk native requests; important, unknown or failed reviews still require the owner's Allow. */
+  connection?: "shared-tui" | "shared-web";
+  /** deepseek uses the unmodified DSH Web operator interface over SSH. */
+  harness?: "deepseek";
+  /** mediator asks the owner only for concrete high-risk findings; classifier failures retry without creating approval cards. */
   approvalPolicy?: "human" | "mediator";
   /** Enable OhMyPi's native passive advisor for a managed standard TUI, using the configured worker model. */
   advisor?: boolean;
@@ -31,4 +33,31 @@ export interface NativeOmpMessage {
   entryId?: string;
   source?: "human" | "bot";
   sharedTurn?: boolean;
+  /** Per-project originals are retained even when the combined chat answer is shortened. */
+  projects?: { project: string; sessionId: string; requestId: string; text: string; sharedTurn?: boolean }[];
+}
+
+/** Native profile metadata only; filenames are resolved by the connector, never chosen by a model. */
+export interface NativeOmpSessionInfo {
+  id: string;
+  name: string;
+  directory: string;
+  file?: string;
+  cwd?: string;
+  running: boolean;
+  shared: boolean;
+  busy?: boolean;
+}
+
+/** Management conversations keep their own native history and may manage other sessions without merging their histories. */
+export interface NativeOmpThreadTarget {
+  kind: "manager" | "session";
+  session: NativeOmpSessionInfo;
+}
+
+/** Owner-curated project aliases refer to catalogued sessions, preserving their native IDs and histories. */
+export interface NativeOmpProject {
+  name: string;
+  sessionId: string;
+  description: string;
 }

@@ -6,8 +6,68 @@ standard Collab instead of starting an independent RPC session writer.
 
 The Personal build exposes `/api/native-omp` for owner-managed, per-Bot
 OhMyPi NativeConnect destinations. Each Bot thread derives a separate remote
-session directory. The mediator prepares a short note while preserving the
+session directory by default, or explicitly selects a catalogued native session.
+The mediator prepares a short note while preserving the
 original request; display formatting is independent of native history.
+
+## Session management
+
+Personal Settings → General → OhMyPi / NativeConnect selects a Bot, its OMB
+thread, and a native session. The management option covers the configured OMP
+profile's catalog, creation and binding; it does not merge project transcripts.
+The catalog reads bounded headers under the configured state root, its sibling
+`project-threads`, and that profile's native session directories. An arbitrary
+external session directory is not accepted from the model.
+
+The same tool-free mediator interprets ordinary chat instructions as bounded
+list/create/connect/manager operations. For example, ask to create a named
+project session and connect a new OMB thread, select an existing named session
+for the current thread, or create a session without changing any OMB thread.
+These are semantic intents rather than exact command phrases. A new OMB thread
+requires an explicit quoted span of the user's instruction. Ambiguous names
+require an ID or an exact unique name; no arbitrary selection is made.
+
+`GET /api/native-omp/sessions` lists the native catalog. `POST` creates a named
+empty persistent session with a request ID. `POST /api/native-omp/threads`
+validates a real shared connection before committing the thread target. All
+routes retain the normal authenticated owner boundary. The private management
+journal reuses a partially created native session and OMB thread on retry.
+Creating a native session uses standard RPC `new_session` and `set_session_name`,
+without a model prompt. Normal work continues through the native standard TUI.
+
+The connector accepts native sessions which have not yet saved a JSONL file.
+When multiple saved sessions share a directory, pool ownership, private relay,
+tmux name and lock are scoped to native identity. Existing legacy private
+relays are discovered and reused. Multiple OMB views of one native session
+share an input queue and expose each approval in only its owning view.
+
+An already running unshared TUI can be adopted through its standard `/collab`
+command only when its tmux client is detached and its composer is proven empty.
+A draft, dialog, unknown writer or attached human TUI refuses adoption without
+clearing input or restarting it. Enable native Collab there or detach after
+finishing the draft, then reconnect. Public relay destinations are unsupported.
+At most eight native processes in the configured profile may be started by
+this connector; it does not kill or silently recycle existing sessions.
+
+Additional checks:
+
+```sh
+node --test scripts/native-omp-pool.node-test.mjs
+node node_modules/vitest/vitest.mjs run server/native-omp-sessions.test.ts src/components/NativeOmpSettings.test.ts
+```
+
+The HTTP fixture covers idempotent session creation, selecting an existing
+native session, chat-driven creation plus a new OMB thread, round-trip input to
+that selected native session, save-only creation without an extra thread, and
+rejection of malformed management output before any native prompt.
+
+On 2026-10-26, isolated Pi sessions also verified native TUI human input mirrored
+to two OMB views, serialized OMB submissions, connecting an empty unsaved native
+session, preserving a draft during refused adoption, adoption of the same TUI
+process without a model prompt, and two distinct sessions in the same directory
+with independent answers and no crossed history. These synthetic sessions used
+the installed OhMyPi 18.12.5 binary and existing Pi authentication. They did not
+execute or resend a production Bot request.
 
 Run the synthetic stdio/SSH-plan checks without provider credentials:
 
@@ -33,11 +93,23 @@ confirmation/select approvals, questions, Stop, provider failure and an
 unrelated ordinary Bot. No real account or Raspberry Pi is contacted by it.
 The service tests additionally prove restart receipts prevent replay and that
 Stop settles a preparation model even if it ignores its AbortSignal.
-Mediator review checks cover read-only inspection, independent low-risk verdicts,
-native full-title Collab requests, owner-only destructive actions, failed reviews
-and a human answering during an in-flight model review. HTTP acceptance also
-checks automatic inspection approval and refusal to auto-answer a formatting
-request; the destructive command is only fixture text and never executes.
+The risk fixtures prove that unlisted commands, outside-workspace edits,
+incomplete evidence and unknown file formats do not generate owner cards
+without a concrete high-risk finding. Positive high-risk findings include a
+specific Japanese reason. Privilege, destructive effects and credential
+exposure cannot be suppressed by a no-risk model reply. Failed/invalid/late
+classifications retry the existing operation without execution or a permission
+card. Shared human takeover revokes pending model decisions without lending
+BOT authorization to that new input.
+
+Progress fixtures cover tool start/end status before the final answer, public
+assistant narration, reconnection after an interrupted job and native work
+continuing after a completed request. Intermediate messages and the final
+answer share a display turn and the existing renderer folds the intermediate
+messages on completion. The transport excludes hidden thinking and keeps the
+explicit final answer separate from interim narration. No live user prompt is
+created by these fixtures.
+
 Shared approval checks also cover questions arriving outside an OMB turn,
 startup replay of native pending questions, and approvals after a failed turn.
 Waiting for a native human turn or an Allow/Deny response does not consume the
@@ -139,6 +211,32 @@ The service tests also check background reader recovery without prompt replay an
 shutdown cancellation. These are synthetic tests; deployment still requires a
 read-only check of the intended native session and preserved history.
 
+### Japanese questions and interrupted-request ownership
+
+Native tool approval descriptions use Japanese labels while preserving the exact
+command, path and content. Ordinary select/editor questions use structured question
+cards, with a separate tool-free translation call and a mapping from Japanese display
+labels back to the original native option. The translation cannot approve an operation.
+If translation fails, the card explicitly reports that failure and retains the original
+for inspection; it never invents an answer. Native approvals still permit only a
+one-time grant. Closed-source phone clients may retain their own English button labels.
+
+The known OhMyPi 18.12.5 developer-report confirmation is answered No, and writes to
+`xd://report_issue` are denied, without asking the owner to approve an unsolicited
+external report. Other Yes/No questions retain the normal human response path.
+
+An admitted native input is linked to its durable receipt by native entry ID. After a
+disconnect, the same native history can restore low-risk review context without a new
+prompt. A later human input clears that context. Only a linked final assistant entry
+and idle state can reconcile an interrupted receipt as completed. Ambiguous identical
+inputs are not guessed. Native host error frames are operation notices, matching the
+standard pinned guest; they do not detach an already admitted prompt. Room resync
+retains an unchanged pending question rather than cancelling and recreating its card.
+
+The service/question/review regressions and loopback Collab tests cover these cases.
+`node scripts/native-omp-acceptance.mjs` additionally drives translated structured
+answers, one-time permission and developer-report decline through isolated HTTP routes.
+
 ### 2026-10-25 recovery qualification
 
 The native session had finished the request while OMB showed an indeterminate
@@ -159,3 +257,86 @@ settings, Google Chat and registered-word settings. All 2,941 existing messages
 retained their IDs, text and JSON; the recovered answer was the only added message.
 The per-thread update time advanced. Evidence and rollback copies are under the
 Git-ignored `.privacy-dev/native-omp-recovery-20261025/` directory.
+
+## Request-scoped owner delegation
+
+The service, HTTP and renderer fixtures cover a standalone owner `すべて許可`
+while a high-risk operation waits, one-operation approval without a native
+session-wide grant, persistent settled execution cards, matched start/end/error
+events, revocation, completion/Stop/restart expiry, and send-ID idempotency.
+Owner controls use the same destination and auth checks as chat; guarded,
+quoted, client-only and tool-originated text cannot grant permission.
+Unmatched execution events leave the receipt unconfirmed. The fake disk-format
+operation is a protocol fixture and never runs a disk command.
+
+## Local routing and concise progress
+
+The isolated HTTP fixture verifies mediator-only consultation, fixed OMB API
+calls, the existing profile-change application policy and zero additional native prompts
+for those requests. Service fixtures verify a single original input, settlement,
+no native fallback on malformed routing and native progress continuity. Local
+manager tests reject shells, executable registration and delegation even when
+present in the catalog, intersect owner restrictions and deduplicate calls.
+A live tool-free Luna check uses synthetic requests and no Pi access; it covers
+consultation, OMB settings, Pi operations, session creation, ambiguity, follow-up
+context and quoted malicious instructions. Physical iPhone rendering is untested.
+
+Image checks upload synthetic bytes through the real attachment API, verify the
+native `images` payload and original OMB attachment, exercise image-only local
+consultation, shared queue preservation, direct Codex `localImage`, reused IDs
+with different image bytes, symlink replacement and size limits. A synthetic red
+PNG was recognised by a live tool-free Luna call; no real photograph was used.
+The standard host protocol was checked at OhMyPi v18.12.5 (`collab/protocol.ts`,
+`host.ts`, `guest.ts`); OhMyPi itself is not patched.
+
+### 実行中への差し込みと状態の照合
+
+Personalの「実行中に差し込む」または設定した差し込みキーは、まず仲介モデル（Lunaなど）の振り分けを通る。相談はOMB側で短く回答し、OMBの設定・連携は既存のOMB管理ツールで扱う。表示だけの指示は今回の回答整形へ適用する。Piの実行内容に必要な入力だけを共有TUIの標準Collab `prompt`へ送る。OhMyPi 18.12.5のhostが `streamingBehavior: "steer"` として扱い、同じネイティブ履歴に追加する。通常の送信は従来通りキューで待つ。Botの仲介モデルのqueueing能力ではなく、接続中のネイティブセッションの実行状態で差し込みボタンを出す。
+
+受理はネイティブ履歴の自分の入力で照合する。受理がまだ見えない場合は未確認として保持し、タイムアウト・切断を理由に再送しない。画像の差し込みにも通常と同じ添付ファイル検査を通す。差し込みから承認回答・中断を自動で発生させない。
+
+接続復旧中は `reconnecting`、ネイティブのキューだけが残る場合は `native-queued`、状態照合中は `reconciling` とし、実行中の表示とは分ける。実行・承認待ちが残る共有セッションは30秒ごとに公式レジストリの状態を読み直し、通知と不一致なら同じセッションのスナップショットを取り直す。時間だけを根拠に待機中・成功へ変更しない。スナップショットに残る古い質問は、同一ホストへの新しい照会で承認待ちがないと確認できた場合にだけ整理する。
+
+隔離fixtureで、差し込みと通常キューの区別、同じsendIdの重複、受理通知遅延、画像、標準TUIからの同時入力、接続復旧中の表示、終了状態の取り逃し、承認受領確認を検証する。実ユーザーのPi会話へテスト入力を送らない。
+
+再接続や標準TUIからの別入力で元の依頼の文脈を失った承認要求も、無表示のまま捨てない。元の依頼の自動許可を流用せず、対応不明の理由を付けて保留操作を表示する。自動許可の受領確認が失敗した場合も、許可済みとして消さず確認可能な状態を保つ。
+
+OhMyPi 18.12.5は、最後の共有ゲストが切断したときの保留中の承認を標準TUIへ戻す場合がある。その後はレジストリの `inputRequired` がfalseでも、端末内の選択画面がツールを止めていることがある。共有接続はこの状態を読み取り、同じPID・セッションID・未完了ツール呼出し・確認画面の識別子を照合して、通常の承認審査へ渡す。本人が端末に接続中の場合や一意に照合できない画面は自動操作しない。省略されたコマンドは、一意の未完了呼出しだけに対応付け、審査とカードには履歴内の完全なコマンドを用いる。セッション全体への許可は選ばず、送信した選択の受領未確認時も再送しない。表示上の選択位置の変化だけを回答受領の証拠にしない。
+
+差し込みの判定は同一スレッド内で順序を守る。複数キューは一件ずつ判定し、Pi向けだけをまとめる。判定失敗・タイムアウト時に原文をPiへフォールバック送信しない。判定中に元の実行終了や接続先変更が起きた場合も別の実行へ差し込まない。OMB内の返答は独立した表示ターンに置き、元のPi作業・承認・完了状態を変更しない。
+
+`node scripts/native-omp-acceptance.mjs` は架空の仲介モデルとネイティブ相手を使う隔離HTTP検証。実行中の相談・OMB操作・振り分け失敗・ローカルだけのキュー・混在キュー・sendId再送を通し、ネイティブ送信記録に相談がないことと、元の作業が継続することを確認する。実モデルによる自然文の分類精度はこの検証の対象外。
+
+## One chat for multiple projects
+
+The free-management router preserves separate native sessions while selecting
+them from a single OMB conversation. Owner project mappings are stored in
+`private/native-omp-projects.json`; each maps a name and a short description to
+a catalogued session ID. Unconfigured mappings are derived from the Bot's
+existing fixed project threads. A generic native title therefore does not lose
+its project association. Owner GET/PUT `/api/native-omp/projects` edits these
+mappings; updates apply to the next request and cannot change an active turn.
+
+The mediator can return up to four ordered project steps. All destinations are
+resolved before execution. Each step receives the full original user request,
+its own scope and bounded previous results as reference data. Original native
+answers and per-step receipts are saved before proceeding. A failed or stopped
+step prevents later work; completed work is not replayed automatically. A
+recovered partial answer is not marked as a successful compound request.
+Standard pool serialization, human TUI use, high-risk approvals, local OMB
+routing and independent display formatting remain in place. Old snapshot
+histories are retained in their original views instead of being copied into
+the router conversation. `private/native-omp-last-route.json` retains recent
+project IDs for follow-up interpretation.
+
+```sh
+node node_modules/vitest/vitest.mjs run server/native-omp-projects.test.ts server/native-omp-router.test.ts
+node scripts/native-omp-projects-acceptance.mjs
+node --test scripts/native-omp-pool.node-test.mjs
+```
+
+The HTTP fixture uses temporary HOME/data and fake models/native peers. It
+covers ordered routing, previous-result handoff, original answers, one visible
+thread, advice, invalid destinations and stopping before the next project.
+Real model classification and native-device checks are separate evidence;
+never submit fixture prompts to production project sessions.

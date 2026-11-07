@@ -35,3 +35,12 @@ describe("room turn level", () => {
     expect(levels.forRequest("room-1", "dev", own)).toBe("full");
   });
 });
+
+it("an owner's live conversation setting overrides a dispatched room level, including revocation", () => {
+  let current: "full" | "ask" | undefined;
+  const levels = createRoomTurnLevels(threadId => threadId === "room" ? current : undefined);
+  levels.dispatched("room", "dev", "ask"); current = "full";
+  expect(levels.forRequest("room", "dev", own)).toBe("full");
+  current = "ask"; expect(levels.forRequest("room", "dev", own)).toBe("ask");
+  expect(levels.forRequest("another", "dev", own)).toBe("ask");
+});

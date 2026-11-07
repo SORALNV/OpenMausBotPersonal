@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "../../../shared/background-thread";
 import { useId } from "react";
 import { t } from "@/lib/i18n";
 import type { Bot } from "@/state/store";
@@ -10,7 +11,7 @@ export function ResultsDestination({ bot, value, allowCurrent = false, onChange 
   onChange: (threadId: string | null | undefined) => void;
 }) {
   const id = useId();
-  const tasks = (bot?.tasks ?? []).filter((task) => !task.routineRunId);
+  const tasks = (bot?.tasks ?? []).filter((task) => !isBackgroundThread(task));
   const selectedMissing = typeof value === "string" && !tasks.some((task) => task.threadId === value);
   const groups = [...(bot?.projects ?? []), { id: "", name: t("folder.none") }];
   return <div className="min-w-0 space-y-1.5">

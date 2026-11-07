@@ -180,7 +180,9 @@ it("marks a job's review answer and a webhook post unread where they land", asyn
     const hook = await api("POST", "/api/webhooks", { name: "Deploys", prompt: "", botId: asker.id, delivery: "post" }, 201);
     const delivered = await fetch(hook.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Deploy finished." }) });
     expect(delivered.ok).toBe(true);
-    await expect.poll(async () => (await tasks(asker.id)).find((task) => task.title === "Updates")?.unread, { timeout: 20_000 }).toBe(true);
+    await expect.poll(async () => ((await api("GET", `/api/threads/${asker.activeTaskId}/messages?limit=50`)).messages as any[])
+      .some(message => message.webhookPost && message.text === "Deploy finished."), { timeout: 20_000 }).toBe(true);
+    expect((await tasks(asker.id)).some(task => task.title === "Updates")).toBe(false);
   } finally {
     await fixture.close();
   }

@@ -1,3 +1,4 @@
+import type { ConversationControl } from "../conversation-permissions.ts";
 import { z } from "zod";
 import type { ResolvedSender, WireGroup } from "../../shared/wire.ts";
 import { admit } from "../admission.ts";
@@ -39,6 +40,7 @@ import { readThreadNotifications } from "./notifications.ts";
 export type MessagePage = { messages: Array<Message | Record<string, unknown>>; hasMore?: boolean; activeLeafId: string | null };
 
 export interface ChannelRouteDeps {
+  conversationControl?(input: ConversationControl): { message: Message } | { status: number; error: string } | undefined;
   store: Pick<Store,
     | "group" | "groupTaskByThread" | "bot" | "switchGroupTask" | "patchGroupTask" | "patchGroup" | "messagesFor" | "groupTasks" | "deleteGroupTasks" | "deleteGroup"
     | "createGroupTask" | "appendMessage">;
@@ -337,11 +339,6 @@ export function createChannelRoutes(deps: ChannelRouteDeps): RouteHandler {
       if (mentions === null) return json(res, 400, { error: "mentions must be a list of up to 20 bot ids" });
       const threadId = body.threadId ?? group.threadId;
       const trigger = usageTriggerFor(auth);
-      try {
-        assertWithinBudget(cfg, DATA_DIR);
-      } catch (error) {
-        return json(res, 409, { error: error instanceof Error ? error.message : String(error), code: "spend_cap" });
-      }
       const ownsThread = group.dm
         ? group.threadId === threadId
         : Boolean(store.groupTaskByThread(group.id, threadId));
@@ -357,6 +354,15 @@ export function createChannelRoutes(deps: ChannelRouteDeps): RouteHandler {
         auth.kind === "loopback" && !DESKTOP_MANAGED && !browserOrigin ? "api" : undefined;
       if (via) {
         console.warn(`room message from ${requestSource(req)} through the local API (no session, no browser origin) into "${group.name}"`);
+      }
+      if (!via && !body.replyToId && !body.dataContext && channelMode === "chat") {
+        const control = deps.conversationControl?.({ auth, groupId: group.id, threadId, text, sendId, sender: messageSender(auth) });
+        if (control) return "error" in control ? json(res, control.status, { error: control.error }) : json(res, 202, { ok: true, threadId, message: control.message });
+      }
+      try {
+        assertWithinBudget(cfg, DATA_DIR);
+      } catch (error) {
+        return json(res, 409, { error: error instanceof Error ? error.message : String(error), code: "spend_cap" });
       }
       const receipt = await sendSequencer.run(
         sendId ? `group:${group.id}:${threadId}:${sendId}` : undefined,

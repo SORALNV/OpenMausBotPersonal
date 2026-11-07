@@ -29,6 +29,18 @@ describe("optionsCardRow", () => {
     expect(drawn).toContain("eu-west-1");
   });
 
+  it("shows native Japanese choices as a question instead of an Allow/Deny approval", () => {
+    const ask: Message = {
+      id: "native-question", role: "bot", kind: "options", at: 4,
+      card: { title: "Pi / OhMyPiからの確認", subtitle: "続けますか？", options: ["はい", "いいえ"], requestId: "native-omp-question", requestType: "question",
+        questionRequest: { version: 1, questions: [{ question: "続けますか？", options: [{ label: "はい" }, { label: "いいえ" }], custom: false }] } },
+    };
+    const drawn = markup(ask, [ask]);
+    expect(drawn).toContain('data-ask-card="pending"');
+    expect(drawn).toContain("はい"); expect(drawn).toContain("いいえ");
+    expect(drawn).not.toContain("Allow tool:");
+  });
+
   it("draws MausBot's follow-up under its intro, never as a row or bubble of its own", () => {
     const followup: Message = { id: "f", role: "bot", kind: "text", at: 2, text: "I looked around.", helperFollowup: { ai: "own", apps: [], bots: 0, routines: 0 } };
     expect(richRowKind(followup)).toBe("options");

@@ -627,7 +627,8 @@ export function createProxyHandler(options: ProxyOptions) {
               device?.id,
               target.searchParams.get("controlLeaseId"),
             );
-            text = JSON.stringify(scrub(parsed));
+            const openedThreadId = method === "POST" ? /^\/api\/bots\/[\w-]+\/tasks\/([\w-]+)$/.exec(path)?.[1] : undefined;
+            text = JSON.stringify(scrub(parsed, { openedThreadId }));
           } catch {
             sendJson(res, 502, { error: "the response could not be prepared for this device" });
             return;

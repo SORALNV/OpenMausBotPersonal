@@ -1,3 +1,4 @@
+import { existingProfileAllowed, existingProfileHostBinary } from "./cua-profile-permission.mjs";
 import { runtimeResourcesPath } from "./runtime-resources.mjs";
 // Packaged: an embedded cua-driver daemon, so macOS TCC grants attribute to OpenMausBot; dev attaches to CuaDriver.app.
 // Agents use the stdio MCP proxy, which executes nothing; the host-owned daemon does.
@@ -243,7 +244,10 @@ async function startEmbedded(binary, signal) {
     }
   }
   // The native SDK owns the child lifecycle but exposes no windowsHide option.
-  const host = new sdk.EmbeddedCuaDriverHost(resolveEmbeddedDriverBinary(binary), HOST_BUNDLE_ID);
+  const hostBinary = process.platform === "darwin" && process.env.OMB_PERSONAL_BUILD === "1"
+    ? existingProfileHostBinary(resolveEmbeddedDriverBinary(binary), app.getPath("userData"))
+    : resolveEmbeddedDriverBinary(binary);
+  const host = new sdk.EmbeddedCuaDriverHost(hostBinary, HOST_BUNDLE_ID);
   try {
     const conn = await host.start({ signal });
     signal.throwIfAborted();
@@ -291,6 +295,7 @@ export async function startCua({ attempt = 0 } = {}) {
     } catch (err) {
       signal.throwIfAborted();
       try {
+        if (process.env.OMB_PERSONAL_BUILD === "1" && existingProfileAllowed(app.getPath("userData"))) throw new Error("Explicit Chrome permission requires the owned embedded host");
         nextConnection = await attachStandalone(signal);
       } catch (standaloneError) {
         signal.throwIfAborted();

@@ -1,0 +1,50 @@
+import {readFile,writeFile,realpath} from 'node:fs/promises';
+import {resolve,sep,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import ts from 'typescript';
+import {build} from 'esbuild';
+const repo=fileURLToPath(new URL('../',import.meta.url));
+const file=await realpath(process.argv[2]??''),allowed=await realpath(resolve(repo,'.privacy-dev/personal-build'));
+if(!file.startsWith(allowed+sep)||!file.endsWith('.app/Contents/Resources/server/index.js'))throw Error('Only a staged Personal runtime may be patched');
+const original=await readFile(file,'utf8');if(original.includes('function chiefThreadWaitSnapshot('))throw Error('Wait recovery already installed; re-stage current runtime');
+const compile=s=>ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ESNext}}).outputText;
+const ast=(s,n)=>ts.createSourceFile(n,s,ts.ScriptTarget.ESNext,true,ts.ScriptKind.JS);
+const before=ast(original,'installed.js'),source=ast(compile(await readFile(resolve(repo,'server/index.ts'),'utf8')),'source.js');
+const matches=(tree,p)=>{const out=[];function walk(n){if(p(n))out.push(n);ts.forEachChild(n,walk);}walk(tree);return out;};
+const one=(tree,p)=>{const all=matches(tree,p);if(all.length!==1)throw Error('Patch target count: '+all.length);return all[0];};
+const fn=(tree,name)=>one(tree,n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
+const edits=[];
+const wireOld=one(before,n=>ts.isVariableDeclaration(n)&&n.name.getText(before)==='wireBot');
+const wireNext=one(source,n=>ts.isVariableDeclaration(n)&&n.name.getText(source)==='wireBot');
+edits.push({start:wireOld.initializer.getStart(before),end:wireOld.initializer.end,text:wireNext.initializer.getText(source)});
+const visibleHelper=compile(await readFile(resolve(repo,'server/visible-bot-wait.ts'),'utf8')).replace(/^import .*;\s*$/gmu,'').replace(/^export /gmu,'');
+edits.push({start:0,end:0,text:visibleHelper+'\n'});
+
+for(const name of ['chiefThreadWaitSnapshot','clearChiefThreadWait','chiefAssignmentWaits','clearChiefAssignmentWait'])edits.push({start:0,end:0,text:fn(source,name).getText(source)+'\n'});
+const runtimeTree=ast(compile(await readFile(resolve(repo,'server/runtime-coordinator.ts'),'utf8')),'coordinator.js');
+const runtimeClass=one(before,n=>ts.isVariableDeclaration(n)&&n.name.getText(before)==='RuntimeCoordinator').initializer;
+const sourceClass=one(runtimeTree,n=>ts.isClassDeclaration(n)&&n.name?.text==='RuntimeCoordinator');
+const method=sourceClass.members.find(n=>n.name?.getText(runtimeTree)==='cancelWaitingNode');
+if(!method)throw Error('Missing cancellation method');
+edits.push({start:runtimeClass.members[0].getStart(before),end:runtimeClass.members[0].getStart(before),text:method.getText(runtimeTree)+'\n'});
+let helper=compile(await readFile(resolve(repo,'server/routes/internal-thread-waits.ts'),'utf8')).replace(/^import .*;\s*$/gmu,'').replace(/^export /gmu,'').replace(/\bz\./gu,'external_exports.');
+if(!original.includes('var external_exports ='))throw Error('Zod namespace not found');
+edits.push({start:0,end:0,text:helper+'\n'});
+const oldRetry=one(before,n=>ts.isIfStatement(n)&&n.expression.getText(before).includes('/api/internal/retry-thread'));
+const newRoute=one(source,n=>ts.isIfStatement(n)&&n.expression.getText(source).includes('createInternalThreadWaitRoutes('));
+const oldCatalog=one(before,n=>ts.isIfStatement(n)&&n.expression.getText(before).includes('createInternalChiefTeamRoutes('));
+const context=ts.isAwaitExpression(oldCatalog.expression)&&ts.isCallExpression(oldCatalog.expression.expression)
+ ? oldCatalog.expression.expression.arguments[1]?.getText(before) : undefined;
+if(!context)throw Error('Internal context not found');
+const route=newRoute.getText(source).replace('{ req, res, url, path, method, auth, json, readBody }',context);
+edits.push({start:oldRetry.getStart(before),end:oldRetry.getStart(before),text:route+'\n'});
+const prompt=fn(before,'chiefOfStaffSystemPrompt');
+const guidance=(await readFile(resolve(repo,'server/chief-of-staff.ts'),'utf8')).split('\n').find(line=>line.includes('Wait recovery:')).trim();
+const promptText=prompt.getText(before);if(promptText.split('    delegation,').length!==2)throw Error('Chief prompt insertion point missing');
+edits.push({start:prompt.getStart(before),end:prompt.end,text:promptText.replace('    delegation,','    '+guidance+'\n    delegation,')});
+let output=original;for(const edit of edits.sort((a,b)=>b.start-a.start))output=output.slice(0,edit.start)+edit.text+output.slice(edit.end);await writeFile(file,output);
+const driverRoot=resolve(dirname(file),'drivers');
+for(const name of ['agents-proxy','agents-mcp']) {
+ await build({entryPoints:[resolve(repo,'server/drivers/'+name+'.ts')],bundle:true,platform:'node',target:'node20',format:'esm',outfile:resolve(driverRoot,name+'.js'),banner:{js:'import { createRequire as __ombChiefRequire } from "node:module";\nconst require = __ombChiefRequire(import.meta.url);'},logLevel:'silent'});
+}
+console.log(JSON.stringify({file,waitRecovery:true,chiefOnlyTool:true,driversRebuilt:true,patches:edits.length}));

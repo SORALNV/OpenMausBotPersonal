@@ -472,6 +472,24 @@ export class RuntimeCoordinator implements Coordinator {
     return threads;
   }
 
+  teammateInputThreads(): Set<string> {
+    this.ready();
+    const threads = new Set<string>();
+    for (const node of this.live()) {
+      if (node.status !== "needs_input") continue;
+      let child = node;
+      const seen = new Set<string>([child.id]);
+      while (child.parentId && child.reply !== "none") {
+        const parent = this.store.get(child.parentId);
+        if (!parent || isTerminal(parent) || seen.has(parent.id)) break;
+        seen.add(parent.id);
+        if (!parent.assignee.destination.groupId) threads.add(parent.assignee.destination.threadId);
+        child = parent;
+      }
+    }
+    return threads;
+  }
+
   liveEdges(): LiveHandoffEdge[] {
     this.ready();
     return this.runtime.liveEdges().map(edge => ({
@@ -561,6 +579,13 @@ export class RuntimeCoordinator implements Coordinator {
         for (const row of rows) {
           const groupId = row.assignee.destination.groupId;
           if (groupId) groups.add(groupId); else threads.add(row.assignee.destination.threadId);
+          const seen = new Set<string>([row.id]);
+          let parent = row.parentId ? this.store.get(row.parentId) : undefined;
+          while (parent && !seen.has(parent.id)) {
+            seen.add(parent.id);
+            if (parent.assignee.destination.groupId) groups.add(parent.assignee.destination.groupId); else threads.add(parent.assignee.destination.threadId);
+            parent = parent.parentId ? this.store.get(parent.parentId) : undefined;
+          }
         }
         host.changed(groups, threads);
       },

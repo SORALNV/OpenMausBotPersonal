@@ -51,9 +51,13 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { McpCallTimeoutSettings } from "./McpCallTimeoutSettings";
 import { ProfileFields } from "./ProfileSettings";
 import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
+import { YourComputerSettings } from "./YourComputerSettings";
 import { PersonalComposerSettings } from "./PersonalComposerSettings";
 import { GoogleChatSettings } from "./GoogleChatSettings";
 import { DirectCodexSettings } from "./DirectCodexSettings";
+import { BotThreadCleanupSettings } from "./BotThreadCleanupSettings";
+import { NativeOmpSettings } from "./NativeOmpSettings";
+import { NativeConnectSettings } from "./NativeConnectSettings";
 import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
 import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
@@ -91,7 +95,7 @@ export const SECTIONS: Array<{
   icon: typeof User;
   keywords: string[];
 }> = [
-  { id: "general", group: "you", labelKey: "settings.section.general", icon: User, keywords: ["profile", "pinned panels", "web panel", "dashboard", "pin a page", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "product updates", "newsletter", "email updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "attachments", "clear attachments", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule", "usage", "limit", "plan", "upgrade", "cloud desktop hours", "storage", "saved steps", "repeat", "replay", "computer tasks", "without ai", "forget", "privacy", "mask", "個人情報", "マスク", "仮名化", ...talkShortcutKeywords()] },
+  { id: "general", group: "you", labelKey: "settings.section.general", icon: User, keywords: ["profile", "composer shortcuts", "registered words", "Google Chat", "NativeConnect", "thread cleanup", "pinned panels", "web panel", "dashboard", "pin a page", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "product updates", "newsletter", "email updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "attachments", "clear attachments", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule", "usage", "limit", "plan", "upgrade", "cloud desktop hours", "storage", "saved steps", "repeat", "replay", "computer tasks", "without ai", "forget", "privacy", "mask", "個人情報", "マスク", "仮名化", ...talkShortcutKeywords()] },
   { id: "appearance", group: "you", labelKey: "settings.section.appearance", icon: Palette, keywords: ["skin", "theme", "appearance", "chat width", "width", "wide", "full width", "bubble", "bubbles", "tools", "tool calls", "threads", "show threads", "hide threads", "sidebar", "display", "run", "this run", "run card", "commands", "notifications", "sound", "sounds", "mute", "silent", "chime", "pinned", "circles", "universal", "groups", "top", "send", "enter", "return", "shift+enter", "ctrl+enter", "cmd+enter", "⌘+enter", "new line", "keyboard", "ime", "japanese", "message color", "my messages", "toolbar", "tools layout", "footer", "routines", "triggers", "team map", "color", "colour", "cloud color", "server color", "tint", "sidebar color", "sidebar picture", "picture", "image", "banner", "background", "computers", "your computers", "rail", "strip", "frame", "window frame", "title bar"] },
   { id: "companion", group: "you", labelKey: "settings.section.companion", icon: TabletSmartphone, keywords: ["companion", "device", "phone", "desktop", "client", "host", "pair", "pairing", "mobile", "https", "secure", "tailscale", "wifi", "remote", "advanced", "domain", "dns", "self-hosted", "server", "caddy"] },
   { id: "engines", group: "ai", labelKey: "settings.section.engines", icon: Terminal, keywords: ["models", "model providers", "engines", "claude", "codex", "grok", "providers", "cli", "sign in", "subscription"] },
@@ -175,6 +179,9 @@ export function sectionMatches(section: (typeof SECTIONS)[number], query: string
   if (section.id === "connections" && KEY_CATALOG.some((entry) => keyMatches(entry, query))) return true;
   return [t(section.labelKey), ...section.keywords].some((part) => part.toLowerCase().includes(query));
 }
+
+
+export { UpdatesRow };
 
 export function keySearchResults(query: string): KeyEntry[] {
   return query ? KEY_CATALOG.filter((entry) => keyMatches(entry, query)).slice(0, 8) : [];
@@ -344,7 +351,11 @@ export function SettingsModal() {
             <AdvancedModeRow />
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <YourComputerSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeConnectSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <DirectCodexSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <BotThreadCleanupSettings />}
+            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeOmpSettings onOpenThread={(botId, threadId) => { dispatch({ type: "switchTask", botId, threadId }); dispatch({ type: "toggleAppSettings", open: false }); }} />}
             <DefaultBotSidebarRow />
             <TalkShortcutRow />
 

@@ -182,7 +182,9 @@ async function probeRemoteMcpServer(
     if (error instanceof McpHttpError && error.kind === "protocol") {
       return { ok: false, error: "The server did not return a valid MCP tools list." };
     }
-    return { ok: false, error: "Could not reach this address. Check the URL and your network.", reason: "unreachable" };
+    return { ok: false, error: error instanceof McpHttpError && error.networkCode
+      ? `MCPへ接続できませんでした（${error.networkCode}）。このアプリのネットワーク許可と接続先を確認してください。`
+      : "Could not reach this address. Check the URL and your network.", reason: "unreachable" };
   } finally {
     clearTimeout(timer);
     await client.close().catch(() => {});

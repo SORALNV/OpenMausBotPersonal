@@ -68,6 +68,14 @@ describe("buildApplicationMenu", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("offers the owner Chrome permission action only when the host supplies it", () => {
+    const callback = vi.fn();
+    expect(build("darwin")[0].submenu.some(item => item.label === "Chromeへの接続許可…")).toBe(false);
+    const entry = build("darwin", { onChromePermission: callback })[0].submenu.find(item => item.label === "Chromeへの接続許可…");
+    entry.click();
+    expect(callback).toHaveBeenCalledOnce();
+  });
+
   it.each(["linux", "win32"])("does not add an app menu on %s", (platform) => {
     const template = build(platform);
     expect(template[0].role).toBe("fileMenu");

@@ -59,7 +59,7 @@ export function PersonalPrivacySettings() {
       </div>
       <label className="block text-sm">置換ルールを試す<textarea aria-label="置換ルールを試す" value={sample} maxLength={10000} onChange={e => setSample(e.target.value)} rows={3} className={inputClass} placeholder="ここに試し入力すると、下に置換後と復元後を表示します。" /></label>
       {sample && <div className="space-y-2 text-sm"><p>AIに渡す表記（登録語句のみ）</p><pre className="whitespace-pre-wrap break-words rounded-lg bg-inset p-3">{preview.masked}</pre><p>復元する下書きの表記</p><pre className="whitespace-pre-wrap break-words rounded-lg bg-inset p-3">{preview.restored}</pre></div>}
-      <p className="text-xs text-ink-secondary">Codex等が直接読むファイル・ブラウザ・CLI独自通信、CLIにだけ登録したMCP、通常の会話・既存履歴・記憶、添付、クラウド実行、チーム目標や別ボットへの委任は自動適用の対象外です。登録した置換ルールは手動の「仮名化して入力」でも使えます。</p>
+      <p className="text-xs text-ink-secondary">Codex等が直接読むファイル・ブラウザ・CLI独自通信、CLIにだけ登録したMCP、通常の会話・既存履歴・記憶、添付、クラウド実行、チーム目標や別ボットへの委任は自動適用の対象外です。</p>
       <button type="button" onClick={() => void save()} className="rounded-lg bg-accent px-4 py-2 text-accent-ink">{saving ? "保存中…" : "置換設定を保存"}</button>
     </fieldset>
     {message && <p role="status" className="mt-3 text-sm">{message}</p>}

@@ -1698,6 +1698,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
           sendTurn,
           interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
+          releaseIdleSession: (threadId) => {
+            if (!active.has(threadId) && !sessions.get(threadId)?.current) closeSession(threadId, "idle");
+          },
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);

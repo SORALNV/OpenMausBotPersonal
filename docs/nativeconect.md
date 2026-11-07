@@ -12,6 +12,12 @@ the destination's tools. A connector adapts the harness's existing input,
 history and approval interfaces. Replacing the harness requires a corresponding
 connector rather than changing this definition.
 
+The [Antigravity CLI connector](verification/native-antigravity.md) is an
+optional delegation tool for the ordinary conversational Bot. It preserves
+that Bot's model, role, memory and OMB tools, delegates only selected tasks,
+and retains one native conversation per OMB thread. It does not replace the
+Bot's brain or provide the shared TUI semantics described below.
+
 ## Standard OhMyPi TUI
 
 The optional `connection: "shared-tui"` binding uses unmodified OhMyPi v18.12.5
@@ -70,8 +76,13 @@ The shared connector currently handles plain text and standard select/editor
 questions. Attachments, OMB routines, delegated turns and edited reruns retain
 their existing blocks. It reads normal native turn output and idle state; this
 does not prove all independently launched background jobs or a native goal
-have finished. Native session switches/branches require owner review and a
-new explicit binding; OMB never silently follows them. Unsupported dialogs,
+have finished. Use Personal Settings → General → OhMyPi / NativeConnect or an
+explicit chat instruction to select an existing session, create a named session,
+or create and connect a new OMB thread. Native session switches/branches require
+an explicit binding; OMB never silently follows them. The OMP management option
+handles sessions within the configured profile and keeps project histories
+separate. See [session management verification](verification/native-omp.md).
+Unsupported dialogs,
 protocol mismatches, another detected session writer, or lost connectivity
 stop the connection without a raw-input fallback.
 
@@ -80,22 +91,77 @@ masking when that setting is OFF.
 
 ## Mediated approvals and native review
 
-The owner can set `approvalPolicy: "mediator"` on a Pi binding. The native
-session keeps its approval gate; OMB asks the binding's tool-free mediator
-model to judge eligible low-risk inspection commands and text-note changes
-inside its workspace. Only a valid low-importance allow verdict answers the
-current native question once. A native safety reason, an important or unknown
-command, a sensitive/executable/configuration target, a failed/late review, or
-a high-importance verdict retains the owner's Allow/Deny card. Defaults remain
-`human` for bindings that have not opted in.
+The owner can set `approvalPolicy: "mediator"` on a Pi binding. OMB detects
+high-risk operations, rather than proving each operation belongs to a low-risk
+allowlist. A valid `highRisk: false` verdict proceeds through the native
+one-operation Approve. A concrete `highRisk: true` finding creates a Japanese
+owner card identifying the affected target and significant effect. Native
+safety reasons, privilege/disk changes, service/network changes, major deletion
+and credential exposure have explicit high-risk checks. Default bindings still
+use `human`; the high-risk-only mode is the owner's opt-in mediator policy.
 
-The deterministic checks limit automatic shell approval to supported literal
-inspection commands. They are approval checks, not an operating-system sandbox
-or a complete proof of a command's effects. Existing PATH, native tool behavior
-and filesystem links remain part of the destination's trust boundary. The model
-cannot grant session-wide permission or approve a native question already
-answered in the human TUI. Review requests use the same authenticated mediator
-model as the binding, in a tool-free independent call, bounded to 20 seconds.
+Unlisted commands, unfamiliar file extensions, paths outside the workspace,
+missing complete source and incomplete patches are not themselves high-risk
+findings. The tool-free classifier uses the actual native request, matching
+operation metadata when available, fresh bounded source evidence, the user's
+purpose and earlier approvals for the same request. Its only supported verdicts
+are `{"highRisk":false}` or `{"highRisk":true,"reason":"具体的な危険の説明"}`.
+Legacy allow/low replies, invalid replies, model failure and timeout produce no
+approval and no owner permission card. The same pending operation is retried
+with backoff; cancellation, native answers, human takeover and shutdown stop
+that review. This does not grant session-wide approval or replay a prompt.
+
+Before review, recent workspace source can be read over SSH, bounded to twelve
+regular UTF-8 files, 32 KB each and 96 KB total. The reader rejects symlinks,
+private credential paths, escapes, oversized and nonregular files. These are
+limits on evidence collection, not a file/command permission allowlist.
+Automatic risk classification is a model judgment, not an OS sandbox or a
+proof of no harmful effects. Concurrent source changes remain possible.
+
+### Explicit permission for one request
+
+An authenticated owner can send the standalone chat message `すべて許可`
+(or `今回の作業はすべて許可します`) to delegate all tool approvals for the
+current OMB request to the mediator. It also releases a currently pending tool
+approval. If idle, the grant applies to the next request started within ten
+minutes. `すべて許可を取り消して` restores high-risk confirmation immediately;
+already-started operations are not undone. Completion, Stop, human TUI takeover,
+disconnection, restart and a 24-hour maximum lifetime revoke the grant.
+It does not cover other threads, subsequent requests, arbitrary native questions,
+or automatic developer reports. Quotes, tool output, guarded/relayed sends and
+client-only sessions cannot grant permission. No grant is persisted or inferred
+from earlier conversation text. A directive embedded in a longer message is not
+recognised as a permission control; send the standalone declaration.
+
+Native approval mode stays unchanged. The mediator still classifies each tool
+operation and responds with the one-operation `Approve`, never session-wide
+approval. With a grant, concrete high-risk findings create a settled Japanese
+operation card rather than another question. Cards persist after the final
+answer, omit file bodies, redact common credential literals, and distinguish
+permission granted, observed start, tool completion/error and unknown outcome.
+Exact native call IDs (or a matching bash command in execution arguments) link
+execution events to the receipt. Missing/ambiguous events do not prove execution
+or its effects; classification failure still retries without execution.
+
+### In-progress display
+
+The connector mirrors public native assistant narration and observed tool
+start/end activity into ordinary OMB turn narration. One rolling status row
+shows the current operation and recent completed steps. Shared listeners stay
+attached after a local job timeout/reconnect so native continuation is visible.
+The final native answer is the turn's terminal message; standard chat rendering
+folds the intermediate narration on completion. Native thinking content is
+excluded. Native background continuation after an already completed request
+gets a separate display turn without creating a new OMB thread or native
+session. Phone clients receive the same existing message/turn fields; a
+physical iPhone rendering check is separate from protocol verification.
+
+Native `attribution: agent` background results do not replace the current
+user's review context or impersonate human input. A matching admitted receipt
+can restore that context after reconnection, including native background work
+following a completed turn. A subsequent human input or cancellation removes
+that delegated context. Closing OMB detaches its shared guests without sending
+a native Abort; explicit Stop retains its existing behavior.
 
 `advisor: true` additionally configures OhMyPi's native passive Advisor for a
 managed standard TUI, using the binding's existing worker model and no backlog
@@ -109,3 +175,47 @@ Sources: [native approvals](https://github.com/can1357/oh-my-pi/blob/main/docs/a
 
 Protocol sources: [Collab](https://github.com/can1357/oh-my-pi/blob/v18.12.5/docs/collab.md)
 and [wire grammar](https://github.com/can1357/oh-my-pi/blob/v18.12.5/packages/wire/src/index.ts).
+
+### Local consultation and OMB management
+
+The mediator now chooses before submitting a native prompt. `reply` answers
+consultation, explanation and design questions directly with no Pi inspection;
+`omb` runs a bounded tool-only management loop against fixed OMB APIs. Only an
+actual Pi execution/read request uses the native `chat` route. Native session
+list/create/connect requests retain their explicit management routes. A bounded
+recent OMB conversation helps interpret short follow-ups. Reference text cannot
+provide authority, and malformed routing output does not fall back to forwarding.
+
+The OMB management loop uses the configured mediator model, at most six API
+steps and a two-minute deadline. Its catalog is intersected with the owner's
+existing tool selection. It exposes no shell, engine-native tools, remote MCP,
+computer control, executable registration, skills installation or Bot delegation.
+It reuses OMB's per-turn capability authentication and existing confirmation
+cards; a proposal is not reported as an applied change. Repeated identical API
+calls are deduplicated. Stop revokes the scoped capability and does not replay
+an operation whose outcome is unknown. Unsupported settings are explained rather
+than changed via a shell fallback.
+
+Only actual native requests show `Pi / OhMyPi に依頼中`. The rolling row can
+include meaningful observed tool steps; the verbose generic receipt message is
+not added. Existing shared connections still keep native history synchronised.
+A local conversation creates no native prompt or native session and does not
+claim a fresh check of the Pi.
+
+### Attached images
+
+NativeConnect accepts uploaded PNG/JPEG/GIF/WebP images using the existing
+attachment store and its four-image limit. Original OMB messages keep their
+attachment tags; native prompts receive structured image content, never a Mac
+path masquerading as a Pi file. Shared OhMyPi TUI sends `images` in its official
+Collab prompt, including through the shared connection pool. Fixed Codex turns
+use `localImage` input. A tool-free Codex mediator receives explicit `--image`
+inputs while shell, MCP and image-view tools remain disabled. Consultation on
+an image can therefore stay with the mediator without submitting a Pi prompt.
+
+OhMyPi shared transport currently allows up to 5 MB total raw image data. RPC
+connections have the native protocol's smaller one-frame limit and refuse an
+oversized payload before connecting; use shared TUI or a smaller image. Original
+files are never resized or overwritten. Non-Codex mediator providers whose text
+generator has no image contract report that limitation, rather than discarding
+the images. Files/audio remain unsupported by NativeConnect.

@@ -26,6 +26,7 @@ export interface McpOAuthClientListing {
   redirectUri: string;
 }
 export type McpServerListing = (StdioMcpListing | RemoteMcpListing) & {
+  delegated?: { bots: { id: string; tools: string[] }[] };
   scope?: "team" | "person"; managedBy?: string; runsOn?: { environmentId: string; label: string }; apps?: boolean;
   /** The bot whose own server this is. */
   bot?: string;

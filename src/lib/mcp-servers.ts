@@ -5,6 +5,7 @@ import { api } from "@/state/store";
 export interface McpServerSummary {
   name: string;
   enabled: boolean;
+  delegated?: { bots: { id: string; tools: string[] }[] };
   /** The bot whose own server this is. */
   bot?: string;
   /** The bots it is off for, because it doesn't start for them. */
@@ -24,7 +25,7 @@ const subscribe = (listener: () => void) => {
 export function updateMcpServers(servers: McpServerSummary[]): void {
   generation += 1;
   inflight = null;
-  cached = { servers: servers.map(({ name, enabled, bot, offFor }) => ({ name, enabled: Boolean(enabled), ...(bot ? { bot } : {}), ...(offFor?.length ? { offFor } : {}) })), error: false };
+  cached = { servers: servers.map(({ name, enabled, bot, offFor, delegated }) => ({ name, enabled: Boolean(enabled), ...(delegated ? { delegated: structuredClone(delegated) } : {}), ...(bot ? { bot } : {}), ...(offFor?.length ? { offFor } : {}) })), error: false };
   for (const listener of listeners) listener();
 }
 
@@ -63,8 +64,8 @@ export function mcpServersOfBot(all: McpServerSummary[], botId: string): McpServ
   return all.filter((server) => !server.bot || server.bot === botId);
 }
 
-export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined, botId: string): McpServerSummary[] {
-  const enabled = mcpServersOfBot(all, botId).filter((server) => server.enabled);
+export function mcpServersForBot(all: McpServerSummary[], own: string[] | null | undefined, botId?: string): McpServerSummary[] {
+  const enabled = all.filter((server) => server.delegated ? Boolean(botId && server.delegated.bots.some(bot => bot.id === botId)) : server.enabled);
   if (own == null) return enabled;
   return enabled.filter((server) => own.includes(server.name));
 }

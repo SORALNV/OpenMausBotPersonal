@@ -24,6 +24,7 @@ import { listenLiveFrames } from "@/lib/live-events";
 import { api, useStore } from "@/state/store";
 
 import { McpAppsSwitch } from "./McpAppsSwitch";
+import { McpAccessPanel } from "./McpAccessPanel";
 import { Switch } from "./SettingsPrimitives";
 import { ClaudeCodeSwitches } from "./ClaudeCodeSwitches";
 import { HostedMcpIcon } from "./HostedMcpIcon";
@@ -651,8 +652,8 @@ export function McpServersPanel({ embedded = false, hostedCards, hideHosted = fa
                       <span className="ml-1 flex items-center">
                         {busy === `toggle:${server.name}` && <Loader2 size={13} className="mr-1.5 animate-spin text-ink-secondary" />}
                         <Switch
-                          checked={server.enabled}
-                          disabled={busy !== null || signingIn !== null}
+                          checked={server.enabled && !server.delegated}
+                          disabled={busy !== null || signingIn !== null || Boolean(server.delegated)}
                           onClick={() => void toggle(server)}
                           aria-label={t("mcp.toggleAria", {
                             name: server.name,
@@ -671,6 +672,7 @@ export function McpServersPanel({ embedded = false, hostedCards, hideHosted = fa
                       <div className="mt-2 flex flex-wrap gap-2">{(store.bots ?? []).filter((bot) => !bot.hidden).map((bot) => <button key={bot.id} type="button" onClick={() => { dispatch({ type: "togglePlugins", open: false }); openBotSettings(dispatch, "access", { botId: bot.id, page: "mcp" }); }} className="rounded-lg bg-control px-2.5 py-1.5 text-ink hover:bg-raised-hover">{t("hostedMcp.botSettings", { name: bot.name })}</button>)}</div>
                     </details>
                   </div>}
+                  {isRemoteMcpListing(server) && !server.runsOn && <McpAccessPanel server={server.name} onSaved={() => void load()} />}
                   <McpAppsSwitch<McpServerListing> server={server} disabled={busy !== null || signingIn !== null} onSaved={(next) => { loadGeneration.current += 1; listed(next); }} />{renderSignIn(server)}
                   {connecting === server.name && !server.enabled && !result && (
                     <div role="status" data-mcp-testing className="mt-3 flex items-center gap-2 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink-secondary">

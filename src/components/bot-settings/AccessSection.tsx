@@ -169,10 +169,11 @@ export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpS
                 <div className="truncate font-mono text-[13px] text-ink">{server.name}</div>
                 {!server.enabled && <div className="text-[12px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
                 {server.enabled && server.offFor?.includes(bot.id) && <div className="text-[12px] text-ink-secondary">{t("mcp.offFor", { bots: bot.name })}</div>}
+                {server.delegated ? <div className="text-[11.5px] text-ink-secondary">Managerへの委任で管理・{server.delegated.bots.find(entry => entry.id === bot.id)?.tools.length ?? 0}ツール</div> : !server.enabled && <div className="text-[11.5px] text-ink-secondary">{t("botAccess.mcpDisabled")}</div>}
               </div>
               <Switch
                 checked={mounted.has(server.name)}
-                disabled={!server.enabled || !!bot.busy || error}
+                disabled={Boolean(server.delegated) || !server.enabled || !!bot.busy || error}
                 aria-label={t("botAccess.mcpAllow", { name: server.name })}
                 onClick={() => toggle(server.name)}
                 className="disabled:cursor-not-allowed"

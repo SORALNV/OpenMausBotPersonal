@@ -191,3 +191,29 @@ AX click, pixel click, typing, scroll, covered windows, other Spaces, and actual
 user takeover. Keep permissions and the host control gate enabled. Repeat through
 the packaged embedded daemon, including signing and supported Mac architectures.
 Do not use the operator's OMB data or authenticated browser profiles as fixtures.
+
+## Personal existing Chrome attachment
+
+The Personal macOS app menu exposes **Chromeへの接続許可…**. The default is
+OFF. Only the native owner confirmation writes the private installation policy;
+Cancel leaves the policy and running app unchanged. Enabling and revoking both
+request an orderly Personal restart. The dialog explicitly states that the grant
+covers logged-in Chrome profiles beyond USEAI. It retains standard driver mode,
+Bot approval policies, and macOS TCC checks.
+
+SDK 0.28.2 does not expose startup grants in `EmbeddedDriverHostOptions`.
+For an explicitly enabled policy the SDK starts a private exec launcher that
+forwards its original `serve` arguments with only `--grant existing-profile`.
+The exec preserves its child PID and stdin liveness pipe. MCP proxies still use
+the original signed driver and private socket. A granted embedded launch failure
+does not fall back to an independently owned daemon. There is one replaced
+launcher file per installation, rather than accumulated launch directories.
+
+Run `node --test electron/cua-profile-permission.node-test.mjs` and
+`pnpm exec vitest run electron/cua-launch.test.mjs electron/menu.test.mjs`.
+These use temporary homes, an inert fake executable, and mocked native hosts.
+They verify cancellation, revocation, corrupt/public/symlink policy refusal,
+argument quoting, unchanged standard mode, and host wiring. They do not authorize
+or attach to a real signed-in browser. Actual attachment still requires the
+browser's own consent and a supported setup adapter; Cua 0.28.2 documents English
+setup labels. A failed browser preparation is not a successful connection.

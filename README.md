@@ -8,6 +8,8 @@
 
 - **NativeConect**：OMBから既存のCodexやOhMyPiのセッションへ指示を送り、履歴と出力を読み取ります。仲介モデルによる入力の整理と、OMBに表示する回答の短縮を分けています。接続方式ごとの対応範囲は[NativeConect](docs/nativeconect.md)、[Codex接続](docs/verification/direct-codex.md)、[OhMyPi接続](docs/verification/native-omp.md)を参照してください。
 - **登録語句の置換と復元**：漢字・かな・英語などの表記を同じ仮名へ置き換え、指定した表記で表示を復元できます。OpenAI privacy-filterによる自動検出は削除済みです。未登録の個人情報は検出しません。[置換機能の範囲](docs/privacy-filter.md)
+- **会話単位の一括許可**：個別BotやALLで`/allow-all`を送ると、その会話の操作を一括許可します。`/ask`で確認へ戻し、`/permissions`で現在値を確認できます。質問・認証・OS権限・禁止操作は別に扱います。
+- **端末共通の待機先案内**：順番待ちになった会話へ、待機先の名前と既存形式の会話リンクを記録します。リンクを開けないクライアントではThreadsから同じ名前の会話を選べます。
 - **グループごとの権限**：メンバーごとに応答・投稿・メンション・連携の権限を設定し、カテゴリーをまたいだ協力を許可できます。[設定と検証](docs/verification/group-permissions.md)
 - **入力・送信キーの設定**：Personal版の既定はEnterで送信・キュー、Shift+Enterで改行、Cmd+Enterで実行中の会話への差し込みです。設定から変更できます。[入力キーの仕様](docs/verification/personal-tool-privacy.md#composer)
 - **Google Chat連携**：指定した会話の新着を受け取り、登録語句をこのMacで置換します。受信だけで返信は送りません。[設定と制約](docs/google-chat.md)

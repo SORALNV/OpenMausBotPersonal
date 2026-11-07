@@ -7,13 +7,31 @@
 // alias such as "vps" out of `cloudBackend: "vps"` and the user's messages.
 const WITHHELD_KEYS = new Set(["resumeCursors", "sshAlias", "vpsAlias", "vpsAliases"]);
 
-export function scrub<T>(value: T): T {
-  if (Array.isArray(value)) return value.map(scrub) as unknown as T;
+interface DeviceProjection {
+  openedThreadId?: string;
+}
+
+function backgroundTask(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const task = value as Record<string, unknown>;
+  if (typeof task.threadId !== "string") return false;
+  if (typeof task.background === "boolean") return task.background;
+  const opener = task.openedBy;
+  return Boolean(task.routineRunId) || Boolean(opener && typeof opener === "object" && "kind" in opener && opener.kind === "work");
+}
+
+export function scrub<T>(value: T, projection: DeviceProjection = {}): T {
+  if (Array.isArray(value)) return value.map(inner => scrub(inner, projection)) as unknown as T;
   if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const bot = typeof record.id === "string" && typeof record.threadId === "string" && !Array.isArray(record.memberIds);
     const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    for (const [key, inner] of Object.entries(record)) {
       if (WITHHELD_KEYS.has(key)) continue;
-      out[key] = scrub(inner);
+      const shown = bot && key === "tasks" && Array.isArray(inner)
+        ? inner.filter(task => !backgroundTask(task) || (task as Record<string, unknown>).threadId === projection.openedThreadId)
+        : inner;
+      out[key] = scrub(shown, projection);
     }
     return out as T;
   }

@@ -1,3 +1,5 @@
+import { trackBackgroundThread } from "./background-threads.ts";
+import { isBackgroundThread } from "../shared/background-thread.ts";
 import { pruneRoomMembership, pruneRoomHolds } from "./group-membership.ts";
 import { chmodSync, existsSync, readFileSync, mkdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path"; import { isDeepStrictEqual } from "node:util";
@@ -106,7 +108,7 @@ const ASK_NOW = { approvalMode: "ask" as const, autoApprove: false, alwaysAllow:
 const TASK_PATCH_FIELDS = [
   "title", "projectId", "modelSelection", "approvalMode", "autoApprove", "alwaysAllow",
   "unread", "lastReadMessageId", "rewound", "archivedAt", "pinned", "pinnedMessageId", "resumeCursors", "lastInstanceId", "cwd",
-  "routineRunId", "surface", "surfaceSource", "snoozedUntil", "link", "linkAuto", "appliedCompactionId", "contextFloor", "lastContextModel", "setupRequest", "botApi", "outside",
+  "routineRunId", "background", "surface", "surfaceSource", "snoozedUntil", "link", "linkAuto", "appliedCompactionId", "contextFloor", "lastContextModel", "setupRequest", "botApi", "outside",
 ] as const satisfies readonly (keyof TaskRecord)[];
 export type TaskPatch = Partial<Pick<TaskRecord, typeof TASK_PATCH_FIELDS[number]>>;
 
@@ -273,8 +275,8 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
   return [];
 }
 
-function taskCountsAsBotUnread(task: { unread?: boolean; routineRunId?: string }): boolean {
-  return Boolean(task.unread) && !task.routineRunId;
+function taskCountsAsBotUnread(task: { unread?: boolean; routineRunId?: string; background?: boolean; openedBy?: TaskOpenedBy }): boolean {
+  return Boolean(task.unread) && !isBackgroundThread(task);
 }
 
 export class Store {
@@ -536,6 +538,7 @@ export class Store {
         botsMigrated = true;
       }
       for (const task of b.tasks) {
+        trackBackgroundThread(task);
         if (clearModelCopies && task.modelSelection !== undefined && sameModelSelection(task.modelSelection, b.modelSelection)) {
           delete task.modelSelection;
           botsMigrated = true;
@@ -2065,6 +2068,7 @@ export class Store {
       if (bot.threadId === threadId) this.mirrorActiveTask(bot, task);
       bot.unread = bot.tasks!.some(taskCountsAsBotUnread);
     }, revocation && (() => Object.assign(task, revocation)), !touchesPermissions(patch));
+    trackBackgroundThread(task);
     this.emit({ type: "bot", botId });
     return task;
   }
@@ -2165,17 +2169,24 @@ export class Store {
   }
 
   createTask(botId: string, title?: string, activate = true, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",
-    modelSelection?: ModelSelection, cwd?: string): TaskRecord | null {
+    modelSelection?: ModelSelection, cwd?: string, background = false): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     if (projectId !== undefined && !this.project(botId, projectId)) return null;
     const task = this.buildTask(bot, title, projectId, openedBy, approvalMode, modelSelection, cwd);
+    if (background) task.background = true;
     this.commitBotChange(bot, "the new thread", () => {
       bot.tasks = [task, ...(bot.tasks ?? [])];
       if (activate) this.mirrorActiveTask(bot, task);
     });
     this.emit({ type: "bot", botId });
+    trackBackgroundThread(task);
     return task;
+  }
+
+  createBackgroundTask(botId: string, title?: string, activate = false, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",
+    modelSelection?: ModelSelection, cwd?: string): TaskRecord | null {
+    return this.createTask(botId, title, activate, projectId, openedBy, approvalMode, modelSelection, cwd, true);
   }
 
   private buildTask(bot: BotRecord, title?: string, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",

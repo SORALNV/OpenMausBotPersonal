@@ -1,3 +1,4 @@
+import { isBackgroundThread } from "../shared/background-thread.ts";
 // A bot's automations report into the chat they belong to. A run still works in its own hidden conversation with a
 // fresh session; when it ends with something to say, its last reply lands in that chat as one bot message named after
 // the automation, and a run with nothing to tell writes nothing. A card a run waits on is copied there, and answering
@@ -87,6 +88,7 @@ type Waiting =
 export interface AutomationReportDeps {
   store: Pick<Store, "activePath" | "appendMessage" | "bot" | "botByThread" | "messagesFor" | "onChange" | "patchMessage" | "patchTask" | "taskByThread">;
   routines(): Pick<RoutineManager, "listRuns" | "noteReport" | "runForThread"> | null;
+  resolveDestination?(run: RoutineRun): { bot: BotRecord; threadId: string } | null;
   /** A turn runs or settles in this conversation. */
   busy(botId: string, threadId: string): boolean;
   /** After a line this conversation's session did not write: it reaches the next turn. The chat is marked unread here. */
@@ -105,9 +107,13 @@ export function createAutomationReports(deps: AutomationReportDeps) {
   let flushing = false;
 
   const destination = (run: RoutineRun): { bot: BotRecord; threadId: string } | null => {
+    if (deps.resolveDestination) {
+      const target = deps.resolveDestination(run);
+      return target?.threadId !== run.threadId ? target : null;
+    }
     const bot = run.resultsThreadId && run.resultsThreadId !== run.threadId ? store.bot(run.botId) : undefined;
     const task = bot && !bot.hidden ? store.taskByThread(bot.id, run.resultsThreadId!) : undefined;
-    return bot && task && !task.routineRunId ? { bot, threadId: task.threadId } : null;
+    return bot && task && !isBackgroundThread(task) ? { bot, threadId: task.threadId } : null;
   };
 
   const lineOf = (run: RoutineRun, extra: Pick<AutomationLine, "needsYou" | "failed" | "partial" | "recovered" | "copyOf">): AutomationLine => ({
@@ -203,6 +209,19 @@ export function createAutomationReports(deps: AutomationReportDeps) {
           waiting.set(run.id, run.status === "failed" ? { kind: "failure", run, detail: run.error ?? "" } : { kind: "reply", run });
         }
       }
+      for (const run of manager.listRuns()) {
+        if (run.status !== "waiting" || !run.threadId) continue;
+        const target = destination(run);
+        if (!target) continue;
+        for (const message of store.messagesFor(run.threadId)) {
+          const open = message.kind === "options"
+            ? Boolean(message.card?.requestId && !message.card.answered && !message.card.expired && !message.card.autoApplied)
+            : Boolean(waitingCardText(message));
+          if (open && !copyOf(run, target.threadId, message.id)) {
+            waiting.set(`card:${message.id}`, { kind: "card", run, threadId: run.threadId, messageId: message.id });
+          }
+        }
+      }
       for (const [key, line] of waiting) if (write(line)) waiting.delete(key);
     } finally {
       flushing = false;
@@ -216,6 +235,7 @@ export function createAutomationReports(deps: AutomationReportDeps) {
   };
 
   store.onChange((change) => {
+    if (change.type === "bot") { flush(); return; }
     if (change.type !== "message" && change.type !== "message.patch") return;
     const { message } = change;
     const option = message.kind === "options" && Boolean(message.card?.requestId);
