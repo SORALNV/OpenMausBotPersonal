@@ -35,6 +35,7 @@ const LINES: Record<string, number> = {
   "src/components/ChatView.tsx": 1436,
   "server/composio.ts": 1345,
   "electron/main.mjs": 3383,
+  "shared/wire.ts": 1004,
   "server/vps-computer.ts": 1369,
   "scripts/mcp-server.ts": 1414,
   "server/boat.ts": 1258,
