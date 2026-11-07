@@ -779,7 +779,6 @@ function ChatMarkdownComponent({ text, message, mentionPeers = NO_MENTION_PEERS,
     if (linksThreads) remarkPlugins.push(remarkThreadRefs(threads, currentBotId));
     return Markdown({ children: source, remarkPlugins, rehypePlugins: rehypePluginsFor(mathPlugin), urlTransform: chatUrlTransform, components: MARKDOWN_COMPONENTS });
   });
->>>>>>> upstream/main
   return (
     <MessageScopeContext.Provider value={{ message, imageOffsets, threads, currentBotId, delivered, originals }}>
       <div className="chat-md min-w-0 [&>*+*]:mt-2">{markdown}</div>

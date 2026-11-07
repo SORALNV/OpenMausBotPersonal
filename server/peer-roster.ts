@@ -163,9 +163,9 @@ export function resolveTeammate<T extends RosterMember>(
   bots: readonly T[],
   from: RosterMember,
   raw: string,
-  roomPeers?: T[],
   elsewhere: (name: string) => { where: string } | { hint: string } | null = () => null,
   lookedAfterBy?: LookedAfterBy,
+  roomPeers?: T[],
 ): { id: string; byName: boolean } | { error: string } {
   const wanted = raw.trim();
   if (bots.some(bot => bot.id === wanted)) return { id: wanted, byName: false };

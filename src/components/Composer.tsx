@@ -1,7 +1,7 @@
 import { directMessageSent, roomMessageSent } from "@/lib/product-events";
 import { useComposerDictation } from "@/lib/use-composer-dictation";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { BookOpen, Mic, Paperclip, Sparkles, Square, Target, X } from "lucide-react";
+import { Mic, Paperclip, Square, X } from "lucide-react";
 import { PrivacyWorkbench } from "./PrivacyWorkbench";
 import { ComposerSpeechError } from "./ComposerSpeechError";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type InstanceInfo, type Message } from "@/state/store";

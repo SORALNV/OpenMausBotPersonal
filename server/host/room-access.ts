@@ -1,7 +1,7 @@
 import { groupCanSpeak, groupCrossSection, groupMemberPermissions } from "../../shared/group-permissions.ts";
 import { sameAudience } from "../bot-visibility.ts";
 import type { HandoffView, RoomAddress } from "../coordinator.ts";
-import { canAccessTeam, coordinatorSupervises, peerAllowed, reachRefusal, type LookedAfterBy } from "../peer-roster.ts";
+import { hasTeamAuthority, peerAllowed, reachRefusal, type LookedAfterBy } from "../peer-roster.ts";
 import type { BotRecord, GroupRecord, Store } from "../store.ts";
 
 export interface RoomAccessDeps {
@@ -56,7 +56,7 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy 
     // Every reader matters: the sender's grant never gives a specialist another team's transcript.
     const outsideSection = (room: GroupRecord, speaker: BotRecord) => room.memberIds.some(id => {
       const member = store.bot(id);
-      return member && !canAccessTeam(speaker, member.section) && !coordinatorSupervises(member, speaker);
+      return member && !hasTeamAuthority(speaker, member.section) && !hasTeamAuthority(member, speaker.section);
     });
     const destinationRoom = group ?? laneRoom;
     if (destinationRoom && !groupCanSpeak(destinationRoom, bot.id)) return "Speaking is disabled for this room member";
@@ -70,8 +70,8 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy 
       if (destinationRoom?.memberIds.includes(from.id) && !groupMemberPermissions(destinationRoom, from.id).coordinate) return "Coordination is disabled for this room member";
       const sharedGrant = destinationRoom && groupCrossSection(destinationRoom) && destinationRoom.memberIds.includes(from.id) && (!source || source.id === destinationRoom.id);
       // Supervision alone never grants a direct chat or another room's access.
-      const sharedSupervisor = source && group && source.id === group.id && parent.threadId === node.threadId && coordinatorSupervises(bot, from);
-      if ((!canAccessTeam(from, bot.section) && !sharedSupervisor && !sharedGrant) || (source && !groupCrossSection(source) && outsideSection(source, from))) return "Room work cannot cross the sender's section boundary";
+      const sharedSupervisor = source && group && source.id === group.id && parent.threadId === node.threadId && hasTeamAuthority(bot, from.section);
+      if ((!hasTeamAuthority(from, bot.section) && !sharedSupervisor && !sharedGrant) || (source && !groupCrossSection(source) && outsideSection(source, from))) return "Room work cannot cross the sender's section boundary";
       if (source && group && source.id === group.id && parent.threadId !== node.threadId) return "Same-room work must stay in the originating conversation";
       if (!peerAllowed(from, bot)) return reachRefusal(from, bot, lookedAfterBy)!;
     }
@@ -102,7 +102,7 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy 
     if (group.memberIds.some(id => { const member = store.bot(id); return member && !sameAudience(bot.visibility, member.visibility); })) return { ok: false, problem: "audience" };
     const outsider = groupCrossSection(group) ? undefined : group.memberIds
       .map((id) => store.bot(id))
-      .find((member) => member && !canAccessTeam(bot, member.section) && !coordinatorSupervises(member, bot));
+      .find((member) => member && !hasTeamAuthority(bot, member.section) && !hasTeamAuthority(member, bot.section));
     if (outsider) return { ok: false, problem: "outsider", name: outsider.name };
     if (roomSetupPending(group)) return { ok: false, problem: "setup" };
     return { ok: true };
