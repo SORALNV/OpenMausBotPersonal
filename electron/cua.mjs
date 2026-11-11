@@ -288,7 +288,19 @@ async function startEmbedded(binary, signal) {
     ? existingProfileHostBinary(resolveEmbeddedDriverBinary(binary), app.getPath("userData"))
     : resolveEmbeddedDriverBinary(binary);
   const host = sdk.EmbeddedCuaDriverHost.withOptions({
-    binaryPath: hostBinary,  try {
+    binaryPath: hostBinary,
+    hostBundleId: HOST_BUNDLE_ID,
+    // The SDK's default socket has the start's random id in it; a fixed one stays valid for a bridge that outlives a restart.
+    socketPath: embeddedSocketPath(),
+    approveCapabilityManifest: false,
+    approveSessionPolicy: false,
+    dangerouslyBypassApprovals: false,
+    environment: [],
+    inheritStderr: true,
+    noOverlay: false,
+    captureStderr: false,
+  });
+  try {
     const conn = await host.start({ signal });
     signal.throwIfAborted();
     embeddedHost = host;
