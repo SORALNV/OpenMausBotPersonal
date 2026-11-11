@@ -605,7 +605,7 @@ function ensureManagedCompanionConnector() {
     onChange: (status) => {
       slog(`managed companion connection ${status.status}`);
       if (!companionDesiredThisLaunch) return;
-      void reconcileCompanionAdvertisement(status.ready ? status.endpoint : null);
+      void reconcileCompanionAdvertisement(status.ready ? status.endpoint : readSavedHostedUrl());
     },
     log: slog,
   });
@@ -650,7 +650,7 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
     return publicManagedCompanionState();
   }
   const status = await operation;
-  await reconcileCompanionAdvertisement(status.ready ? status.endpoint : null);
+  await reconcileCompanionAdvertisement(status.ready ? status.endpoint : readSavedHostedUrl());
   return publicManagedCompanionState();
 }
 
@@ -659,7 +659,7 @@ async function startDesktopCompanion({ waitForHosted = true, remember = true, ro
   if (refusal) throw new Error(refusal);
   companionDesiredThisLaunch = true;
   companionLaunchGeneration += 1;
-  const localState = await startCompanion(companionLaunchOptions());
+  const localState = await startCompanion(companionLaunchOptions(readSavedHostedUrl()));
   if (!localState.enabled || localState.error) {
     companionDesiredThisLaunch = false;
     return desktopCompanionState();
@@ -2417,6 +2417,54 @@ ipcMain.handle("companion:pairing-renew", localOnly("companion:pairing-renew", (
 ipcMain.handle("companion:routes", localOnly("companion:routes", (_event, deviceId, routes) =>
   companionDeviceRoutes(deviceId, routes === "local" ? "local" : "any").then(() => desktopCompanionState()),
 ));
+
+// The person's own HTTPS entrance (a Cloudflare Tunnel, Caddy or nginx in front
+// of the companion's device port): advertised as the pairing link's best route,
+// so phones pair through it without editing the address on the phone.
+const hostedOriginFile = () => path.join(app.getPath("userData"), "companion-hosted-url.json");
+function readSavedHostedUrl() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(hostedOriginFile(), "utf8"));
+    return typeof saved?.hostedUrl === "string" ? saved.hostedUrl : null;
+  } catch {
+    return null;
+  }
+}
+function rememberHostedUrl(origin) {
+  const file = hostedOriginFile();
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(temporary, JSON.stringify({ version: 1, hostedUrl: origin }, null, 2));
+  fs.renameSync(temporary, file);
+}
+const hostedOrigin = (value) => {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let parsed;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
+      (parsed.pathname !== "" && parsed.pathname !== "/") || parsed.search || parsed.hash) return null;
+  return parsed.origin;
+};
+ipcMain.handle("companion:hosted-url", localOnly("companion:hosted-url", async (_event, value) => {
+  if (value === null || value === undefined || value === "") {
+    rememberHostedUrl(null);
+    await setCompanionHostedUrl(null);
+    return { hostedUrl: null };
+  }
+  const origin = hostedOrigin(value);
+  if (!origin) throw new Error("パス・認証情報・クエリを含まない https:// のアドレスを入力してください。");
+  const answer = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(10_000) });
+  if (!answer.ok) throw new Error(`そのアドレスは ${answer.status} を返しました。トンネルやリバースプロキシを確認してから保存してください。`);
+  const identity = await answer.json().catch(() => null);
+  if (identity?.app !== "openmausbot") throw new Error("そのアドレスはOpenMausBotのサーバーではありません。");
+  rememberHostedUrl(origin);
+  await setCompanionHostedUrl(origin);
+  return { hostedUrl: origin };
+}));
 
 function publicDesktopRemoteState() {
   return desktopRemoteAccess

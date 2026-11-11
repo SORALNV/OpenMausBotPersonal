@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { t } from "@/lib/i18n";
+import { t, activeLocale } from "@/lib/i18n";
 import { Loader2, ShieldCheck } from "lucide-react";
 import type { CompanionAccountState } from "../types/ogb";
 import {
@@ -171,11 +171,69 @@ const ROUTE_TEXT = {
 
 const button = "rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40";
 
+/** The person's own HTTPS entrance (a Cloudflare Tunnel, Caddy or nginx in front of
+ * the companion's device port): once set, pairing QRs and links carry it as the best
+ * route, so phones pair through it from anywhere without editing the address. */
+function HostedAddressCard() {
+  const bridge = companionBridge();
+  const [address, setAddress] = useState("");
+  const [current, setCurrent] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [failure, setFailure] = useState("");
+  useEffect(() => {
+    if (!bridge?.hostedUrl) return;
+    void bridge.hostedUrl().then((answer) => setCurrent(answer.hostedUrl)).catch(() => {});
+  }, [bridge]);
+  const setHostedUrl = bridge?.setHostedUrl;
+  if (!setHostedUrl) return null;
+  const apply = async (value: string | null) => {
+    setBusy(true);
+    setNotice("");
+    setFailure("");
+    try {
+      setCurrent((await setHostedUrl(value)).hostedUrl);
+      setAddress("");
+      setNotice(value ? t("remote.hosted.saved") : t("remote.hosted.cleared"));
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-xl bg-inset px-3 py-3" data-route-row="hosted-address">
+      <div className="text-[13px] text-ink">{t("remote.hosted.title")}</div>
+      <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("remote.hosted.detail")}</div>
+      {current && (
+        <div className="mt-2 font-mono text-[12px] text-ink">{endpointHost(current)}</div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          type="url"
+          inputMode="url"
+          value={address}
+          onChange={(event) => setAddress(event.target.value)}
+          placeholder={t("remote.hosted.placeholder")}
+          aria-label={t("remote.hosted.title")}
+          disabled={busy}
+          className="min-w-0 flex-1 rounded-lg border border-hairline/40 bg-card px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-ink-tertiary focus:border-accent"
+        />
+        <button type="button" className={button} disabled={busy || address.trim() === ""} onClick={() => void apply(address)}>{t("remote.hosted.save")}</button>
+        {current && <button type="button" className={button} disabled={busy} onClick={() => void apply(null)}>{t("remote.hosted.clear")}</button>}
+      </div>
+      {busy && <div className="mt-2 text-[12px] text-ink-secondary">{t("remote.hosted.checking")}</div>}
+      {notice && <div role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</div>}
+      {failure && <div role="alert" className="mt-2 text-[12px] text-danger">{failure}</div>}
+    </div>
+  );
+}
+
 /** "On · since Nov 7", "On · waiting for a paired device", or "Off". */
 export function routeStateText(route: { on: boolean; since: number | null } | undefined, paired: number): string {
   if (!route?.on) return t("devices.route.off");
   if (paired === 0) return t("devices.route.waiting");
-  return route.since ? t("devices.route.onSince", { date: new Date(route.since).toLocaleDateString(undefined, { month: "short", day: "numeric" }) }) : t("devices.route.on");
+  return route.since ? t("devices.route.onSince", { date: new Date(route.since).toLocaleDateString(activeLocale(), { month: "short", day: "numeric" }) }) : t("devices.route.on");
 }
 
 function setRoute(companion: CompanionBridge, route: CompanionRoute, on: boolean): Promise<CompanionState> {
@@ -320,7 +378,7 @@ export function reachLine(state: Pick<CompanionState, "routes">): string {
     on("relay") && t("devices.reach.relay", { app: productName() }),
   ].filter((way): way is string => Boolean(way));
   if (ways.length === 0) return t("devices.reach.none");
-  return t("devices.reach.line", { ways: new Intl.ListFormat(undefined, { type: "conjunction" }).format(ways) });
+  return t("devices.reach.line", { ways: new Intl.ListFormat(activeLocale(), { type: "conjunction" }).format(ways) });
 }
 
 export function PhoneDevicesSection({ profileEmail = "", focusRequest = 0, simple = false }: { profileEmail?: string; focusRequest?: number; simple?: boolean }) {
@@ -460,6 +518,7 @@ export function PhoneDevicesSection({ profileEmail = "", focusRequest = 0, simpl
               </div>
             )}
             {tailscaleOn && state.routes?.tailscale?.name && <TailnetComputers c={c} state={state} blocked={managedBy} simple={simple} />}
+            <HostedAddressCard />
             <div className="flex items-start justify-between gap-4 border-t border-hairline/30 pt-4" data-route-row="https">
               <div className="min-w-0">
                 <div className="text-[13px] text-ink">{t("devices.route.https")}</div>

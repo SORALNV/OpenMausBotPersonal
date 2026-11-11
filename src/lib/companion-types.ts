@@ -74,6 +74,10 @@ export type CompanionBridge = {
   setTailscaleComputers?: (on: boolean) => Promise<CompanionState>;
   setRoute?: (route: CompanionRoute, on: boolean) => Promise<CompanionState>;
   dismissNotice?: (route: CompanionRoute) => Promise<CompanionState>;
+  /** Reads the person's own HTTPS address: the one pairing links carry when set. */
+  hostedUrl?: () => Promise<{ hostedUrl: string | null }>;
+  /** Sets (a null clears) the person's own HTTPS entrance. Absent on an app build before it. */
+  setHostedUrl?: (url: string | null) => Promise<{ hostedUrl: string | null }>;
   pairing: (open: boolean, expectedToken?: string) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   browserControl: (deviceId: string, allowed: boolean) => Promise<CompanionState>;

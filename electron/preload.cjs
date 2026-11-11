@@ -277,6 +277,8 @@ const bridge = {
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
     renewPairing: () => ipcRenderer.invoke("companion:pairing-renew"),
     routes: (deviceId, routes) => ipcRenderer.invoke("companion:routes", deviceId, routes),
+    hostedUrl: () => ipcRenderer.invoke("companion:hosted-url"),
+    setHostedUrl: (url) => ipcRenderer.invoke("companion:hosted-url", url === null ? null : String(url ?? "")),
   },
   routines: {
     wakeState: () => ipcRenderer.invoke("routines:wake-state"),
