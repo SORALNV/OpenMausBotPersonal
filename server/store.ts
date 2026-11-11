@@ -2153,7 +2153,7 @@ export class Store {
   }
 
   createTask(botId: string, title?: string, activate = true, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",
-    modelSelection?: ModelSelection, cwd?: string, background = false, beforeShown?: (task: TaskRecord) => void): TaskRecord | null {
+    modelSelection?: ModelSelection, cwd?: string, beforeShown?: (task: TaskRecord) => void, background = false): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     if (projectId !== undefined && !this.project(botId, projectId)) return null;
@@ -2170,7 +2170,7 @@ export class Store {
 
   createBackgroundTask(botId: string, title?: string, activate = false, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",
     modelSelection?: ModelSelection, cwd?: string, beforeShown?: (task: TaskRecord) => void): TaskRecord | null {
-    return this.createTask(botId, title, activate, projectId, openedBy, approvalMode, modelSelection, cwd, true, beforeShown);
+    return this.createTask(botId, title, activate, projectId, openedBy, approvalMode, modelSelection, cwd, beforeShown, true);
   }
 
   private buildTask(bot: BotRecord, title?: string, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full",
