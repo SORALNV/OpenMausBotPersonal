@@ -55,7 +55,6 @@ import { ProfileFields } from "./ProfileSettings";
 import { PersonalPrivacySettings } from "./PersonalPrivacySettings";
 import { YourComputerSettings } from "./YourComputerSettings";
 import { PersonalComposerSettings } from "./PersonalComposerSettings";
-import { GoogleChatSettings } from "./GoogleChatSettings";
 import { DirectCodexSettings } from "./DirectCodexSettings";
 import { BotThreadCleanupSettings } from "./BotThreadCleanupSettings";
 import { NativeOmpSettings } from "./NativeOmpSettings";
@@ -369,7 +368,6 @@ function SettingsDialog() {
         return (
           <>
             <AdvancedModeRow />
-            {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <GoogleChatSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <PersonalPrivacySettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <YourComputerSettings />}
             {import.meta.env.VITE_OMB_PERSONAL === "1" && !remoteActive && <NativeConnectSettings />}
