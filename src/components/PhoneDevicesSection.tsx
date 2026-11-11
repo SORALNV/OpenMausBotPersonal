@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { t, activeLocale } from "@/lib/i18n";
+import { api } from "@/state/store";
 import { Loader2, ShieldCheck } from "lucide-react";
 import type { CompanionAccountState } from "../types/ogb";
 import {
@@ -381,6 +382,41 @@ export function reachLine(state: Pick<CompanionState, "routes">): string {
   return t("devices.reach.line", { ways: new Intl.ListFormat(activeLocale(), { type: "conjunction" }).format(ways) });
 }
 
+/** The two entrances this computer actually answers on, so the person can see which
+ * address each kind of device uses before opening any pairing flow. */
+function ConnectionRoutesCard() {
+  const bridge = companionBridge();
+  const [phone, setPhone] = useState<string | null>(null);
+  const [computer, setComputer] = useState<string | null>(null);
+  useEffect(() => {
+    void bridge?.hostedUrl?.().then((answer) => setPhone(answer.hostedUrl)).catch(() => {});
+    void api("/api/auth/pairing")
+      .then((body) => setComputer(typeof body?.publicUrl === "string" ? body.publicUrl : null))
+      .catch(() => {});
+  }, [bridge]);
+  if (!phone && !computer) return null;
+  return (
+    <div data-routes-card="" className="rounded-xl bg-inset px-3 py-3">
+      <div className="text-[13px] font-medium text-ink">{t("remote.routes.title")}</div>
+      <div className="mt-2 flex flex-col gap-1.5">
+        {phone && (
+          <div className="flex flex-wrap items-baseline gap-x-2 text-[12px]">
+            <span className="text-ink-secondary">{t("remote.routes.phone")}</span>
+            <span className="font-mono text-ink">{endpointHost(phone)}</span>
+          </div>
+        )}
+        {computer && (
+          <div className="flex flex-wrap items-baseline gap-x-2 text-[12px]">
+            <span className="text-ink-secondary">{t("remote.routes.computer")}</span>
+            <span className="font-mono text-ink">{endpointHost(computer)}</span>
+          </div>
+        )}
+      </div>
+      <div className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("remote.routes.detail")}</div>
+    </div>
+  );
+}
+
 export function PhoneDevicesSection({ profileEmail = "", focusRequest = 0, simple = false }: { profileEmail?: string; focusRequest?: number; simple?: boolean }) {
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
@@ -432,6 +468,7 @@ export function PhoneDevicesSection({ profileEmail = "", focusRequest = 0, simpl
   if (simple && !showRoutes) {
     return (
       <div className="flex flex-col gap-3" ref={pairingFlow} tabIndex={-1} data-phone-pairing="computer">
+        <ConnectionRoutesCard />
         <RouteNotices c={c} notices={state.notices ?? []} />
         {pairedCount === 0 ? (
           <div className="flex items-center justify-between gap-4 rounded-xl border border-hairline/40 bg-card px-4 py-3">
@@ -456,6 +493,7 @@ export function PhoneDevicesSection({ profileEmail = "", focusRequest = 0, simpl
 
   return (
     <div className="flex flex-col gap-4" ref={pairingFlow} tabIndex={-1} data-phone-pairing="computer">
+      <ConnectionRoutesCard />
       {remoteBlocked && <p role="status" className="text-[13px] leading-relaxed text-ink-secondary">{remoteBlocked}</p>}
       <p className="text-[13px] leading-relaxed text-ink-secondary">{t("devices.intro")}</p>
       {pairButton(t("devices.pair"))}

@@ -61,12 +61,12 @@ describe("Settings → Remote access: server pairing card visibility", () => {
 });
 
 describe("Settings → Phone & devices opened by Connect your phone", () => {
-  it("on this computer, reveals the phone flow, not the server's pairing code", () => {
+  it("on this computer, reveals the phone flow and the server's pairing code side by side", () => {
     fixture.phonePairing = 3;
     vi.stubGlobal("window", { ogb: { companion: {} } });
     const html = render();
     expect(html).toContain("COMPANION_SECTION focus=3");
-    expect(html).not.toContain("SERVER_PAIRING_CARD_MARKER");
+    expect(html).toContain("SERVER_PAIRING_CARD_MARKER");
   });
 
   it("on the person's own Cloud in this window, reveals the Cloud's own pairing code", () => {
@@ -88,11 +88,11 @@ describe("Settings → Phone & devices opened by Connect your phone", () => {
     expect(html).not.toContain("COMPANION_SECTION");
   });
 
-  it("a plain visit reveals nothing", () => {
+  it("a plain visit opens the section with both flows present", () => {
     vi.stubGlobal("window", { ogb: { companion: {} } });
     const html = render();
     expect(html).toContain("COMPANION_SECTION focus=0");
-    expect(html).not.toContain("SERVER_PAIRING_CARD_MARKER");
+    expect(html).toContain("SERVER_PAIRING_CARD_MARKER");
   });
 
   it("this computer's page is Phone & devices; a server's own page is This server", () => {
