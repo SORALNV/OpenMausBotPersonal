@@ -1137,6 +1137,7 @@ async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmen
       : {}),
     OMB_CREDENTIAL_STORE: credentialStoreUnavailable ? "unavailable" : "ok",
     ...workspaceCredentialEnv(secureCredentials),
+    ...(readSavedHarnessUrl() ? { OMB_PUBLIC_URL: readSavedHarnessUrl() } : {}),
   });
   delete childEnv.OMB_BROWSER_CONNECTION;
   delete childEnv.OMB_SERVER_COMPILE_CACHE;
@@ -2441,8 +2442,19 @@ function rememberHostedUrl(origin) {
   const file = hostedOriginFile();
   const temporary = `${file}.${process.pid}.tmp`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(temporary, JSON.stringify({ version: 1, hostedUrl: origin }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ version: 1, hostedUrl: origin, harnessUrl: readSavedHarnessUrl() }, null, 2));
   fs.renameSync(temporary, file);
+}
+
+/** The harness's own public entrance (for connecting other computers): advertised in
+ * server pairing links and sent to the server child as OMB_PUBLIC_URL. */
+function readSavedHarnessUrl() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(hostedOriginFile(), "utf8"));
+    return hostedOrigin(saved?.harnessUrl);
+  } catch {
+    return null;
+  }
 }
 const hostedOrigin = (value) => {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -2457,7 +2469,8 @@ const hostedOrigin = (value) => {
   return parsed.origin;
 };
 ipcMain.handle("companion:hosted-url", localOnly("companion:hosted-url", async (_event, value) => {
-  if (value === null || value === undefined || value === "") {
+  if (value === undefined) return { hostedUrl: readSavedHostedUrl() };
+  if (value === null || value === "") {
     rememberHostedUrl(null);
     await setCompanionHostedUrl(null);
     return { hostedUrl: null };
