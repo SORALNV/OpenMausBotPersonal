@@ -659,10 +659,17 @@ async function startDesktopCompanion({ waitForHosted = true, remember = true, ro
   if (refusal) throw new Error(refusal);
   companionDesiredThisLaunch = true;
   companionLaunchGeneration += 1;
-  const localState = await startCompanion(companionLaunchOptions(readSavedHostedUrl()));
+  const savedOrigin = readSavedHostedUrl();
+  const localState = await startCompanion(companionLaunchOptions(savedOrigin));
   if (!localState.enabled || localState.error) {
     companionDesiredThisLaunch = false;
     return desktopCompanionState();
+  }
+  // A sidecar already running from an earlier start keeps the address it was
+  // given then; bring it to the saved one whenever they differ.
+  if (savedOrigin && companionAdvertisedHostedUrl() !== savedOrigin) {
+    const updated = await setCompanionHostedUrl(savedOrigin);
+    if (!updated.error) Object.assign(localState, updated);
   }
   if (remember) for (const route of routes.filter((name) => ["wifi", "relay"].includes(name))) await rememberCompanionRoute(route, true);
   phoneLinkRoutes.touched();
