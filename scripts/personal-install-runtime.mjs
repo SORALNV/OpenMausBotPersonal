@@ -23,8 +23,8 @@ const run = (command, args) => {
 };
 const destination = "/Applications/OpenMausBot Personal.app";
 // Never replace a running app or change its runtime underneath an active turn.
-const processes = run("/bin/ps", ["-axo", "command="]);
-if (processes.split("\n").some(line => line.startsWith(`${destination}/Contents/MacOS/`))) throw new Error("Quit Personal before installing its runtime");
+const processes = spawnSync("/usr/bin/pgrep", ["-fl", "OpenMausBot"], { encoding: "utf8" }).stdout ?? "";
+if (processes.split("\n").some(line => line.includes(`${destination}/Contents/MacOS/`))) throw new Error("Quit Personal before installing its runtime");
 const data = join(homedir(), ".openmausbot-personal"), root = join(data, "runtime");
 if (realpathSync(data) !== resolve(data) || lstatSync(data).uid !== process.getuid()) throw new Error("Invalid Personal data directory");
 mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -55,9 +55,9 @@ const migrate = !current || process.argv.includes("--migrate-launcher");
 assertPersonalAppIdentity(join(version, "OpenMausBot Runtime.app"));
 if (!migrate) assertPersonalAppIdentity(destination);
 if (current && (current.version !== 1 || current.fingerprint !== pkg.fingerprint)) throw new Error("Existing launcher identity differs; explicit migration required");
-run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", launcherRequirement, destination]);
+if (existsSync(destination)) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", launcherRequirement, destination]);
 if (migrate) {
-  run("/usr/bin/ditto", [destination, join(backup, "OpenMausBot Personal.app")]);
+  if (existsSync(destination)) run("/usr/bin/ditto", [destination, join(backup, "OpenMausBot Personal.app")]);
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", launcherRequirement, pkg.launcher]);
 }
 const temporary = join(root, `active-${id}.json`);
@@ -74,10 +74,14 @@ if (migrate) {
   run("/usr/bin/ditto", [pkg.launcher, candidate]);
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", candidate]);
   const old = `/Applications/.OpenMausBot-Personal-previous-${id}.app`;
-  renameSync(destination, old);
-  try { renameSync(candidate, destination); } catch (error) { renameSync(old, destination); throw error; }
-  const { rmSync } = await import("node:fs");
-  rmSync(old, { recursive: true });
+  if (existsSync(destination)) {
+    renameSync(destination, old);
+    try { renameSync(candidate, destination); } catch (error) { renameSync(old, destination); throw error; }
+    const { rmSync } = await import("node:fs");
+    rmSync(old, { recursive: true });
+  } else {
+    renameSync(candidate, destination);
+  }
 }
 chmodSync(active, 0o600);
 const result = { id, backup, migrate, destination, installedAt: new Date().toISOString() };

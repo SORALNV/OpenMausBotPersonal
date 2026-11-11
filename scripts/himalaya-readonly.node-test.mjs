@@ -66,7 +66,8 @@ test("subprocess failures and malformed output do not expose diagnostics", async
 });
 
 test("real fork reads synthetic Maildir through the wrapper without marking seen", async context => {
-  const binary = new URL("../../himalaya/target/debug/himalaya", import.meta.url).pathname;
+  const binary = process.env.HIMALAYA_BIN ?? new URL("../../himalaya/target/debug/himalaya", import.meta.url).pathname;
+  if (!existsSync(binary)) throw new Error(`Fork binary not found at ${binary}; build it or point HIMALAYA_BIN at one`);
   const root = mkdtempSync(join(tmpdir(), "himalaya-wrapper-maildir-"));
   context.after(() => rmSync(root, { recursive: true }));
   const config = join(root, "config.toml");
