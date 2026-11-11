@@ -12,8 +12,14 @@ process.env.HOME = home;
 process.env.USERPROFILE = home;
 // Worker threads do not change the native os.homedir() when their process.env changes. Pin the store inside the throwaway home in every pool.
 process.env.OMB_DATA_DIR = join(home, ".openmausbot");
+// A provider that answers 5xx retries with backoff: no test should wait out real seconds.
+process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE ??= "0.001";
+// The model manifest comes from the bundled copy in tests; refreshing it would be a network call in every server boot.
+process.env.OMB_DISABLE_MODEL_MANIFEST_FETCH = "1";
 // Do not let a developer's Hermes global config path leak into per-test homes.
 delete process.env.HERMES_HOME;
+// A ChatGPT-plan turn links the person's Codex home ($CODEX_HOME or ~/.codex) into its own: keep it in the throwaway home.
+delete process.env.CODEX_HOME;
 // Named explicitly although homedir() already covers it: the device tests delete this directory wholesale.
 process.env.OMB_COMPANION_DIR = join(home, ".openmausbot-companion");
 

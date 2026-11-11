@@ -297,7 +297,8 @@ test("forgetting a remote environment keeps its sign-out confirmation and answer
   const { calls, context } = runForget({ environments: [remote], activeId: "r1" });
   assert.deepEqual(plain(await context.forgetEnvironment("r1")), { ok: true });
   assert.equal(calls.dialogs.length, 1, "the remote dialog stays");
-  assert.match(calls.dialogs[0].detail, /signs out of that server/);
+  assert.equal(calls.dialogs[0].message, "Remove Office from this app?");
+  assert.match(calls.dialogs[0].detail, /The server keeps running and your bots stay there/);
   assert.deepEqual(plain(calls.persisted[0].environments), []);
 });
 
@@ -365,6 +366,7 @@ function switchFixture(t, { startResults = [], releaseLeaseThrows = false, stopU
     withActive: env.withActive,
     persistEnvironments: (next) => { context.environmentsState = next; },
     navigateMainWindow: () => {},
+    placeSwitch: { turn: () => 0 },
     rendererOrigin: () => "http://127.0.0.1:8799",
     dialog: { showErrorBox: () => {} },
     slog: () => {},

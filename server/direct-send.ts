@@ -24,6 +24,8 @@ export interface DirectSendInput {
   mentions?: string[];
   /** Personal send keys: queue even when steering is possible, or steer into the running turn. */
   delivery?: "queue" | "steer";
+  /** The sender is the team's Owner or an Admin, so a typed stop may end someone else's run. */
+  admin?: boolean;
 }
 
 export type DirectSendReceipt =

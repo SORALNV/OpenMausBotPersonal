@@ -7,6 +7,8 @@
 // alias such as "vps" out of `cloudBackend: "vps"` and the user's messages.
 const WITHHELD_KEYS = new Set(["resumeCursors", "sshAlias", "vpsAlias", "vpsAliases"]);
 
+export const isWithheldKey = (key: string): boolean => WITHHELD_KEYS.has(key);
+
 interface DeviceProjection {
   openedThreadId?: string;
 }
@@ -27,7 +29,7 @@ export function scrub<T>(value: T, projection: DeviceProjection = {}): T {
     const bot = typeof record.id === "string" && typeof record.threadId === "string" && !Array.isArray(record.memberIds);
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(record)) {
-      if (WITHHELD_KEYS.has(key)) continue;
+      if (isWithheldKey(key)) continue;
       const shown = bot && key === "tasks" && Array.isArray(inner)
         ? inner.filter(task => !backgroundTask(task) || (task as Record<string, unknown>).threadId === projection.openedThreadId)
         : inner;

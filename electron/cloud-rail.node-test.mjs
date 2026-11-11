@@ -116,7 +116,7 @@ function rail(over = {}) {
   const installed = installCloudRail({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) }, guard: handler => handler, trusted: () => w.trusted,
     lists: () => w.lists, beside: () => w.beside,
     places: () => railPlaces({ saved: saved(), home: HOME, mine: HOME, state: w.state }), open: id => opened.push(id), account: () => account,
-    add: { choices: () => ({ cloud: true, link: true, address: false }), run: (...args) => ran.push(args) }, clipboard: { writeText: text => sent.push(text) },
+    add: { choices: () => ({ cloud: true, link: true, address: false }), run: (...args) => ran.push(args), probe: (...args) => ran.push(["probe", ...args]) }, clipboard: { writeText: text => sent.push(text) },
     openCloud: async id => opened.push(`cloud:${id}`), targets: () => [{ isDestroyed: () => false, send: (channel) => sent.push(`page:${channel}`) }, null,
       { isDestroyed: () => false, send: (channel) => sent.push(`rail:${channel}`) }], ...over });
   return { handlers, opened, ran, sent, w, installed, call: (channel, ...args) => handlers.get(channel)({ sender: {} }, ...args) };
@@ -131,7 +131,6 @@ test("the rail's channels: the list only for the rail's own page, a circle only 
   r.w.beside = false;
   assert.deepEqual(await r.call("workspaces:places"), { places: [], add: { cloud: false, link: false, address: false, organization: false } });
   assert.throws(() => r.call("workspaces:open", "a"), /only available/);
-  assert.throws(() => r.call("workspaces:add", "link"), /only available/);
   assert.equal(typeof await r.call("cloud-add:state"), "object", "＋'s buying sheet still runs on a page main vouches for (this computer's own)");
   r.w.lists = true;
   r.call("workspaces:open", "a");
@@ -141,15 +140,52 @@ test("the rail's channels: the list only for the rail's own page, a circle only 
   r.call("workspaces:add", "link", "  https://bots.example.test/#pair=abc  ");
   r.call("workspaces:add", "link", { href: "https://evil.example.test" });
   r.call("workspaces:add", "link", "x".repeat(5000));
+  r.call("workspaces:add", "link", "192.168.1.20:8799", " abcd-efgh-jklm ");
+  r.call("workspaces:probe", " 192.168.1.20:8799 ", { code: "x" });
   assert.throws(() => r.call("workspaces:add", "address"), /isn't something/, "not offered here");
   assert.throws(() => r.call("workspaces:add", "javascript:alert(1)"), /isn't something/);
-  assert.deepEqual([r.opened, r.ran], [["a"], [["link"], ["link", "https://bots.example.test/#pair=abc"], ["link"], ["link", "x".repeat(4096)]]],
-    "a pasted link reaches main's own Connect dialog trimmed and bounded; anything but text is the clipboard's");
+  assert.deepEqual([r.opened, r.ran], [["a"], [["link"], ["link", "https://bots.example.test/#pair=abc", null], ["link"], ["link", "x".repeat(4096), null],
+    ["link", "192.168.1.20:8799", "abcd-efgh-jklm"], ["probe", "192.168.1.20:8799", ""]]],
+    "a pasted link reaches main trimmed and bounded, with the code typed apart when the sheet sends one; anything but text is the clipboard's");
   r.installed.changed(); r.installed.changed();
   assert.deepEqual(r.sent, ["page:workspaces:changed", "rail:workspaces:changed"], "a signal only, to the page and the rail, and once per change");
   r.w.beside = true;
   r.installed.changed();
   assert.deepEqual(r.sent.slice(2), ["page:workspaces:changed", "rail:workspaces:changed"], "the rail came beside the page (or went): the page reads it again");
+});
+
+test("a circle's click goes through main's list of what is being opened, the rail's page reads it, and it hears when it changes", async () => {
+  const asked = [], w = { trusted: true }, sent = [];
+  let target = null;
+  const handlers = new Map();
+  const installed = installCloudRail({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) }, guard: handler => handler, trusted: () => w.trusted,
+    places: () => [{ id: "a", name: "Client A", color: null, kind: "cloud", opens: true }], open: async id => { asked.push(["open", id]); return "opened"; }, add: { choices: () => ({ cloud: false, link: false, address: false }), run: () => {} }, account: () => null, clipboard: {}, openCloud: () => {},
+    targets: () => [{ send: channel => sent.push(channel), isDestroyed: () => false }], ask: async (id, run) => { asked.push(["ask", id]); return run(); }, switching: () => target });
+  const call = (channel, ...args) => handlers.get(channel)({}, ...args);
+  assert.equal(await call("workspaces:open", "a"), "opened");
+  assert.deepEqual(asked, [["ask", "a"], ["open", "a"]], "the click is listed before main switches");
+  assert.equal(call("workspaces:places").switching, undefined, "nothing being opened: nothing said");
+  installed.changed();
+  target = { id: "a", waking: true };
+  assert.deepEqual(call("workspaces:places").switching, { id: "a", waking: true });
+  sent.length = 0;
+  installed.changed();
+  assert.deepEqual(sent, ["workspaces:changed"], "the rail's page reads the list again");
+  installed.changed();
+  assert.deepEqual(sent, ["workspaces:changed"], "and only when it changed");
+});
+
+test("Settings → Servers on this computer's own page looks a server up and connects to it; a page main doesn't vouch for can't", () => {
+  const r = rail();
+  r.w.lists = false;
+  r.call("workspaces:probe", " 192.168.1.20:8799 ", " abcd-efgh-jklm ");
+  r.call("workspaces:add", "link", "192.168.1.20:8799", " abcd-efgh-jklm ");
+  assert.deepEqual(r.ran, [["probe", "192.168.1.20:8799", "abcd-efgh-jklm"], ["link", "192.168.1.20:8799", "abcd-efgh-jklm"]],
+    "the Connect sheet in Settings → Servers runs in the main window, beside the rail, not on it");
+  r.w.trusted = false;
+  assert.throws(() => r.call("workspaces:probe", "192.168.1.20:8799", "x"), /only available/, "a server's own page can't make main look anywhere up");
+  assert.throws(() => r.call("workspaces:add", "link", "192.168.1.20:8799", "x"), /only available/);
+  assert.equal(r.ran.length, 2);
 });
 
 test("buying another Cloud from a page: the plan must be on sale, the name is checked, and the page gets only what the sheet says", async () => {
@@ -322,7 +358,7 @@ function preload(origin, { activation = false } = {}) {
 
 test("a Cloud's page gets the rail and the add sheet's narrow bridges; a circle, ＋ and checkout open only from the person's click", async () => {
   const page = preload(HOME);
-  assert.deepEqual(Object.keys(page.bridge.workspaces), ["state", "menu", "line", "places", "open", "add", "look", "color", "recolor", "remove", "makeHome", "onChanged", "local", "onNewLocal"]);
+  assert.deepEqual(Object.keys(page.bridge.workspaces), ["state", "menu", "line", "places", "open", "add", "probe", "look", "color", "recolor", "remove", "makeHome", "onChanged", "local", "onNewLocal"]);
   assert.deepEqual(Object.keys(page.bridge.cloudAdd), ["state", "start", "reopen", "copyLink", "open", "interest", "sheet", "organization"]);
   await page.bridge.workspaces.places();
   await page.bridge.cloudAdd.state();
