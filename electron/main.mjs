@@ -572,7 +572,7 @@ function publicManagedCompanionState() {
 
 function decorateDesktopCompanionState(state) {
   syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
-  return { ...state, managedConnection: publicManagedCompanionState(), tailnetShare: tailnetShare.state() };
+  return { ...state, customHostedUrl: readSavedHostedUrl(), managedConnection: publicManagedCompanionState(), tailnetShare: tailnetShare.state() };
 }
 
 async function desktopCompanionState() {
@@ -616,8 +616,8 @@ function reconcileCompanionAdvertisement(
   endpoint,
   ownedGeneration = companionLaunchGeneration,
 ) {
-  const normalizedEndpoint = endpoint || null;
   const work = advertisementTransition.then(async () => {
+    const normalizedEndpoint = readSavedHostedUrl() || endpoint || null;
     if (
       ownedGeneration !== companionLaunchGeneration ||
       !companionDesiredThisLaunch ||
@@ -673,7 +673,11 @@ async function startDesktopCompanion({ waitForHosted = true, remember = true, ro
   }
   if (remember) for (const route of routes.filter((name) => ["wifi", "relay"].includes(name))) await rememberCompanionRoute(route, true);
   phoneLinkRoutes.touched();
-  await startManagedCompanionConnection({ waitForVerification: waitForHosted });
+  await startManagedCompanionConnection({
+    waitForVerification: waitForHosted && !(savedOrigin && localState.endpoints?.some(
+      (endpoint) => endpoint.kind === "hosted" && hostedOrigin(endpoint.url) === savedOrigin,
+    )),
+  });
   return desktopCompanionState();
 }
 
@@ -2433,7 +2437,7 @@ const hostedOriginFile = () => path.join(app.getPath("userData"), "companion-hos
 function readSavedHostedUrl() {
   try {
     const saved = JSON.parse(fs.readFileSync(hostedOriginFile(), "utf8"));
-    return typeof saved?.hostedUrl === "string" ? saved.hostedUrl : null;
+    return hostedOrigin(saved?.hostedUrl);
   } catch {
     return null;
   }
@@ -2456,7 +2460,7 @@ function readSavedHarnessUrl() {
     return null;
   }
 }
-const hostedOrigin = (value) => {
+function hostedOrigin(value) {
   if (typeof value !== "string" || !value.trim()) return null;
   let parsed;
   try {
@@ -2466,13 +2470,15 @@ const hostedOrigin = (value) => {
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
       (parsed.pathname !== "" && parsed.pathname !== "/") || parsed.search || parsed.hash) return null;
+  if (parsed.hostname.toLowerCase().replace(/\.$/, "").split(".").includes("")) return null;
   return parsed.origin;
-};
+}
 ipcMain.handle("companion:hosted-url", localOnly("companion:hosted-url", async (_event, value) => {
   if (value === undefined) return { hostedUrl: readSavedHostedUrl() };
   if (value === null || value === "") {
     rememberHostedUrl(null);
-    await setCompanionHostedUrl(null);
+    const managed = publicManagedCompanionState();
+    await setCompanionHostedUrl(managed.ready ? managed.url : null);
     return { hostedUrl: null };
   }
   const origin = hostedOrigin(value);

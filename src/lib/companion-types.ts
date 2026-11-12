@@ -51,6 +51,8 @@ export interface CompanionState {
   lan?: string | null;
   hosts?: string[];
   endpoints?: CompanionEndpoint[];
+  /** The validated saved HTTPS entrance; not evidence that it is reachable or advertised. */
+  customHostedUrl?: string | null;
   secretPublicKey?: string;
   discovery?: { advertising: boolean; name: string };
   /** Windows has that network down as Public, where its firewall drops a phone's connection. */

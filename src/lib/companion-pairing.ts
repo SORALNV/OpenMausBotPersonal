@@ -14,7 +14,18 @@ export interface CompanionPairingRouteSource {
   lan?: string | null;
   hosts?: string[];
   endpoints?: CompanionEndpoint[];
+  customHostedUrl?: string | null;
   discovery?: { advertising: boolean; name: string };
+}
+
+export function companionCustomHostedEndpoint(source: Pick<CompanionPairingRouteSource, "customHostedUrl">): CompanionEndpoint | null {
+  if (!source.customHostedUrl) return null;
+  return qrEndpoints([{ url: source.customHostedUrl, kind: "hosted", priority: 0 }])[0] ?? null;
+}
+
+export function companionCustomHostedRouteReady(source: CompanionPairingRouteSource): boolean {
+  const custom = companionCustomHostedEndpoint(source);
+  return Boolean(custom && qrEndpoints(source.endpoints).some((endpoint) => endpoint.kind === "hosted" && endpoint.url === custom.url));
 }
 
 export interface CompanionPairingRoute {
@@ -68,7 +79,10 @@ export function companionPairingRoute(
   mode: CompanionPairingRouteMode,
 ): CompanionPairingRoute | null {
   if (mode === "automatic") {
-    const hosted = qrEndpoints(source.endpoints).filter((endpoint) => endpoint.kind === "hosted");
+    const custom = companionCustomHostedEndpoint(source);
+    const hosted = qrEndpoints(source.endpoints).filter((endpoint) => endpoint.kind === "hosted")
+      .sort((left, right) => Number(right.url === custom?.url) - Number(left.url === custom?.url))
+      .map((endpoint, index) => custom ? { ...endpoint, priority: index * 100 } : endpoint);
     const preferred = hosted[0] ?? null;
     if (!preferred) return null;
 

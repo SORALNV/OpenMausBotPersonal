@@ -1,6 +1,7 @@
 import type { CompanionAccountState } from "../types/ogb";
 import { t } from "./i18n";
-import type { CompanionEndpoint, CompanionPairingRouteMode } from "./companion-pairing";
+import { companionCustomHostedEndpoint, type CompanionEndpoint, type CompanionPairingRouteMode } from "./companion-pairing";
+import { qrEndpoints } from "../../shared/pairing-link";
 
 export type PhoneSetupPhase = "intro" | "sign-in" | "verifying" | "qr" | "success";
 
@@ -113,6 +114,7 @@ export type CompanionPairingMode =
 
 export interface PhoneSetupCompanionSnapshot {
   enabled: boolean;
+  customHostedUrl?: string | null;
   endpoints?: CompanionEndpoint[];
 }
 
@@ -150,8 +152,11 @@ export const companionPairingMode = (
   account: CompanionAccountState | null,
   companion: PhoneSetupCompanionSnapshot | null,
 ): CompanionPairingMode => {
-  if (companion?.endpoints?.some((endpoint) => endpoint.kind === "hosted")) {
+  if (qrEndpoints(companion?.endpoints).some((endpoint) => endpoint.kind === "hosted")) {
     return "hosted-ready";
+  }
+  if (companion && !companion.enabled && companionCustomHostedEndpoint(companion)) {
+    return "hosted-startable";
   }
   if (!account?.available || account.status === "signed-out" || account.status === "error") {
     return "local-only";

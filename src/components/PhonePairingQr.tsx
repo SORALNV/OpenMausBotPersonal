@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { copyText } from "@/lib/copy-text";
 import { ANDROID_APK_URL, IOS_APP_STORE_URL } from "@/lib/app-links";
 import { productName } from "@/lib/brand";
+import { qrEndpoints, type CompanionEndpoint } from "../../shared/pairing-link";
 import type { PhoneSetupController } from "./PhoneSetupFlow";
 
 /** A fresh code while this screen is open; the previous one stays valid to its two-minute end, so a phone mid-scan
@@ -22,8 +23,15 @@ function RouteRow({ on, label, value }: { on: boolean; label: string; value: str
   );
 }
 
-/** The pairing screen once this computer serves the encrypted connection: one QR carries every route, renews itself,
- * and has no countdown, no code and no cancel. */
+function linkField(link: string, field: string): unknown {
+  try {
+    const encoded = new URL(link).searchParams.get(field);
+    return encoded ? JSON.parse(atob(encoded.replaceAll("-", "+").replaceAll("_", "/"))) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function PhonePairingQr({ c, signedIn }: { c: PhoneSetupController; signedIn: boolean }) {
   const [copied, setCopied] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -37,8 +45,13 @@ export function PhonePairingQr({ c, signedIn }: { c: PhoneSetupController; signe
     return () => clearInterval(timer);
   }, [renewing, c]);
   if (!state || !c.pairingLink) return null;
-  const lan = state.lan ?? state.addresses?.[0] ?? null;
-  const relay = state.e2e?.descriptor?.r?.length ? state.e2e.relay : null;
+  const encodedEndpoints = linkField(c.pairingLink, "endpoints");
+  const endpoints = qrEndpoints(Array.isArray(encodedEndpoints) ? encodedEndpoints as CompanionEndpoint[] : undefined);
+  const lan = endpoints.find((endpoint) => endpoint.kind === "lan" || endpoint.kind === "bonjour");
+  const tailnet = endpoints.find((endpoint) => endpoint.kind === "tailnet");
+  const hosted = endpoints.filter((endpoint) => endpoint.kind === "hosted");
+  const descriptor = linkField(c.pairingLink, "e2e") as { r?: unknown[] } | null;
+  const relay = descriptor?.r?.length ? state.e2e?.relay : null;
   const copy = () => {
     void copyText(c.pairingLink ?? "").then(() => {
       setCopied(true);
@@ -52,12 +65,13 @@ export function PhonePairingQr({ c, signedIn }: { c: PhoneSetupController; signe
       </div>
       <p className="mt-4 text-[13px] text-ink-secondary">{t("phone.code.e2e.scan", { app: productName() })}</p>
       <div className="mt-5 w-full px-2">
-        <RouteRow on={Boolean(lan)} label={t("phone.code.e2e.wifi")} value={lan ?? ""} />
-        <RouteRow on={Boolean(state.tailnetName)} label={t("phone.code.e2e.tailscale")} value={state.tailnetName ?? t("phone.code.e2e.tailscaleOff")} />
+        {hosted.map((endpoint) => <RouteRow key={endpoint.url} on label="HTTPS" value={endpoint.url} />)}
+        {lan && <RouteRow on label={t("phone.code.e2e.wifi")} value={lan.url} />}
+        {tailnet && <RouteRow on label={t("phone.code.e2e.tailscale")} value={tailnet.url} />}
         <RouteRow
-          on={Boolean(relay)}
+          on={relay === "connected"}
           label={t("phone.code.e2e.relay")}
-          value={relay ? t("phone.code.e2e.fromAnywhere") : signedIn ? t("phone.code.e2e.relayOff") : t("phone.code.e2e.signIn")}
+          value={relay === "connected" ? t("phone.code.e2e.fromAnywhere") : signedIn ? t("phone.code.e2e.relayOff") : t("phone.code.e2e.signIn")}
         />
       </div>
       {c.localFallback && state.publicNetwork && (

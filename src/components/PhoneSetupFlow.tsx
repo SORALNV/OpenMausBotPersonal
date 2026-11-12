@@ -23,6 +23,7 @@ import { phonePairingLink } from "../../shared/pairing-link";
 import { codeUntil } from "@/lib/pairing-time";
 import {
   companionPairingAddressText,
+  companionCustomHostedRouteReady,
   companionPairingRoute,
   companionPairingRoutePin,
   companionPairingRoutePinAvailable,
@@ -349,7 +350,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         const explicitRoute = routeMode !== "automatic";
         const gate = phonePairingGate(accountOverride ?? account, started, explicitRoute);
         const remote = companionAccountBridge();
-        const prepare = remote?.prepare && shouldPrepareSecureAddress(routeMode, gate, accountOverride ?? account)
+        const prepare = remote?.prepare && !companionCustomHostedRouteReady(started)
+          && shouldPrepareSecureAddress(routeMode, gate, accountOverride ?? account)
           ? remote.prepare
           : null;
         if (gate !== "open") {
@@ -469,7 +471,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setAccountError(null);
     setSetupTimedOut(false);
     if (
-      phonePairingGate(account, state, false) === "open"
+      ["open", "start"].includes(phonePairingGate(account, state, false))
       || (account?.available && (account.status === "ready" || account.status === "connecting"))
     ) {
       setProvisioning(true);
@@ -789,7 +791,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     address: pairingRoute?.address,
     pairingPort: pairingRoute?.port ?? state?.port ?? 8810,
     addressText: pairingRoute ? companionPairingAddressText(pairingRoute) : undefined,
-    hostedReady: Boolean(state?.endpoints?.some((endpoint) => endpoint.kind === "hosted")),
+    hostedReady: Boolean(state && companionPairingRoute(state, "automatic")),
     localFallback: flow.localFallback,
     tailscaleFallback: flow.tailscaleFallback,
     tailscaleAvailable: Boolean(state && companionPairingRoute(state, "tailscale")),

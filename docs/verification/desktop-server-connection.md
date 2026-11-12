@@ -66,6 +66,38 @@ the server's pairing page; its URL/state helpers are checked separately with
 `node --test electron/environments.node-test.mjs`. Do not report this offline
 smoke as an authenticated connection to a customer's server.
 
+## Official desktop client interoperability
+
+Use an unmodified macOS release from
+[the upstream publisher](https://github.com/milind-soni/OpenMausBot/releases),
+not the Personal launcher or a locally rebuilt upstream checkout. Record the
+release version, archive SHA-256 and `codesign --verify --deep --strict` result.
+Launch it with a disposable `--user-data-dir` and `OMB_DATA_DIR`; do not change
+`HOME`, which can prevent macOS safeStorage from accessing the login keychain.
+Keep the Personal application's profile and server data untouched.
+
+In that official client, open **Server → Connect to a server…**, then the
+connection form. Paste the complete HTTPS pairing link, preserving the hostname
+and its dots. Before submitting, verify that the form names the server, shows
+**HTTPS**, and enables Connect. A successful descriptor lookup is not a pairing
+exchange: do not report it as an authenticated connection.
+
+For an exchange test, start `launchVerificationServer` from `scripts/control-omb.ts`
+with its `staticDir` argument set to a built Personal UI. Create a short-lived
+client-scoped pairing offer only on that isolated server, paste its full link in
+the official client's form and click Connect. Confirm navigation to the fixture
+workspace, a rendered bot list and `/api/auth/session` returning `kind: "session"`
+with `scopes: ["client"]`. Never print the code, session cookie or token. Quit the
+verification client and stop the fixture afterwards.
+
+Qualification on 2026-11-12 used the signed upstream arm64 release **0.1.154**
+(archive SHA-256 `18ae1df847f72cb213524762e326004a09d9242578d8638cfc7e35e8accc19fa`).
+The real custom HTTPS endpoint was recognized and Connect was enabled. The
+separate isolated fixture completed the official client's code exchange,
+workspace navigation and client-scoped session check. These are separate
+results: they do not establish an authenticated exchange over the public tunnel
+or native iPhone connectivity.
+
 ## User flow
 
 In a desktop build with this feature, choose the server dropdown above the

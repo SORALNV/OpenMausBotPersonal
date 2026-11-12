@@ -53,6 +53,26 @@ describe("companionPairingRoute", () => {
     }, "automatic")?.protectedEndpoint?.kind).toBe("hosted");
   });
 
+  it("prefers the advertised saved custom HTTPS entrance over the managed endpoint", () => {
+    const route = companionPairingRoute({
+      port: 8810,
+      customHostedUrl: "https://phone.example.test:8443",
+      endpoints: [
+        { url: "https://managed.example.test", kind: "hosted", priority: 0 },
+        { url: "https://phone.example.test:8443", kind: "hosted", priority: 100 },
+      ],
+    }, "automatic");
+    expect(companionPairingAddressText(route!)).toBe("https://phone.example.test:8443");
+    expect(decodedEndpoints(phonePairingLink({ ...route!, token })!)).toEqual([
+      { url: "https://phone.example.test:8443", kind: "hosted", priority: 0 },
+      { url: "https://managed.example.test", kind: "hosted", priority: 100 },
+    ]);
+  });
+
+  it("does not invent an advertised route from a saved custom entrance", () => {
+    expect(companionPairingRoute({ port: 8810, customHostedUrl: "https://phone.example.test" }, "automatic")).toBeNull();
+  });
+
   it("refuses automatic pairing when hosted HTTPS is not ready", () => {
     const source = {
       port: 8810,
