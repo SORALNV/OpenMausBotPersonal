@@ -26,18 +26,21 @@ It checks:
 - Desktop companion mode still sends a normalized six-digit code through
   `desktop-remote:pair`.
 - The 390px layout has no horizontal document overflow.
-- The hosted-workspace form accepts a hostname/address or pairing link and an
-  optional name. Cancellation retains input; confirmed connections preserve
-  the existing list and exclude the pairing code from saved connection data.
+- The server list opens the current connection modal, which accepts an address
+  or full pairing link and displays the name from the server descriptor.
+  Cancellation retains input; confirmed connections preserve the existing list
+  and exclude the pairing code from saved connection data. Two submits before
+  React renders the pending state still send only one connection request.
 - The production native menu's Connect item requests Settings; its saved
   workspace items dispatch fixed IDs. Settings can switch connections and
   cancel or confirm forgetting just one saved connection.
 - The local app opens Servers as a top-level Settings page, even
   before local provider onboarding. Native requests also clear stale Settings
   searches, so the requested page actually becomes visible.
-- A page outside the declared local origin receives no saved-list/mutation
-  bridge or Node access. Its workspace bridge contains only `state` (current
-  name, not the list) and `menu` (the user selects in Electron's native menu).
+- A page outside the declared local origin receives no `environments`,
+  `remoteClient`, `computerSharing` or Node bridge. Its workspace facade rejects
+  add/open calls without user activation. These preload checks do not replace
+  the production main process's independent sender checks.
 - Computer access starts off, selected folders start read-only, cancelled
   confirmation grants nothing, and Stop sharing immediately updates the state.
 - With the feature flag absent, no sharing controls appear, including through
@@ -55,7 +58,9 @@ temporary home, profile and server data. Expected fake IPC rejection messages
 appear in the log.
 
 This verifies actual renderer/preload dispatch, with fixture IPC handlers
-substituting native confirmation, server persistence and navigation. It does
+substituting native confirmation, server persistence and navigation. The app
+shell uses the supported compact-sidebar preference to avoid unrelated remote
+favicons; icon fetching and ancillary shell IPC services are not covered. It does
 not prove public DNS/TLS or a live computer-control session. The native
 connector portion does prove a real pairing exchange and cookie-authenticated
 registration; filesystem and MCP execution are covered below.
