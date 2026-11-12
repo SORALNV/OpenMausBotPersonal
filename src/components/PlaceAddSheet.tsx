@@ -56,6 +56,7 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
   const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const codeField = useRef<HTMLInputElement>(null);
   const workspaces = window.ogb?.workspaces;
   const canProbe = typeof workspaces?.probe === "function";
@@ -89,7 +90,8 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
   const found = probe?.outcome === "found" ? probe : null;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!address.trim() || busy || (canProbe && !found)) return;
+    if (!address.trim() || inFlight.current || (canProbe && !found)) return;
+    inFlight.current = true;
     track("rail_add", { step: "link" });
     setBusy(true);
     setFailure(null);
@@ -102,6 +104,7 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
     } catch (error) {
       setFailure(error instanceof Error && error.message ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : problemText("notAnAddress"));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
