@@ -520,7 +520,7 @@ export type AppSettingsSection =
   | "computer"
   | "logins"
   | "usage"
-  | "people" | "botAccess"
+  | "people" | "botAccess" | "botPermissions"
   | "activity"
   | "backups"
   | "workspaces"
