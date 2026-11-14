@@ -1,6 +1,7 @@
 {
   "permissionBoard.title": "Bot services & MCP permissions",
   "permissionBoard.intro": "Rows are bots; columns are connected services and MCP servers. Check a cell to allow access, or clear it to revoke. Changes use the same permissions as each bot’s individual settings.",
+  "permissionBoard.notes": "Notes",
   "permissionBoard.scopeNote": "New service grants allow standard read/write access. Existing read-only and tool-specific restrictions are preserved. This board manages bot-side permissions; it does not share another person’s private connections or credentials.",
   "permissionBoard.mcpNote": "Global MCP settings, delegation grants and tool-level restrictions still apply. Globally disabled, delegated or another bot’s servers cannot be changed here. Unavailable describes connection health; the check represents permission. The first MCP change creates an explicit selection. Stop a bot’s active turns before changing its MCP access.",
   "permissionBoard.searchBots": "Search bots or departments",

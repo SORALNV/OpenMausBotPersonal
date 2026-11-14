@@ -98,14 +98,13 @@ export function BotPermissionBoard() {
     }
   };
 
-  return <div data-permission-board className="flex min-w-0 flex-col gap-4">
+  return <div data-permission-board className="flex min-w-0 flex-col gap-2.5">
     <p className="text-[13px] leading-relaxed text-ink-secondary">{t("permissionBoard.intro")}</p>
-    <p className="rounded-lg bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary">{t("permissionBoard.scopeNote")}</p>
-    <div className="flex flex-wrap items-end gap-3">
-      <label className="flex min-w-40 flex-1 flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.searchBots")}
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="flex min-w-36 flex-1 flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.searchBots")}
         <input type="search" value={botQuery} onChange={event => setBotQuery(event.target.value)} className={cn(field, "w-full")} />
       </label>
-      <label className="flex min-w-40 flex-1 flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.searchResources")}
+      <label className="flex min-w-36 flex-1 flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.searchResources")}
         <input type="search" value={resourceQuery} onChange={event => setResourceQuery(event.target.value)} className={cn(field, "w-full")} />
       </label>
       <label className="flex flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.category")}
@@ -119,46 +118,49 @@ export function BotPermissionBoard() {
     </div>
     {loading && <p role="status" className="text-[13px] text-ink-secondary">{t("permissionBoard.loading")}</p>}
     {!loading && !servicesReady && <p role="alert" className="text-[13px] text-danger">{t("permissionBoard.inventoryError")}</p>}
-    {emailError && <p role="alert" className="text-[12px] text-ink-secondary">{t("permissionBoard.emailError")}</p>}
     {mcpError && <p role="alert" className="text-[13px] text-danger">{t("permissionBoard.mcpError")}</p>}
     {error && <p role="alert" className="text-[13px] text-danger">{error}</p>}
     <p role="status" aria-live="polite" className="text-[12px] text-ink-secondary">{notice || t("permissionBoard.autoSave")}</p>
     {bots.length === 0 ? <p className="text-[13px] text-ink-secondary">{t("permissionBoard.noBots")}</p>
       : shown.length === 0 ? !loading && <p className="text-[13px] text-ink-secondary">{t(allReady && resources.length === 0 ? "permissionBoard.noResources" : "permissionBoard.noMatch")}</p>
-      : <div role="region" aria-label={t("permissionBoard.table")} tabIndex={0} className="max-h-[65vh] min-w-0 overflow-auto rounded-xl border border-hairline/40 focus-visible:outline-2 focus-visible:outline-focus">
-        <table className="w-full border-separate border-spacing-0 text-[13px]">
+      : <div role="region" aria-label={t("permissionBoard.table")} tabIndex={0} className="max-h-[65vh] min-w-0 overflow-auto rounded-lg border border-hairline/40 focus-visible:outline-2 focus-visible:outline-focus">
+        <table className="w-full border-separate border-spacing-0 text-[12px]">
           <caption className="sr-only">{t("permissionBoard.table")}</caption>
           <thead><tr>
-            <th scope="col" className="sticky start-0 top-0 z-30 min-w-40 border-b border-hairline/40 bg-card px-3 py-3 text-start">{t("permissionBoard.bot")}</th>
-            {shown.map(resource => <th key={`${resource.kind}:${resource.key}`} scope="col" className="sticky top-0 z-20 min-w-36 max-w-52 border-b border-hairline/40 bg-card px-3 py-3 text-center">
+            <th scope="col" className="sticky start-0 top-0 z-30 min-w-32 border-b border-hairline/40 bg-card px-2 py-1.5 text-start">{t("permissionBoard.bot")}</th>
+            {shown.map(resource => <th key={`${resource.kind}:${resource.key}`} scope="col" className="sticky top-0 z-20 min-w-24 max-w-44 border-b border-hairline/40 bg-card px-2 py-1.5 text-center">
               <span className="block break-words font-medium">{resource.label}</span>
-              <span className="mt-1 block text-[11px] font-normal text-ink-secondary">{resource.kind === "mcp" ? "MCP" : t("permissionBoard.service")}</span>
+              <span className="block text-[10px] font-normal text-ink-secondary">{resource.kind === "mcp" ? "MCP" : t("permissionBoard.service")}</span>
             </th>)}
           </tr></thead>
           <tbody>{bots.map(bot => <tr key={bot.id} data-permission-bot={bot.id}>
-            <th scope="row" className="sticky start-0 z-10 max-w-52 border-b border-hairline/30 bg-card px-3 py-3 text-start font-medium">
+            <th scope="row" className="sticky start-0 z-10 max-w-44 border-b border-hairline/30 bg-card px-2 py-1 text-start font-medium">
               <span className="block truncate" title={bot.name}>{bot.name}</span>
-              {bot.section && <span className="block truncate text-[11px] font-normal text-ink-secondary">{bot.section}</span>}
-              {saving.has(bot.id) && <span className="block text-[11px] font-normal text-ink-secondary">{t("permissionBoard.saving")}</span>}
+              {bot.section && <span className="block truncate text-[10px] font-normal text-ink-secondary">{bot.section}</span>}
             </th>
             {shown.map(resource => {
               const cell = permissionCell(bot, resource, servers ?? []);
               const reason = cell.reason ? t(reasonKeys[cell.reason]) : "";
               const warning = cell.warning ? t(reasonKeys[cell.warning]) : "";
               const unavailable = loading || saving.has(bot.id) || (resource.kind === "service" ? !servicesReady : !mcpReady);
-              return <td key={`${resource.kind}:${resource.key}`} className="border-b border-hairline/30 px-3 py-2 text-center align-middle">
-                <label className={cn("flex min-h-11 flex-col items-center justify-center gap-1", !cell.reason && !unavailable && "cursor-pointer")} title={reason || warning || t("permissionBoard.toggle", { bot: bot.name, resource: resource.label })}>
+              return <td key={`${resource.kind}:${resource.key}`} className="border-b border-hairline/30 px-1 py-1 text-center align-middle">
+                <label className={cn("flex min-h-7 flex-col items-center justify-center gap-0.5", !cell.reason && !unavailable && "cursor-pointer")} title={reason || warning || t("permissionBoard.toggle", { bot: bot.name, resource: resource.label })}>
                   <input type="checkbox" checked={cell.checked} disabled={Boolean(cell.reason) || unavailable}
                     aria-label={t("permissionBoard.toggle", { bot: bot.name, resource: resource.label })}
-                    onChange={event => void apply(bot, resource, event.target.checked)} className="size-4 accent-accent disabled:cursor-not-allowed disabled:opacity-50" />
-                  {reason || warning ? <span className="max-w-40 text-[10px] leading-tight text-ink-secondary">{reason || warning}</span>
-                    : cell.checked && (cell.readOnly || cell.limited) ? <span className="text-[10px] text-ink-secondary">{t(cell.readOnly ? "permissionBoard.readOnly" : "permissionBoard.limited")}</span> : null}
+                    onChange={event => void apply(bot, resource, event.target.checked)} className="size-3.5 accent-accent disabled:cursor-not-allowed disabled:opacity-50" />
+                  {reason || warning ? <span className="max-w-32 text-[9px] leading-tight text-ink-secondary">{reason || warning}</span>
+                    : cell.checked && (cell.readOnly || cell.limited) ? <span className="text-[9px] text-ink-secondary">{t(cell.readOnly ? "permissionBoard.readOnly" : "permissionBoard.limited")}</span> : null}
                 </label>
               </td>;
             })}
           </tr>)}</tbody>
         </table>
       </div>}
-    <p className="text-[12px] leading-relaxed text-ink-secondary">{t("permissionBoard.mcpNote")}</p>
+    <details className="rounded-lg bg-inset px-3 py-1.5">
+      <summary className="cursor-pointer text-[12px] font-medium text-ink-secondary">{t("permissionBoard.notes")}</summary>
+      <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">{t("permissionBoard.scopeNote")}</p>
+      <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">{t("permissionBoard.mcpNote")}</p>
+      {emailError && <p role="alert" className="mt-1.5 text-[12px] text-ink-secondary">{t("permissionBoard.emailError")}</p>}
+    </details>
   </div>;
 }
