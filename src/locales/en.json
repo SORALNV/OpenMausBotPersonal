@@ -9,7 +9,6 @@
   "permissionBoard.category": "Show",
   "permissionBoard.all": "All",
   "permissionBoard.services": "Services",
-  "permissionBoard.service": "Service",
   "permissionBoard.refresh": "Refresh list",
   "permissionBoard.loading": "Loading permissions…",
   "permissionBoard.inventoryError": "Connected services could not be verified. Service changes are disabled. Choose Refresh list to retry.",

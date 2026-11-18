@@ -55,10 +55,12 @@ const render = async () => { await act(async () => root.render(createElement(Bot
 const cell = (bot: string, resource: string) => host.querySelector<HTMLInputElement>(`input[aria-label="${bot}: allow ${resource}"]`)!;
 const patches = () => f.api.mock.calls.filter(([, init]) => init?.method === "PATCH");
 
-it("renders all bots as rows and connected services and MCP as columns", async () => {
+it("renders all bots as rows, with grouped service and MCP column bands", async () => {
   await render();
   expect(host.querySelectorAll("tbody tr")).toHaveLength(2);
-  expect(host.querySelectorAll("thead th")).toHaveLength(4);
+  expect(host.querySelectorAll("thead tr")[1]!.querySelectorAll("th")).toHaveLength(3);
+  expect(host.textContent).toContain("Services");
+  expect(host.textContent).toContain("MCP");
   expect(cell("Alpha", "Mail").checked).toBe(true);
   expect(cell("Beta", "Mail").checked).toBe(false);
   expect(cell("Alpha", "files").checked).toBe(true);

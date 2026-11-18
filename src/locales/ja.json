@@ -9,7 +9,6 @@
   "permissionBoard.category": "表示対象",
   "permissionBoard.all": "すべて",
   "permissionBoard.services": "サービス",
-  "permissionBoard.service": "サービス",
   "permissionBoard.refresh": "一覧を更新",
   "permissionBoard.loading": "権限の一覧を読み込み中…",
   "permissionBoard.inventoryError": "接続済みサービスを確認できません。サービスの変更を停止しています。「一覧を更新」で再試行してください。",

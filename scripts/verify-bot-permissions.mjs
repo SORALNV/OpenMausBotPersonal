@@ -44,7 +44,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     };
     const bot = async id => (await api("/api/bots?messages=0")).bots.find(row => row.id === id);
     const saved = id => JSON.parse(readFileSync(join(dataDir, "bots.json"), "utf8")).find(row => row.id === id);
-    const cell = (id, resource) => `(() => { const board = document.querySelector('[data-permission-board]'); const cols = [...board.querySelectorAll('thead th')].slice(1); const index = cols.findIndex(el => el.textContent.includes(${JSON.stringify(resource)})); if (index < 0) throw new Error('Missing column ' + ${JSON.stringify(resource)}); return board.querySelector('[data-permission-bot="${id}"]').querySelectorAll('input[type=checkbox]')[index]; })()`;
+    const cell = (id, resource) => `(() => { const board = document.querySelector('[data-permission-board]'); const cols = [...board.querySelectorAll('thead tr')[1].querySelectorAll('th')]; const index = cols.findIndex(el => el.textContent.includes(${JSON.stringify(resource)})); if (index < 0) throw new Error('Missing column ' + ${JSON.stringify(resource)}); return board.querySelector('[data-permission-bot="${id}"]').querySelectorAll('input[type=checkbox]')[index]; })()`;
     const checked = (id, resource) => evaluate(`${cell(id, resource)}.checked`);
     const ready = () => until(() => evaluate(`Boolean(document.querySelector('[data-permission-bot="${adaId}"] input[type=checkbox]:not(:disabled)'))`), "real board and authoritative inventory");
     const toggle = async (id, resource, expected) => {
@@ -102,10 +102,10 @@ if (process.versions.electron && process.argv.includes(flag)) {
     await until(() => evaluate("document.querySelectorAll('[data-permission-bot]').length === 1"), "bot search narrows rows");
     await fill(0, "");
     await fill(1, "Gmail");
-    await until(() => evaluate("document.querySelectorAll('[data-permission-board] thead th').length === 2"), "resource search narrows columns");
+    await until(() => evaluate("document.querySelectorAll('[data-permission-board] thead th').length === 3"), "resource search narrows columns");
     await fill(1, "");
     await evaluate("(() => { const el = document.querySelector('[data-permission-board] select'); el.value = 'mcp'; el.dispatchEvent(new Event('change', { bubbles: true })); })()");
-    await until(() => evaluate("document.querySelectorAll('[data-permission-board] thead th').length === 4"), "MCP category narrows columns");
+    await until(() => evaluate("document.querySelectorAll('[data-permission-board] thead th').length === 5"), "MCP category narrows columns");
     assert.equal(await evaluate("[...document.querySelectorAll('[data-permission-board] thead th')].some(el => el.textContent.includes('Gmail'))"), false);
     await screen("permissions-mcp-filter.png");
     await evaluate("(() => { const el = document.querySelector('[data-permission-board] select'); el.value = 'all'; el.dispatchEvent(new Event('change', { bubbles: true })); })()");

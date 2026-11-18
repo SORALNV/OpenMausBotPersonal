@@ -126,24 +126,34 @@ export function BotPermissionBoard() {
       : <div role="region" aria-label={t("permissionBoard.table")} tabIndex={0} className="max-h-[65vh] min-w-0 overflow-auto rounded-lg border border-hairline/40 focus-visible:outline-2 focus-visible:outline-focus">
         <table className="w-full border-separate border-spacing-0 text-[12px]">
           <caption className="sr-only">{t("permissionBoard.table")}</caption>
-          <thead><tr>
-            <th scope="col" className="sticky start-0 top-0 z-30 min-w-32 border-b border-hairline/40 bg-card px-2 py-1.5 text-start">{t("permissionBoard.bot")}</th>
-            {shown.map(resource => <th key={`${resource.kind}:${resource.key}`} scope="col" className="sticky top-0 z-20 min-w-24 max-w-44 border-b border-hairline/40 bg-card px-2 py-1.5 text-center">
-              <span className="block break-words font-medium">{resource.label}</span>
-              <span className="block text-[10px] font-normal text-ink-secondary">{resource.kind === "mcp" ? "MCP" : t("permissionBoard.service")}</span>
-            </th>)}
-          </tr></thead>
-          <tbody>{bots.map(bot => <tr key={bot.id} data-permission-bot={bot.id}>
-            <th scope="row" className="sticky start-0 z-10 max-w-44 border-b border-hairline/30 bg-card px-2 py-1 text-start font-medium">
+          <thead>
+            <tr>
+              <th scope="col" rowSpan={2} className="sticky start-0 top-0 z-30 min-w-32 border-b border-hairline/40 bg-card px-2 py-1.5 text-start">{t("permissionBoard.bot")}</th>
+              {shown.some(resource => resource.kind === "service") && <th scope="colgroup" colSpan={shown.filter(resource => resource.kind === "service").length} className="sticky top-0 z-20 h-6 border-b border-hairline/40 bg-card px-2 text-center text-[10px] font-medium uppercase tracking-wide text-ink-secondary">{t("permissionBoard.services")}</th>}
+              {shown.some(resource => resource.kind === "mcp") && <th scope="colgroup" colSpan={shown.filter(resource => resource.kind === "mcp").length} className="sticky top-0 z-20 h-6 border-b border-hairline/40 bg-card px-2 text-center text-[10px] font-medium uppercase tracking-wide text-ink-secondary">MCP</th>}
+            </tr>
+            <tr>
+              {shown.map(resource => <th key={`${resource.kind}:${resource.key}`} scope="col" className="sticky top-6 z-20 min-w-24 max-w-44 border-b border-hairline/40 bg-card px-2 py-1.5 text-center">
+                <span className="block break-words font-medium">{resource.label}</span>
+              </th>)}
+            </tr>
+          </thead>
+          <tbody>{bots.map((bot, index) => {
+            const granted = shown.filter(resource => permissionCell(bot, resource, servers ?? []).checked).length;
+            const shade = index % 2 === 1 ? "bg-ink/[0.02]" : "";
+            return <tr key={bot.id} data-permission-bot={bot.id} className="group/row">
+            <th scope="row" className={cn("sticky start-0 z-10 max-w-44 border-b border-hairline/30 bg-card px-2 py-1 text-start font-medium group-hover/row:bg-ink/[0.05]", shade)}>
               <span className="block truncate" title={bot.name}>{bot.name}</span>
-              {bot.section && <span className="block truncate text-[10px] font-normal text-ink-secondary">{bot.section}</span>}
+              <span aria-hidden="true" className="block truncate text-[10px] font-normal text-ink-secondary">
+                {bot.section ? `${bot.section} · ` : ""}{granted}/{shown.length}
+              </span>
             </th>
             {shown.map(resource => {
               const cell = permissionCell(bot, resource, servers ?? []);
               const reason = cell.reason ? t(reasonKeys[cell.reason]) : "";
               const warning = cell.warning ? t(reasonKeys[cell.warning]) : "";
               const unavailable = loading || saving.has(bot.id) || (resource.kind === "service" ? !servicesReady : !mcpReady);
-              return <td key={`${resource.kind}:${resource.key}`} className="border-b border-hairline/30 px-1 py-1 text-center align-middle">
+              return <td key={`${resource.kind}:${resource.key}`} className={cn("border-b border-hairline/30 px-1 py-1 text-center align-middle group-hover/row:bg-ink/[0.05]", shade)}>
                 <label className={cn("flex min-h-7 flex-col items-center justify-center gap-0.5", !cell.reason && !unavailable && "cursor-pointer")} title={reason || warning || t("permissionBoard.toggle", { bot: bot.name, resource: resource.label })}>
                   <input type="checkbox" checked={cell.checked} disabled={Boolean(cell.reason) || unavailable}
                     aria-label={t("permissionBoard.toggle", { bot: bot.name, resource: resource.label })}
@@ -153,7 +163,7 @@ export function BotPermissionBoard() {
                 </label>
               </td>;
             })}
-          </tr>)}</tbody>
+          </tr>; })}</tbody>
         </table>
       </div>}
     <details className="rounded-lg bg-inset px-3 py-1.5">
