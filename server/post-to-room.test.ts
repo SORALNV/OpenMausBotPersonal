@@ -370,7 +370,7 @@ describe("a room turn and the teammates outside the room", () => {
 });
 
 describe("list_rooms discovery", () => {
-  it("lists the rooms the caller belongs to, whichever departments their members are in", async () => {
+  it("lists member rooms across departments only when cross-section access is granted", async () => {
     const scout = await makeBot("Scout", "Discovery");
     const mate = await makeBot("Scout Mate", "Discovery");
     const stranger = await makeBot("Stranger", "Elsewhere");
@@ -384,8 +384,12 @@ describe("list_rooms discovery", () => {
     const ids = rooms.map((room) => str(field(room as Record<string, unknown>, "id")));
     expect(ids).toContain(mine.id);
     expect(ids, "a room the caller is not in was listed").not.toContain(theirs.id);
-    expect(ids, "a room mixing departments is a room like any other").toContain(mixed.id);
-    expect(listed.body.unpostable).toEqual([]);
+    expect(ids).not.toContain(mixed.id);
+    expect((await api("PATCH", `/api/groups/${mixed.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } })).status).toBe(200);
+    const granted = await internal("GET", `/api/internal/rooms?fromBotId=${scout.id}&fromThreadId=${scout.threadId}`);
+    expect(granted.status).toBe(200);
+    expect(granted.body.rooms).toEqual(expect.arrayContaining([expect.objectContaining({ id: mixed.id })]));
+    expect(granted.body.unpostable).toEqual([]);
 
     const listedRoom = rooms.find((room) => str(field(room as Record<string, unknown>, "id")) === mine.id);
     expect(field(listedRoom as Record<string, unknown>, "members")).toEqual(["Scout", "Scout Mate"]);
@@ -526,6 +530,8 @@ describe("post_to_room", () => {
     const unmanaging = await makeCoordinator("Finance Chief", "Coordinators", ["Finance"]);
     const mixed = await makeRoom("Cross section", [inside.id, outside.id, unmanaging.id], "Section A");
 
+    expect((await post(inside.id, inside.threadId, mixed.id, "blocked before grant")).status).toBe(403);
+    expect((await api("PATCH", `/api/groups/${mixed.id}`, { permissionsVersion: 0, permissions: { crossSection: true, members: {} } })).status).toBe(200);
     const posted = await post(inside.id, inside.threadId, mixed.id, "hello other section");
     expect(posted.status, JSON.stringify(posted.body)).toBe(201);
     expect((await messagesOf(mixed.threadId)).some((m) => m.text === "hello other section" && m.from?.botId === inside.id)).toBe(true);
