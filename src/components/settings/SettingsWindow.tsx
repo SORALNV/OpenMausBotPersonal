@@ -73,7 +73,11 @@ export function SettingsWindow() {
   }, [anchor, target.page]);
   // A link, a notice or a search result that asks for what only Advanced mode shows turns Advanced on and lands there.
   useEffect(() => { if (target.advanced) setAdvancedMode(true); }, [target.advanced]);
-  useEffect(() => window.ogb?.onOpenAppSettings?.(() => setQuery("")), []);
+  useEffect(() => {
+    const offAppMenu = window.ogb?.onOpenAppSettings?.(() => setQuery(""));
+    const offServerMenu = window.ogb?.environments?.onOpenSettings?.(() => setQuery(""));
+    return () => { offAppMenu?.(); offServerMenu?.(); };
+  }, []);
   useEffect(markOpened, []);
 
   const hits = useMemo(() => searchSettings(query, ctx, (entry) => hitLabel({ entry, elsewhere: false, score: 0 }, place, ctx.desktop),
