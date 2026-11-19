@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {test} from 'vitest';
 import assert from 'node:assert/strict';
 import {desktopRuntimeRoute} from './shared-runtime-routing.mjs';
 const desktop={desktopChild:true,appPipe:true,args:['app-server','--analytics-default-enabled'],socketActive:true};
