@@ -16,7 +16,7 @@ it("keeps one visible conversation, queues background runs, preserves human inpu
   const sidecar = createServer(createProxyHandler({
     harnessPort: new URL(fixture.info.url).port ? Number(new URL(fixture.info.url).port) : 80,
     authenticate: token => token === phoneToken ? { id: "background-phone", cloudDesktopAccess: false, browserControlAccess: false } : null,
-    redeem: () => ({ error: "not used" }), serverName: () => "Background fixture",
+    redeem: () => ({ error: "not used", code: "pairing_not_open" }), serverName: () => "Background fixture",
   }));
   await new Promise<void>(resolve => sidecar.listen(0, "127.0.0.1", resolve));
   const phoneUrl = `http://127.0.0.1:${(sidecar.address() as { port: number }).port}`;

@@ -209,7 +209,6 @@ describe("CI outputs", () => {
       "scripts/testing/team-own-chat.e2e.test.ts",
       "scripts/testing/team-private-default-ui.e2e.test.ts",
       "scripts/testing/team-side-switch-ui.e2e.test.ts",
-      "server/settings-permissions-matrix.e2e.test.ts",
       "server/body-thread-guards.e2e.test.ts",
       "server/client-notifications.e2e.test.ts",
       "server/cloud-connections.e2e.test.ts",
