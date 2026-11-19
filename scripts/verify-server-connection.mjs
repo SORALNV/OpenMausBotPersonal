@@ -284,8 +284,18 @@ if (process.versions.electron && process.argv.includes(fixtureFlag)) {
     // Real app shell, Settings navigation and onboarding against a disposable
     // fake-engine server. Opening the page must not require local AI setup.
     win.setSize(1180, 850);
-    await win.loadURL(`${url}?app=1&desktop-settings=installations&share-computer=cloud`);
-    await until(() => evaluate("document.querySelector('[role=dialog]')?.textContent.includes('Connect to a server')"), "app opens top-level workspace Settings");
+    await win.loadURL(`${url}?app=1`);
+    // The profile is fresh, so the app meets the person first. Finish the real first-run welcome
+    // (its Chief dialog ignores clicks for its first 300 ms, hence the repeated press), so the
+    // deep link lands on that ordinary onboarded desktop instead of racing the welcome overlay.
+    await until(() => evaluate("Boolean(document.querySelector('[data-welcome]'))"), "fresh app shows first-run welcome");
+    await until(() => {
+      void evaluate("document.querySelector('[data-welcome] [data-primary]')?.click()");
+      return evaluate("!document.querySelector('[data-welcome]')");
+    }, "first-run welcome completed");
+    await until(() => evaluate("fetch('/api/config').then((response) => response.json()).then((config) => Boolean(config.onboarding?.completedAt)).catch(() => false)"), "welcome completion saved");
+    await win.loadURL(`${url}?app=1&desktop-settings=workspaces&share-computer=cloud`);
+    await until(() => evaluate("document.querySelector('[role=dialog][data-look=settings]')?.textContent.includes('Connect to a server')"), "app opens top-level workspace Settings");
     assert.equal(await evaluate("location.search.includes('desktop-settings')"), false, "Settings deep link consumed");
     await until(() => evaluate("document.body.textContent.includes('My cloud team')"), "app Settings loaded connections");
     await until(() => evaluate("document.body.textContent.includes('Computer access · My cloud team')"), "post-pair target opens its access controls");
@@ -297,18 +307,24 @@ if (process.versions.electron && process.argv.includes(fixtureFlag)) {
     await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     await until(() => evaluate("!document.querySelector('[data-place-add-sheet]') && Boolean(document.querySelector('[data-server-connect]'))"), "Escape closes connection modal without closing Settings");
     writeFileSync(join(output, "workspace-settings-in-app.png"), (await win.webContents.capturePage()).toPNG());
+    win.setSize(390, 780);
+    await until(() => evaluate("innerWidth === 390"), "narrow app viewport");
+    assert.equal(await evaluate("document.documentElement.scrollWidth <= innerWidth"), true, "app narrow layout overflow");
+    writeFileSync(join(output, "workspace-settings-narrow.png"), (await win.webContents.capturePage()).toPNG());
+    win.setSize(1180, 850);
+    await until(() => evaluate("innerWidth === 1180"), "wide app viewport restored");
     await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
-    await until(() => evaluate("!document.body.textContent.includes('Connect to a server')"), "Settings closes normally");
+    await until(() => evaluate("!document.querySelector('[data-settings-sheet]')"), "Settings closes normally");
     win.webContents.send("workspaces:open-settings");
-    await until(() => evaluate("document.querySelector('[role=dialog]')?.textContent.includes('Connect to a server')"), "native request reopens workspace Settings");
+    await until(() => evaluate("document.querySelector('[role=dialog][data-look=settings]')?.textContent.includes('Connect to a server')"), "native request reopens workspace Settings");
     await evaluate("(() => { const el = document.querySelector('input[aria-label=\"Search settings\"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, 'appearance'); el.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await until(() => evaluate("!document.body.textContent.includes('Connect to a server')"), "Settings search changes section");
+    await until(() => evaluate("Boolean(document.querySelector('[data-settings-results]')) && !document.querySelector('nav [data-settings-page]')"), "Settings search swaps the page list for its results");
     win.webContents.send("workspaces:open-settings");
-    await until(() => evaluate("document.body.textContent.includes('Connect to a server') && document.querySelector('input[aria-label=\"Search settings\"]').value === ''"), "native connection request clears Settings search");
+    await until(() => evaluate("document.querySelector('[role=dialog][data-look=settings]')?.textContent.includes('Connect to a server') && document.querySelector('input[aria-label=\"Search settings\"]').value === '' && !document.querySelector('[data-settings-results]') && Boolean(document.querySelector('nav [data-settings-page]'))"), "native connection request clears the stale Settings search");
 
     const remote = await open(false);
     assert.deepEqual(await remote.webContents.executeJavaScript("({ server: typeof window.ogb?.environments, companion: typeof window.ogb?.remoteClient, sharing: typeof window.ogb?.computerSharing, node: typeof window.require, workspaceMethods: Object.keys(window.ogb?.workspaces ?? {}) })"),
-      { server: "undefined", companion: "undefined", sharing: "undefined", node: "undefined", workspaceMethods: ["state", "menu", "line", "places", "open", "add", "probe", "look", "color", "recolor", "remove", "makeHome", "onChanged", "local", "onNewLocal"] });
+      { server: "undefined", companion: "undefined", sharing: "undefined", node: "undefined", workspaceMethods: ["state", "menu", "line", "places", "open", "add", "probe", "look", "color", "recolor", "remove", "makeHome", "homeOffers", "onChanged", "local", "onNewLocal"] });
     assert.equal(await remote.webContents.executeJavaScript("window.ogb.workspaces.add('link', 'https://other.fixture.example').then(() => false, error => error.message === 'Choose what to add.')"), true, "remote page cannot add without user activation");
     assert.equal(await remote.webContents.executeJavaScript("window.ogb.workspaces.open('cloud').then(() => false, error => error.message === 'Choose a place to open it.')"), true, "remote page cannot switch without user activation");
     assert.deepEqual(blockedRequests, [], "unexpected external request attempted");
@@ -331,9 +347,9 @@ if (process.versions.electron && process.argv.includes(fixtureFlag)) {
       assert.equal(sharing.state(nativeEnv.id).enabled, false);
     } finally { sharing.close(); }
     const receipt = { passed: true, renderer: ["RemoteComputerSection", "ConnectedWorkspacesSettings", "OwnServerLink", "DesktopWorkspaceSwitcher"], preload: "electron/preload.cjs", calls, probes,
-      checks: ["full custom HTTPS link unchanged", "pending submit disabled", "cancel reset", "rejection and retry", "companion six-digit routing", "390px overflow", "remote-safe bridge", "native connect menu item requests Settings", "modal public HTTP rejection", "descriptor-derived server name", "modal pending/cancel/error/retry", "modal Escape preserves Settings", "remote activation required for add/open", "pairing code excluded from saved list", "switch local/cloud", "cancel/confirm forget", "real app Settings deep link", "native Settings event and search reset", "feature-off hides sharing controls and stale deep link", "explicit opt-in enables fixture sharing", "sharing off by default", "read-only folder selection", "cancel/save sharing", "immediate revoke", "post-pair access deep link", "no sharing bridge in remote renderer"],
+      checks: ["full custom HTTPS link unchanged", "pending submit disabled", "cancel reset", "rejection and retry", "companion six-digit routing", "390px overflow", "remote-safe bridge", "native connect menu item requests Settings", "modal public HTTP rejection", "descriptor-derived server name", "modal pending/cancel/error/retry", "modal Escape preserves Settings", "remote activation required for add/open", "pairing code excluded from saved list", "switch local/cloud", "cancel/confirm forget", "first-run welcome completed through its own controls", "real app Settings deep link", "app Settings connections reachable top-level", "post-pair access deep link", "app Settings 390px overflow", "native Settings event and search reset", "feature-off hides sharing controls and stale deep link", "explicit opt-in enables fixture sharing", "sharing off by default", "read-only folder selection", "cancel/save sharing", "immediate revoke", "no sharing bridge in remote renderer"],
       nativeConnector: "Real HttpOnly pairing cookie → session.defaultSession.fetch → real fixture registration → revoke",
-      limitation: "UI IPC replaces native dialogs, workspace persistence and navigation. Modal discovery uses real probeServer with synthetic descriptors for fixture-only HTTPS hosts, not public DNS/TLS. App shell uses the supported compact sidebar preference, avoiding unrelated external app favicons; ancillary shell IPC services are not covered. Native sharing authentication tested against isolated HTTP server; no live screen control or packaged client tested." };
+      limitation: "UI IPC replaces native dialogs, workspace persistence and navigation. Modal discovery uses real probeServer with synthetic descriptors for fixture-only HTTPS hosts, not public DNS/TLS. App shell uses the supported compact sidebar preference, avoiding unrelated external app favicons; ancillary shell IPC services are not covered. The first-run welcome and all clicks are driven programmatically, not with a physical mouse or keyboard. Native sharing authentication tested against isolated HTTP server; no live screen control or packaged client tested." };
     writeFileSync(join(output, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
     console.log(JSON.stringify(receipt));
     app.exit(0);

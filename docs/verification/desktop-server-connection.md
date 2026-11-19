@@ -25,7 +25,8 @@ It checks:
   wrapper is removed from the visible message.
 - Desktop companion mode still sends a normalized six-digit code through
   `desktop-remote:pair`.
-- The 390px layout has no horizontal document overflow.
+- The 390px layout has no horizontal document overflow, also with the app's
+  Settings open on its servers page.
 - The server list opens the current connection modal, which accepts an address
   or full pairing link and displays the name from the server descriptor.
   Cancellation retains input; confirmed connections preserve the existing list
@@ -34,9 +35,10 @@ It checks:
 - The production native menu's Connect item requests Settings; its saved
   workspace items dispatch fixed IDs. Settings can switch connections and
   cancel or confirm forgetting just one saved connection.
-- The local app opens Servers as a top-level Settings page, even
-  before local provider onboarding. Native requests also clear stale Settings
-  searches, so the requested page actually becomes visible.
+- A fresh local app finishes its real first-run welcome through its own
+  controls, then This app → Your computers (Advanced) is its connection
+  surface, even before local provider onboarding. Native requests also clear
+  stale Settings searches, so the requested page actually becomes visible.
 - A page outside the declared local origin receives no `environments`,
   `remoteClient`, `computerSharing` or Node bridge. Its workspace facade rejects
   add/open calls without user activation. These preload checks do not replace
