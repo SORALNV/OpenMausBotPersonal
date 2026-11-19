@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const flag = "--omb-bot-permissions-fixture";
+process.env.VITE_OMB_PERSONAL = "1";
 
 if (process.versions.electron && process.argv.includes(flag)) {
   const { app, BrowserWindow, session } = await import("electron");
@@ -26,7 +27,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     const win = new BrowserWindow({ show: false, width: 1180, height: 900, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
     const errors = [];
     win.webContents.on("console-message", event => { if (event.level === "error") errors.push(event.message); });
-    const evaluate = code => win.webContents.executeJavaScript(code);
+    const evaluate = async code => { try { return await win.webContents.executeJavaScript(code); } catch (error) { console.error("evaluate failed:", String(error?.message ?? error), "for", code.slice(0, 160)); throw error; } };
     const until = async (check, description) => {
       for (let attempt = 0; attempt < 500; attempt++) {
         if (await check()) return;
@@ -62,10 +63,10 @@ if (process.versions.electron && process.argv.includes(flag)) {
     for (const advanced of [false, true]) {
       await win.loadURL(`${url}?advanced=${advanced ? "1" : "0"}`);
       await ready();
-      const labels = await evaluate("window.fixtureLabels");
-      await evaluate(`${nav(labels.general)}.click()`);
+      const labels = await evaluate("window.fixturePages");
+      await evaluate(`document.querySelector('button[data-settings-page=${JSON.stringify(labels.elsewhere)}]').click()`);
       await until(() => evaluate("!document.querySelector('[data-permission-board]')"), "navigate away through Settings tab");
-      await evaluate(`${nav(labels.permissions)}.click()`);
+      await evaluate(`document.querySelector('button[data-settings-page=${JSON.stringify(labels.permissions)}]').click()`);
       await ready();
       receipts.push({ mode: advanced ? "advanced" : "simple", tabNavigation: true });
       if (!advanced) await screen("permissions-simple.png");
@@ -158,12 +159,12 @@ if (process.versions.electron && process.argv.includes(flag)) {
       resolveId(id) { if (id === "virtual:bot-permissions") return `\0${id}`; },
       load(id) {
         if (id !== "\0virtual:bot-permissions") return;
-        return `import React, { useEffect } from 'react'; import { createRoot } from 'react-dom/client'; import { StoreProvider, useStore } from '/src/state/store.tsx'; import { SettingsModal } from '/src/components/SettingsModal.tsx'; import { useOwnerOrAdmin } from '/src/lib/use-owner-or-admin.ts'; import { loadLocale, t } from '/src/lib/i18n.ts'; import '/src/styles.css'; await loadLocale(new URLSearchParams(location.search).get('locale') || 'en'); localStorage.setItem('omb-analytics-opt-out', '1'); localStorage.setItem('omb-advanced-mode', new URLSearchParams(location.search).get('advanced') || '0'); window.fixtureLabels = { general: t('settings.section.general'), permissions: t('permissionBoard.title') }; function Fixture() { const { state, dispatch } = useStore(); const allowed = useOwnerOrAdmin(); useEffect(() => { if (state.bots.length && state.config && allowed) dispatch({type:'toggleAppSettings', open:true, section:'botPermissions'}); }, [Boolean(state.bots.length && state.config && allowed)]); return state.appSettingsOpen ? React.createElement(SettingsModal) : null; } createRoot(document.getElementById('root')).render(React.createElement(StoreProvider, null, React.createElement(Fixture)));`;
+        return `import React, { useEffect } from 'react'; import { createRoot } from 'react-dom/client'; import { StoreProvider, useStore } from '/src/state/store.tsx'; import { SettingsModal } from '/src/components/SettingsModal.tsx'; import { useOwnerOrAdmin } from '/src/lib/use-owner-or-admin.ts'; import { loadLocale, t } from '/src/lib/i18n.ts'; import '/src/styles.css'; await loadLocale(new URLSearchParams(location.search).get('locale') || 'en'); localStorage.setItem('omb-analytics-opt-out', '1'); localStorage.setItem('omb-advanced-mode', new URLSearchParams(location.search).get('advanced') || '0'); window.fixturePages = { elsewhere: 'ai', permissions: 'permissions' }; function Fixture() { const { state, dispatch } = useStore(); const allowed = useOwnerOrAdmin(); useEffect(() => { if (state.bots.length && state.config && allowed) dispatch({type:'toggleAppSettings', open:true, section:'botPermissions'}); }, [Boolean(state.bots.length && state.config && allowed)]); return state.appSettingsOpen ? React.createElement(SettingsModal) : null; } createRoot(document.getElementById('root')).render(React.createElement(StoreProvider, null, React.createElement(Fixture)));`;
       },
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           if (req.url?.split("?")[0] !== "/__bot-permissions.html") return next();
-          void server.transformIndexHtml(req.url, '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Isolated bot permissions</title></head><body class="bg-app"><div id="root"></div><script type="module" src="/@id/virtual:bot-permissions"></script></body></html>').then(html => { res.setHeader("content-type", "text/html"); res.end(html); }).catch(next);
+          void server.transformIndexHtml(req.url, '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Isolated bot permissions</title><script>window.__vite_import_meta_env__ = Object.assign(window.__vite_import_meta_env__ || {}, { VITE_OMB_PERSONAL: "1" }); window.ogb = { companion: {} };</script></head><body class="bg-app"><div id="root"></div><script type="module" src="/@id/virtual:bot-permissions"></script></body></html>').then(html => { res.setHeader("content-type", "text/html"); res.end(html); }).catch(next);
         });
       },
     }] });

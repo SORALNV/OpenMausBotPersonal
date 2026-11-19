@@ -284,7 +284,7 @@ if (process.versions.electron && process.argv.includes(fixtureFlag)) {
     // Real app shell, Settings navigation and onboarding against a disposable
     // fake-engine server. Opening the page must not require local AI setup.
     win.setSize(1180, 850);
-    await win.loadURL(`${url}?app=1&desktop-settings=workspaces&share-computer=cloud`);
+    await win.loadURL(`${url}?app=1&desktop-settings=installations&share-computer=cloud`);
     await until(() => evaluate("document.querySelector('[role=dialog]')?.textContent.includes('Connect to a server')"), "app opens top-level workspace Settings");
     assert.equal(await evaluate("location.search.includes('desktop-settings')"), false, "Settings deep link consumed");
     await until(() => evaluate("document.body.textContent.includes('My cloud team')"), "app Settings loaded connections");
