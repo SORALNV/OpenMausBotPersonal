@@ -12475,8 +12475,7 @@ ROUTES.push(createLiveRoutes({
 }));
 
 const toolResults = new ToolResults();
-nativeConnect = new NativeConnect(join(DATA_DIR, "private"));
-ROUTES.push(nativeConnect.route);
+if (process.platform !== "win32") { nativeConnect = new NativeConnect(join(DATA_DIR, "private")); ROUTES.push(nativeConnect.route); }
 yourComputerSettings = new YourComputerSettings(join(DATA_DIR, "private"));
 ROUTES.push(yourComputerSettingsRoute(yourComputerSettings));
 const { personalPrivacy, personalPrivacyRoute } = createPersonalPrivacyRoutes(DATA_DIR, id => Boolean(store.botByThread(id) || store.groupByThread(id)), id => routines?.runForThread(id) ?? null);

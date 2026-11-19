@@ -25,7 +25,7 @@ function fixture() {
   return { directory, state, native, transport, broker, run, receipts };
 }
 
-it("retains the destination's native conversation across delegated jobs and broker restart", async () => {
+it.skipIf(process.platform === "win32")("retains the destination's native conversation across delegated jobs and broker restart", async () => {
   const { broker, run, state, transport, directory, receipts } = fixture();
   const first = await run("request-one", "NC_AGY_FIRST");
   const next = new NativeConnect(state, transport);
@@ -36,7 +36,7 @@ it("retains the destination's native conversation across delegated jobs and brok
   expect((await broker.status("bot-a", "thread-a")).nativeConversationId).toBe(first.nativeId);
 });
 
-it("returns a completed receipt without executing the same delegated task twice", async () => {
+it.skipIf(process.platform === "win32")("returns a completed receipt without executing the same delegated task twice", async () => {
   const { run, receipts } = fixture();
   const first = await run("request-one", "same");
   const repeated = await run("request-one", "same");
@@ -44,13 +44,13 @@ it("returns a completed receipt without executing the same delegated task twice"
   expect(receipts()).toHaveLength(1);
 });
 
-it("keeps independent native histories for two OMB threads", async () => {
+it.skipIf(process.platform === "win32")("keeps independent native histories for two OMB threads", async () => {
   const { run } = fixture();
   const a = await run("request-a", "one"), b = await run("request-b", "two", "thread-b");
   expect(a.nativeId).not.toBe(b.nativeId);
 });
 
-it("blocks an uncertain job after failure, including after restart", async () => {
+it.skipIf(process.platform === "win32")("blocks an uncertain job after failure, including after restart", async () => {
   const { run, state, transport, directory, receipts } = fixture();
   await expect(run("request-one", "DISCONNECT")).rejects.toThrow();
   const restarted = new NativeConnect(state, transport);
@@ -59,7 +59,7 @@ it("blocks an uncertain job after failure, including after restart", async () =>
   expect(receipts()).toHaveLength(1);
 });
 
-it("rejects expired authority before any native prompt and after a completed cached receipt", async () => {
+it.skipIf(process.platform === "win32")("rejects expired authority before any native prompt and after a completed cached receipt", async () => {
   const { run, broker } = fixture();
   const denied = () => { throw Error("expired capability"); };
   await expect(run("request-one", "one", "thread-a", { requireActive: denied })).rejects.toThrow(/expired/u);
@@ -68,7 +68,7 @@ it("rejects expired authority before any native prompt and after a completed cac
   await expect(run("request-two", "two", "thread-a", { requireActive: denied })).rejects.toThrow(/expired/u);
 });
 
-it("owner Stop cancels only that thread's native job and settles broker busy state", async () => {
+it.skipIf(process.platform === "win32")("owner Stop cancels only that thread's native job and settles broker busy state", async () => {
   const { run, broker } = fixture();
   const pending = expect(run("request-hang", "HANG")).rejects.toThrow();
   await expect.poll(() => broker.snapshot().active).toBe(1);
@@ -77,7 +77,7 @@ it("owner Stop cancels only that thread's native job and settles broker busy sta
   expect(broker.snapshot().active).toBe(0);
 });
 
-it("does not let configuration change during native work", async () => {
+it.skipIf(process.platform === "win32")("does not let configuration change during native work", async () => {
   const { run, broker } = fixture();
   const pending = expect(run("request-hang", "HANG")).rejects.toThrow();
   await expect.poll(() => broker.snapshot().active).toBe(1);
