@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "./SettingsPrimitives";
@@ -27,9 +28,9 @@ export function NativeConnectSettings() {
   return <Card title="NativeConnect / Antigravityへの委託" subtitle="Botのモデル・役割・記憶はそのまま。必要な作業だけをAntigravityに任せ、Botが結果を読み取って返答します。">
     <fieldset disabled={busy || !settings} className="space-y-3">
       <label className="flex items-center gap-2"><input type="checkbox" aria-label="Antigravityへの委託を有効化" checked={settings?.enabled ?? false} onChange={event => setSettings(value => value && { ...value, enabled: event.target.checked })} />Antigravityへの委託を有効にする</label>
-      <label className="block text-sm">委託先のモデル<select className="mt-1 w-full rounded-lg border border-hairline bg-inset p-2 text-sm" aria-label="Antigravityの委託先モデル" value={settings?.model ?? ""} onChange={event => setSettings(value => value && { ...value, model: event.target.value })}>
+      <label className="block text-sm">委託先のモデル<Select className="mt-1 w-full" aria-label="Antigravityの委託先モデル" value={settings?.model ?? ""} onChange={event => setSettings(value => value && { ...value, model: event.target.value })}>
         {options.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
-      </select></label>
+      </Select></label>
       <div className="flex flex-wrap gap-2">
         <button className="rounded-lg border border-hairline px-3 py-2 text-sm disabled:opacity-50" onClick={() => void refresh()}>CLIのモデル一覧を取得</button>
         <button className="rounded-lg bg-accent px-4 py-2 text-sm text-accent-ink disabled:opacity-50" onClick={() => void save()}>Antigravityへの委託設定を保存</button>

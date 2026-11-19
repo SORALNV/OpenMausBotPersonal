@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "./SettingsPrimitives";
@@ -82,30 +83,30 @@ export function NativeOmpSettings({ onOpenThread }: { onOpenThread?: (botId: str
     {snapshot && <NativeDshDestination bindings={snapshot.bindings} bots={bots} onSaved={reload} />}
     <p className="text-xs text-ink-secondary">「OMP全体」は、このBotで設定したOMPプロファイル内のセッション一覧・作成・接続を扱う管理接続です。別プロジェクトの会話履歴は混ぜません。チャットからも、名前付きセッションの作成や、新しいOMBスレッドへの接続を依頼できます。</p>
     <fieldset disabled={busy || !snapshot} className="space-y-3">
-      <label className="block">Bot<select aria-label="OMP接続のBot" value={botId} onChange={event => { setBotId(event.target.value); setThreadId(bots.find(bot => bot.id === event.target.value)?.threadId ?? ""); setSessions([]); }}>
+      <label className="block">Bot<Select aria-label="OMP接続のBot" value={botId} onChange={event => { setBotId(event.target.value); setThreadId(bots.find(bot => bot.id === event.target.value)?.threadId ?? ""); setSessions([]); }}>
         <option value="">選択</option>{bots.filter(bot => snapshot?.bindings.some(binding => binding.enabled && binding.botId === bot.id)).map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
-      </select></label>
-      <label className="block">OMBスレッド<select aria-label="OMP接続のスレッド" value={threadId} onChange={event => setThreadId(event.target.value)}>
+      </Select></label>
+      <label className="block">OMBスレッド<Select aria-label="OMP接続のスレッド" value={threadId} onChange={event => setThreadId(event.target.value)}>
         <option value="">選択</option>{bots.find(bot => bot.id === botId)?.tasks?.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}
-      </select></label>
+      </Select></label>
       <button type="button" disabled={!threadId} onClick={() => void work(loadSessions)}>OMPセッション一覧を読み込む</button>
-      <label className="block">接続方式<select aria-label="OMP接続方式" value={kind} onChange={event => setKind(event.target.value as "session" | "manager" | "router")}>
+      <label className="block">接続方式<Select aria-label="OMP接続方式" value={kind} onChange={event => setKind(event.target.value as "session" | "manager" | "router")}>
         <option value="session">一つのOMPセッションに固定（スレッドと1対1）</option><option value="router">自由管理（セッションを選択・必要に応じて作成）</option><option value="manager">OMP全体（セッション管理）</option>
-      </select></label>
-      <label className="block">{kind === "manager" ? "管理会話として使うセッション" : "接続するOMPセッション"}<select aria-label="OMPセッション" disabled={kind === "router"} value={sessionId} onChange={event => setSessionId(event.target.value)}>
+      </Select></label>
+      <label className="block">{kind === "manager" ? "管理会話として使うセッション" : "接続するOMPセッション"}<Select aria-label="OMPセッション" disabled={kind === "router"} value={sessionId} onChange={event => setSessionId(event.target.value)}>
         <option value="">現在の会話を使う</option>{sessions.map(session => <option key={session.id} value={session.id}>{session.name} — {session.id.slice(0, 8)}（{session.running ? "起動中" : "保存済み"}）</option>)}
         {sessionId && !sessions.some(session => session.id === sessionId) && <option value={sessionId}>{snapshot?.threadTargets?.[threadId]?.session.name ?? sessionId}</option>}
-      </select></label>
+      </Select></label>
       {kind === "router" && <div className="space-y-3">
         <p className="text-xs">依頼内容と直前の会話から担当を選びます。複合依頼は最大4段階を順に実行し、結果を引き継ぎます。既存セッションを優先し、自動作成は8件まで。表側のスレッドは増やしません。</p>
         <p>プロジェクトと既存セッションの対応</p>
         {projects.map((project, index) => <div key={index} className="space-y-2">
           <label>プロジェクト名<input aria-label={`振り分けプロジェクト名 ${index + 1}`} maxLength={120} value={project.name} onChange={event => setProjects(values => values.map((value, i) => i === index ? { ...value, name: event.target.value } : value))} /></label>
           <label>担当内容・呼び方<input aria-label={`振り分けの説明 ${index + 1}`} maxLength={1500} value={project.description} onChange={event => setProjects(values => values.map((value, i) => i === index ? { ...value, description: event.target.value } : value))} /></label>
-          <label>既存セッション<select aria-label={`振り分けセッション ${index + 1}`} value={project.sessionId} onChange={event => setProjects(values => values.map((value, i) => i === index ? { ...value, sessionId: event.target.value } : value))}>
+          <label>既存セッション<Select aria-label={`振り分けセッション ${index + 1}`} value={project.sessionId} onChange={event => setProjects(values => values.map((value, i) => i === index ? { ...value, sessionId: event.target.value } : value))}>
             <option value="">選択</option>{sessions.map(session => <option key={session.id} value={session.id}>{session.name} — {session.id.slice(0, 8)}</option>)}
             {project.sessionId && !sessions.some(session => session.id === project.sessionId) && <option value={project.sessionId}>{project.name} — {project.sessionId.slice(0, 8)}</option>}
-          </select></label>
+          </Select></label>
           <button type="button" onClick={() => setProjects(values => values.filter((_, i) => i !== index))}>振り分けから外す {project.name}</button>
         </div>)}
         <button type="button" disabled={projects.length >= 32} onClick={() => setProjects(values => [...values, { name: "", description: "", sessionId: "" }])}>振り分けプロジェクトを追加</button>
@@ -118,9 +119,9 @@ export function NativeOmpSettings({ onOpenThread }: { onOpenThread?: (botId: str
       <button type="button" disabled={!threadId} onClick={() => void save()}>このスレッドを接続</button>
       {onOpenThread && <button type="button" disabled={!threadId} onClick={() => onOpenThread(botId, threadId)}>選択したスレッドを開く</button>}
       <label className="block">新しいプロジェクト名<input aria-label="OMPプロジェクト名" maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
-      <label className="block">作成後の接続<select aria-label="OMP作成後の接続" value={destination} onChange={event => setDestination(event.target.value)}>
+      <label className="block">作成後の接続<Select aria-label="OMP作成後の接続" value={destination} onChange={event => setDestination(event.target.value)}>
         <option value="new-thread">新しいOMBスレッドを作って接続</option><option value="current">このOMBスレッドへ接続</option><option value="none">セッションを保存するだけ</option>
-      </select></label>
+      </Select></label>
       <button type="button" disabled={!threadId || !name.trim()} onClick={() => void create()}>名前付きOMPセッションを作成</button>
     </fieldset>
     {message && <p role="status" className="mt-3 text-sm">{message}</p>}

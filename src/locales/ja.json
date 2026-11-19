@@ -1,4 +1,8 @@
 {
+  "server.personal.googleChat.title": "Google Chat",
+  "server.personal.googleChat.monitor": "Google Chat監視",
+  "server.personal.googleChat.recovered": "Google Chatの監視が復旧しました。",
+  "server.personal.googleChat.attention": "Google Chatの監視に確認が必要です。{reason}。",
   "permissionBoard.title": "Botのサービス・MCP権限",
   "permissionBoard.intro": "行がBot、列が接続済みサービス・MCPです。チェックで利用を許可／解除します。個別のBot設定と同じ権限に反映されます。",
   "permissionBoard.notes": "注意事項",

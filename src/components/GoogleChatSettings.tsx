@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "./SettingsPrimitives";
@@ -51,9 +52,9 @@ export function GoogleChatSettings() {
   return <Card title="Google Chat連携" subtitle="連絡管理人が新たな対応の必要性を判定し、必要なときだけ短く通知します。">
     <div className="space-y-3">
       <p className="text-sm text-ink-secondary">対象は監視サーバーに登録したスレッドだけです。本文はこのMacで登録語句を置換してから、連絡管理人の通知判定へ渡します。本人に新たな返信・判断・予定確認が必要なときだけ短く知らせます。全文転送やGoogle Chatへの自動返信は行いません。未登録の個人情報は自動検出しません。</p>
-      <label className="block text-sm">新着を届けるボット<select aria-label="Google Chat接続先" className="mt-1 block w-full rounded-lg border border-hairline bg-inset p-2" value={botId} disabled={busy || !status} onChange={event => setBotId(event.target.value)}>
+      <label className="block text-sm">新着を届けるボット<Select aria-label="Google Chat接続先" className="mt-1 w-full" value={botId} disabled={busy || !status} onChange={event => setBotId(event.target.value)}>
         <option value="">ボットを選ぶ</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
-      </select></label>
+      </Select></label>
       <p role="status" className="text-sm">{busy ? "接続を設定中…" : status?.enabled ? `通知先登録済み／監視状態: ${status.state} / 受信位置 ${status.cursor}` : "未接続・停止中"}</p>
       {status?.enabled && <p className="text-sm">本文取得・マスク: {status.diagnostics?.body ? `${status.diagnostics.body.endedAt ? status.diagnostics.body.code === "OK" ? "完了" : "失敗" : "処理中"} / ${status.diagnostics.body.stage} / ${status.diagnostics.body.code ?? "待機"}${status.diagnostics.body.elapsedMs !== undefined ? ` / ${(status.diagnostics.body.elapsedMs / 1000).toFixed(1)}秒` : ""}` : "未確認（接続正常だけでは本文取得の成功を意味しません）"}</p>}
       <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-accent px-4 py-2 text-accent-ink" disabled={busy || checking || !status || !botId} onClick={() => void change(true)}>通知先を登録・状態確認</button>

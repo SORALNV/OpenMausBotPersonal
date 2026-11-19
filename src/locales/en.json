@@ -1,4 +1,8 @@
 {
+  "server.personal.googleChat.title": "Google Chat",
+  "server.personal.googleChat.monitor": "Google Chat monitor",
+  "server.personal.googleChat.recovered": "Google Chat monitoring has recovered.",
+  "server.personal.googleChat.attention": "Google Chat monitoring needs attention: {reason}.",
   "permissionBoard.title": "Bot services & MCP permissions",
   "permissionBoard.intro": "Rows are bots; columns are connected services and MCP servers. Check a cell to allow access, or clear it to revoke. Changes use the same permissions as each bot’s individual settings.",
   "permissionBoard.notes": "Notes",

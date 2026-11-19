@@ -1,5 +1,5 @@
-import { createReplyTargets } from "./host/reply-targets.ts";
-import { createGroupCreation } from "./host/group-creation.ts";
+import { createReplyTargets } from "./host/reply-targets.ts"; import { googleChatMonitorLine } from "./google-chat-monitor-lines.ts";
+import { createGroupCreation } from "./host/group-creation.ts"; import { personalInternalRoutes } from "./routes/personal-internal.ts";
 import { groupCanSpeak, groupCrossSection, groupMemberPermissions, parseGroupPermissions, permittedGroupResponders } from "../shared/group-permissions.ts";
 // Import first: it reads a Cloud home's secrets off the launcher's pipe before any module can start a process.
 import { BOOT_CLOUD_SECRETS } from "./cloud-secrets-boot.ts";
@@ -12512,15 +12512,14 @@ if (process.env.OMB_PERSONAL_BUILD === "1") {
       if (!bot || !store.taskByThread(botId, threadId)) throw new Error("Google Chat notification target is unavailable");
       store.appendMessage(threadId, { role: "bot", kind: "text", text, webhookPost: true, googleChatEventId: eventId });
       store.patchTask(botId, threadId, { unread: true });
-      notify({ kind: "done", botId, botName: bot.name, threadId, title: "Google Chat", body: text });
+      notify({ kind: "done", botId, botName: bot.name, threadId, title: serverLine(threadLanguage(threadId), "server.personal.googleChat.title"), body: text });
     },
     attention: (botId, threadId, status) => {
       if (status === "CONNECTED") return;
-      const reason: Record<string, string> = { FEED_TIMEOUT: "監視サーバーの応答期限超過", FEED_CONNECTION: "監視サーバーとの通信失敗", FEED_AUTH: "ローカル接続認証の失敗", FEED_HTTP: "監視サーバーのHTTPエラー", FEED_INVALID: "差分データの解析失敗", MASK_TIMEOUT: "ローカルマスクの期限超過", MASK_FAILED: "ローカルマスク失敗", CONTEXT_TIMEOUT: "スレッド確認の期限超過", CONTEXT_FAILED: "スレッドを確認できません", CLASSIFIER_TIMEOUT: "通知判定の期限超過", CLASSIFIER_FAILED: "通知判定に失敗しました。該当投稿は未処理のまま保持しています", QUEUE_FAILED: "通知処理の保存に失敗しました。該当投稿は未処理のまま保持しています", COLLECTOR_STALE: "管理ブラウザの収集更新が途絶えています", BROWSER_OFFLINE: "管理ブラウザが停止しています", LOGIN_REQUIRED: "大学アカウントの再ログインが必要です", CURSOR_RESET: "受信位置の再接続確認が必要です" };
-      const text = status === "OK" ? "Google Chatの監視が復旧したよ。" : `Google Chatの監視に確認が必要です。${reason[status] ?? "受信を確認できません"}。`;
+      const language = threadLanguage(threadId), text = googleChatMonitorLine(language, status);
       store.appendMessage(threadId, { role: "bot", kind: "text", text, webhookPost: true });
       const bot = store.bot(botId);
-      if (bot) notify({ kind: status === "OK" || status === "CONNECTED" ? "done" : "incident", botId, botName: bot.name, threadId, title: "Google Chat監視", body: status === "CONNECTED" ? "秋の交代スレッドとの接続を設定しました。" : text });
+      if (bot) notify({ kind: status === "OK" ? "done" : "incident", botId, botName: bot.name, threadId, title: serverLine(language, "server.personal.googleChat.monitor"), body: text });
     },
   });
   personalPrivacy.protectThread = threadId => googleChat?.protects(threadId) ?? false;
@@ -12927,55 +12926,56 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           throw Object.assign(new Error(TURN_ENDED_REFUSAL), { status: 401 });
         }
       };
-      if (method === "POST" && path === "/api/internal/mcp-access") {
-        const body = await readInternalBody();
-        return json(res, 200, mcpAccess.manage(internalSender.id, body));
-      }
-      const delegatedMcp = path.match(/^\/api\/internal\/delegated-mcp\/([a-z][a-z0-9_-]{0,31})$/u);
-      if (method === "POST" && delegatedMcp) {
-        const body = await readInternalBody(), controller = new AbortController();
-        const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.once("close", disconnect);
-        try {
-          const answer = await mcpAccess.rpc(internalSender.id, delegatedMcp[1]!, body, AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]), async (name, server) => (await withMcpSignIn({ [name]: server }, mcpOAuth))[name]!, () => internalCapabilityIsActive(internalCapability));
-          if (answer === undefined) { res.writeHead(202); res.end(); return; }
-          return json(res, 200, answer);
-        } finally { res.off("close", disconnect); }
-      }
-      if (path === "/api/internal/native-connect" && method === "POST") {
-        const body = await readInternalBody();
-        if (!nativeConnect?.enabled() || store.groupByThread(internalCapability.threadId) || internalSender.computer === "off") return json(res, 409, { error: "この会話ではNativeConnectを利用できません。" });
-        const scope = toolScopeForTurn(internalSender.id);
-        if (!allowsTool(scope, { kind: "mcp", server: "agents", name: "native_connect" })) return json(res, 403, { error: "このBotにはNativeConnectツールが許可されていません。" });
-        if (!body || typeof body !== "object" || Object.keys(body).some(key => !["action", "prompt"].includes(key))) return json(res, 400, { error: "委託の入力が不正です。" });
-        if (body.action === "status") return json(res, 200, await nativeConnect.status(internalSender.id, internalCapability.threadId));
-        if (body.action !== "run" || typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 100000) return json(res, 400, { error: "実行する依頼文を指定してください。" });
-        if (sourceApprovalMode(internalSender.id, internalCapability.threadId) !== "full" || narrowsNativeTools(scope)) return json(res, 403, { error: "CLIへの実作業の委託はフルアクセスかつネイティブツールの制限がない会話のみ対応します。権限は変更していません。" });
-        const nativeCall = new AbortController();
-        res.once("close", () => { if (!res.writableEnded) nativeCall.abort(); });
-        const requestId = directRequestOwners.get(internalCapability.threadId)?.messageId ?? internalCapability.generation;
-        const task = store.taskByThread(internalSender.id, internalCapability.threadId);
-        if (!task) return json(res, 409, { error: "委託元の会話を確認できません。" });
-        const cwd = task.cwd ?? internalSender.cwd ?? ensureTaskWorkspaceWithSkills(internalSender.id, internalCapability.threadId, []);
-        let progressId: string | undefined;
-        const turnId = liveTurnByThread.get(internalCapability.threadId);
-        const progress = (text: string) => {
-          if (!internalCapabilityIsActive(internalCapability)) return;
-          if (progressId) store.patchMessage(internalCapability.threadId, progressId, { text });
-          else progressId = store.appendMessage(internalCapability.threadId, { role: "bot", kind: "text", text,
-            ...(turnId ? { turnId } : {}), requestMessageId: requestId }).id;
-        };
-        try {
-          progress("Antigravityに依頼中");
-          const result = await nativeConnect.run({ botId: internalSender.id, threadId: internalCapability.threadId, requestId, cwd,
-            prompt: body.prompt, signal: nativeCall.signal, requireActive: requireActiveInternalCapability,
-            progress: event => { if (event.type === "tool") progress(`Antigravityに依頼中 · ${event.name}: ${event.state === "completed" ? "完了" : event.state === "failed" ? "失敗" : "実行中"}`); } });
-          progress(result.permissionNotice ? "Antigravityの応答を取得しました。CLIの許可に関する診断があります。" : "Antigravityの応答を取得しました。");
-          return json(res, 200, { ...result, source: "Antigravity CLI", interpretation: "委託先の出力です。確認できた結果を読み取り、通常のBotとして返答してください。" });
-        } catch (error) {
-          progress("Antigravityへの委託の完了を確認できませんでした。再送はしていません。");
-          return json(res, 409, { error: error instanceof Error ? error.message : "委託結果を確認できません。", automaticRetry: false });
-        }
-      }
+      if (await personalInternalRoutes(method, path, {
+        manageMcp: async () => {
+          const body = await readInternalBody();
+          return json(res, 200, mcpAccess.manage(internalSender.id, body));
+        },
+        delegatedMcp: async (name) => {
+          const body = await readInternalBody(), controller = new AbortController();
+          const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.once("close", disconnect);
+          try {
+            const answer = await mcpAccess.rpc(internalSender.id, name, body, AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]), async (name, server) => (await withMcpSignIn({ [name]: server }, mcpOAuth))[name]!, () => internalCapabilityIsActive(internalCapability));
+            if (answer === undefined) { res.writeHead(202); res.end(); return; }
+            return json(res, 200, answer);
+          } finally { res.off("close", disconnect); }
+        },
+        nativeConnect: async () => {
+          const body = await readInternalBody();
+          if (!nativeConnect?.enabled() || store.groupByThread(internalCapability.threadId) || internalSender.computer === "off") return json(res, 409, { error: "この会話ではNativeConnectを利用できません。" });
+          const scope = toolScopeForTurn(internalSender.id);
+          if (!allowsTool(scope, { kind: "mcp", server: "agents", name: "native_connect" })) return json(res, 403, { error: "このBotにはNativeConnectツールが許可されていません。" });
+          if (!body || typeof body !== "object" || Object.keys(body).some(key => !["action", "prompt"].includes(key))) return json(res, 400, { error: "委託の入力が不正です。" });
+          if (body.action === "status") return json(res, 200, await nativeConnect.status(internalSender.id, internalCapability.threadId));
+          if (body.action !== "run" || typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 100000) return json(res, 400, { error: "実行する依頼文を指定してください。" });
+          if (sourceApprovalMode(internalSender.id, internalCapability.threadId) !== "full" || narrowsNativeTools(scope)) return json(res, 403, { error: "CLIへの実作業の委託はフルアクセスかつネイティブツールの制限がない会話のみ対応します。権限は変更していません。" });
+          const nativeCall = new AbortController();
+          res.once("close", () => { if (!res.writableEnded) nativeCall.abort(); });
+          const requestId = directRequestOwners.get(internalCapability.threadId)?.messageId ?? internalCapability.generation;
+          const task = store.taskByThread(internalSender.id, internalCapability.threadId);
+          if (!task) return json(res, 409, { error: "委託元の会話を確認できません。" });
+          const cwd = task.cwd ?? internalSender.cwd ?? ensureTaskWorkspaceWithSkills(internalSender.id, internalCapability.threadId, []);
+          let progressId: string | undefined;
+          const turnId = liveTurnByThread.get(internalCapability.threadId);
+          const progress = (text: string) => {
+            if (!internalCapabilityIsActive(internalCapability)) return;
+            if (progressId) store.patchMessage(internalCapability.threadId, progressId, { text });
+            else progressId = store.appendMessage(internalCapability.threadId, { role: "bot", kind: "text", text,
+              ...(turnId ? { turnId } : {}), requestMessageId: requestId }).id;
+          };
+          try {
+            progress("Antigravityに依頼中");
+            const result = await nativeConnect.run({ botId: internalSender.id, threadId: internalCapability.threadId, requestId, cwd,
+              prompt: body.prompt, signal: nativeCall.signal, requireActive: requireActiveInternalCapability,
+              progress: event => { if (event.type === "tool") progress(`Antigravityに依頼中 · ${event.name}: ${event.state === "completed" ? "完了" : event.state === "failed" ? "失敗" : "実行中"}`); } });
+            progress(result.permissionNotice ? "Antigravityの応答を取得しました。CLIの許可に関する診断があります。" : "Antigravityの応答を取得しました。");
+            return json(res, 200, { ...result, source: "Antigravity CLI", interpretation: "委託先の出力です。確認できた結果を読み取り、通常のBotとして返答してください。" });
+          } catch (error) {
+            progress("Antigravityへの委託の完了を確認できませんでした。再送はしていません。");
+            return json(res, 409, { error: error instanceof Error ? error.message : "委託結果を確認できません。", automaticRetry: false });
+          }
+        },
+      }) !== PASS) return;
       if (await dispatchRoutes([personalPrivacy.internalRoute(internalCapability.threadId, requireActiveInternalCapability)], { req, res, url, path, method, auth, json, readBody: readInternalBody })) return;
       const botFolders = async () => ({ roots: messageFileRootsForThread(internalSender.id, internalCapability.threadId).filter((root) => root !== ATTACHMENTS_DIR), vmWorkspace: (await attachmentVmForTurn(internalCapability))?.workspaceDir ?? null }); if (await lentMcp.route({ method, path, req, res, json, turn: internalCapability, readBody: readInternalBody }) !== PASS || await internalToolRoutes({ method, path, res, json, botId: internalSender.id, threadId: internalCapability.threadId, readBody: readInternalBody, folders: botFolders }) !== PASS || await waitRoutes({ method, path, res, json, botId: internalSender.id, threadId: internalCapability.threadId, readBody: readInternalBody, ...waitTurnChecks(internalCapability, internalSender) }) !== PASS || await teamMessages.internal({ method, path, res, json, botId: internalSender.id, threadId: internalCapability.threadId, readBody: readInternalBody }) !== PASS || await devsReports.internal({ method, path, res, json, botId: internalSender.id, threadId: internalCapability.threadId, readBody: readInternalBody }) !== PASS || (computerAsks && await computerAsks.internal({ method, path, res, json, turn: internalCapability, readBody: readInternalBody }) !== PASS) || await cloudComputerResets.internal({ method, path, res, json, sender: internalSender, threadId: internalCapability.threadId, readBody: readInternalBody }) !== PASS || await meetingsHost.internal({ method, path, res, json, readBody: readInternalBody, bot: internalSender, threadId: internalCapability.threadId, active: () => internalCapabilityIsActive(internalCapability) }) !== PASS || await imageTools.internal({ method, path, res, json, readBody: readInternalBody, folders: botFolders, threadId: internalCapability.threadId, requireActive: requireActiveInternalCapability, personTurn: turnOrigin(internalCapability).kind === "user" || (Boolean(roomRun(internalCapability.generation)?.requestMessageId) && guestDrivenTurns.get(internalCapability.threadId) !== internalCapability.generation) }) !== PASS || await share.tool({ method, path, res, json, readBody: readInternalBody, bot: internalSender, threadId: internalCapability.threadId, roots: messageFileRootsForThread(internalSender.id, internalCapability.threadId).filter((root) => root !== ATTACHMENTS_DIR), actsForAdmin: teamConnections.actsForAdmin(internalCapability.threadId, internalCapability.generation), githubPerson: teamConnections.turnPerson(internalCapability.threadId, internalCapability.generation), actingName: CLOUD_TEAM ? teamHost.personName(actingPeople.requester(internalCapability.threadId, internalCapability.generation)) : undefined, personMessage: turnOrigin(internalCapability).kind === "user" ? store.messagesFor(internalCapability.threadId).find((line) => line.role === "user" && line.id === (directRequestOwners.get(internalCapability.threadId)?.messageId ?? roomRun(internalCapability.generation)?.requestMessageId))?.text ?? null : null, post: (text, template) => { const source = connectorThread(internalSender.id, internalCapability.threadId); return source ? store.appendMessage(internalCapability.threadId, { role: "bot", kind: "text", text, template, ...(source.group ? { from: { botId: internalSender.id, name: internalSender.name, color: internalSender.color } } : {}) }).id : null; } }) !== PASS) return; const callSignal = turnCallSignals.signal(internalCapability, res); if (await publishedPages.internal({ method, path, res, json, botId: internalSender.id, threadId: internalCapability.threadId, readBody: readInternalBody, requireActive: requireActiveInternalCapability, signal: callSignal, folders: botFolders, post: (text, publishedPage, bundle) => { const source = connectorThread(internalSender.id, internalCapability.threadId); return !source ? null : (bundle && publishedPages.show({ threadId: internalCapability.threadId, card: publishedPage, bundle, bot: internalSender })) || store.appendMessage(internalCapability.threadId, { role: "bot", kind: "text", text, publishedPage, ...(source.group ? { from: { botId: internalSender.id, name: internalSender.name, color: internalSender.color } } : {}) }).id; } }) !== PASS) return;
       const delegatedThisTurn = (taskId: string) => {

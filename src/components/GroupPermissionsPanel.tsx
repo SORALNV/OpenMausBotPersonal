@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { Settings } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
@@ -48,9 +49,9 @@ export function GroupPermissionsPanel({ group, onClose }: { group: Group; onClos
           const bot = state.bots.find(b => b.id === id); const p = permissions.members[id];
           return <fieldset key={id} aria-label={`${bot?.name ?? id} の権限`} className="rounded-xl border border-hairline p-3">
             <legend className="px-1 text-sm font-semibold">{bot?.name ?? id} <span className="font-normal text-ink-secondary">{bot?.section || "無所属"}</span></legend>
-            <label className="flex flex-wrap items-center justify-between gap-2 text-sm">会話への反応<select aria-label={`${bot?.name ?? id} の応答方法`} className="rounded-lg border border-hairline bg-raised px-2 py-1" value={p.response} onChange={e => patchMember(id, { response: e.target.value as GroupMemberPermissions["response"] })}>
+            <label className="flex flex-wrap items-center justify-between gap-2 text-sm">会話への反応<Select aria-label={`${bot?.name ?? id} の応答方法`} value={p.response} onChange={e => patchMember(id, { response: e.target.value as GroupMemberPermissions["response"] })}>
               <option value="inherit">グループの応答設定に従う</option><option value="mentions">メンションされたときだけ</option><option value="always">メンションなしでも反応</option><option value="off">発言しない（閲覧のみ）</option>
-            </select></label>
+            </Select></label>
             <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
               <label className="flex gap-2"><input type="checkbox" checked={p.post} onChange={e => patchMember(id, { post: e.target.checked })} />自発的な投稿</label>
               <label className="flex gap-2"><input type="checkbox" checked={p.mention} onChange={e => patchMember(id, { mention: e.target.checked })} />他Botをメンションで呼ぶ</label>

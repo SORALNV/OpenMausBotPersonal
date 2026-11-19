@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useState } from "react";
 import { api } from "@/state/store";
 import type { NativeOmpBinding } from "../../shared/native-omp";
@@ -26,7 +27,7 @@ export function NativeDshDestination({ bindings, bots, onSaved }: { bindings: Na
   return <details><summary>DeepseekHarness の接続先を追加</summary>
     <p>家庭内LANのSSHで標準Web版に接続します。接続先にOMB用のWebサービスを準備してください。</p>
     <fieldset disabled={busy} className="space-y-2">
-      <label className="block">接続するBot<select aria-label="DSH接続のBot" value={botId} onChange={event => setBotId(event.target.value)}><option value="">選択</option>{bots.filter(bot => !bindings.some(binding => binding.botId === bot.id)).map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
+      <label className="block">接続するBot<Select aria-label="DSH接続のBot" value={botId} onChange={event => setBotId(event.target.value)}><option value="">選択</option>{bots.filter(bot => !bindings.some(binding => binding.botId === bot.id)).map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</Select></label>
       <label className="block">LANのIPアドレス<input aria-label="DSH接続先IP" value={host} onChange={event => setHost(event.target.value)} /></label>
       <label className="block">SSHユーザー<input aria-label="DSH SSHユーザー" value={user} onChange={event => setUser(event.target.value)} /></label>
       <label className="block">Jetson上の作業フォルダー<input aria-label="DSH作業フォルダー" value={cwd} onChange={event => setCwd(event.target.value)} /></label>

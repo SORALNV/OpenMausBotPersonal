@@ -1,3 +1,4 @@
+import { Select } from "./Select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { preloadConnectedApps, type ConnectorInventory } from "@/lib/connected-apps";
@@ -108,11 +109,11 @@ export function BotPermissionBoard() {
         <input type="search" value={resourceQuery} onChange={event => setResourceQuery(event.target.value)} className={cn(field, "w-full")} />
       </label>
       <label className="flex flex-col gap-1 text-[12px] text-ink-secondary">{t("permissionBoard.category")}
-        <select value={category} onChange={event => setCategory(event.target.value as Category)} className={field}>
+        <Select value={category} onChange={event => setCategory(event.target.value as Category)} className={field}>
           <option value="all">{t("permissionBoard.all")}</option>
           <option value="service">{t("permissionBoard.services")}</option>
           <option value="mcp">MCP</option>
-        </select>
+        </Select>
       </label>
       <button type="button" className="ui-button" disabled={loading || saving.size > 0} onClick={() => { void load(); void refreshMcp(); }}>{t("permissionBoard.refresh")}</button>
     </div>
