@@ -58,7 +58,6 @@ if (process.versions.electron && process.argv.includes(flag)) {
       await evaluate("new Promise(resolve => { for (const animation of document.getAnimations()) { try { animation.finish(); } catch {} } requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))); })");
       writeFileSync(join(output, name), (await win.webContents.capturePage()).toPNG());
     };
-    const nav = label => `[...document.querySelectorAll('button')].find(el => el.textContent.trim() === ${JSON.stringify(label)})`;
     const receipts = [];
     for (const advanced of [false, true]) {
       await win.loadURL(`${url}?advanced=${advanced ? "1" : "0"}`);
