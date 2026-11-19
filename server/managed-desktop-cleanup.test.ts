@@ -67,6 +67,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
   }
   const context = vm.createContext({
     companyShutdown: false, providerInstancesChanging: new Set(),
+    nativeConnect: null, nativeOmp: null, directCodex: null,
     providerAuthSessions: { clearInstance() {} }, bus: { detach: (id: string) => detached.push(id) },
     liveTurnByThread: new Map(), stoppedTurnText: (_threadId: string, _turnId: string | undefined, cause: string) => cause,
     turnStops: { stopping: (threadId: string, _turnId: string | undefined, cause: string) => causes.push({ threadId, cause, interrupted: interruptCalls.includes(threadId) }) },

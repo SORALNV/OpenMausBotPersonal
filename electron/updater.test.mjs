@@ -8,6 +8,7 @@ import { cloudTarget } from "./cloud-account.mjs";
 import { myCloudOrigin, rememberedCloudHome, savedCloudHomeOrigin } from "./cloud-home.mjs";
 import { cloudPageSenderAllowed } from "./cloud-home.mjs";
 import { otherOwnClouds, ownCloud } from "./cloud-list.mjs";
+import { runtimeAppVersion } from "./runtime-resources.mjs";
 import environments from "./environments.cjs";
 import localOriginModule from "./local-origin.cjs";
 
@@ -55,7 +56,7 @@ function mainRule() {
     cloudAccount: { homeTarget: () => ({ origin: CLOUD }), state: () => ({ status: "connected", account: { id: "a1" } }), isOwnCloud: () => false },
     rememberedHome: null, savedCloudHomeOrigin, cloudSignInRestored: true,
     // ensureCloudAccount's world: a packaged app, and a sign-in client whose state the test sets.
-    app: { isPackaged: true, getPath: () => "/unused", getVersion: () => "1.0.0" }, process: { platform: "darwin", env: {} }, cloudTarget,
+    app: { isPackaged: true, getPath: () => "/unused", getVersion: () => "1.0.0" }, process: { platform: "darwin", env: {} }, cloudTarget, runtimeAppVersion,
     path: { join: (...parts) => parts.join("/") }, os: { hostname: () => "mac" }, shell: {}, safeStorage: {},
     createCloudAccountStore: () => ({}), cloudEncryption: {}, cloudAccountStore: () => ({}), cloudSync: { accountChanged: () => {} }, accounts: { tell: () => {} }, rememberCloudHome: () => {}, rememberedCloudHome, computerSharing: null, updatesConsent: null, botLink,
     sendUpdaterState: () => {}, refreshCloudMenus: () => {}, announceCloudReady: () => {}, installCloudPlanIpc: () => {},
