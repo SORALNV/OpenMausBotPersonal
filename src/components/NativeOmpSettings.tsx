@@ -1,4 +1,5 @@
 import { Select } from "./Select";
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "./SettingsPrimitives";
@@ -63,7 +64,7 @@ export function NativeOmpSettings({ onOpenThread }: { onOpenThread?: (botId: str
     await reload(); setMessage(kind === "router" ? "自由管理に切り替えました。実行時にセッションを選択・再利用し、必要なら作成します。" : `「${result.session?.name}」に接続しました。`);
   });
   const create = () => work(async () => {
-    if (!creation.current || creation.current.name !== name.trim() || creation.current.botId !== botId) creation.current = { botId, name: name.trim(), requestId: crypto.randomUUID() };
+    if (!creation.current || creation.current.name !== name.trim() || creation.current.botId !== botId) creation.current = { botId, name: name.trim(), requestId: randomUuid() };
     const request = creation.current;
     setMessage("名前付きのOMPセッションを作成・保存しています。");
     if (!request.session) request.session = (await api<{ session: NativeOmpSessionInfo }>("/api/native-omp/sessions", { method: "POST", timeoutMs: 130000, body: JSON.stringify({ botId, threadId, name: request.name, requestId: request.requestId }) })).session;
@@ -72,7 +73,7 @@ export function NativeOmpSettings({ onOpenThread }: { onOpenThread?: (botId: str
     if (destination !== "none") {
       setMessage("セッションを保存しました。共有接続を準備・確認しています。");
       const key = JSON.stringify([botId, threadId, destination, session.id]);
-      if (connection.current?.key !== key) connection.current = { key, requestId: crypto.randomUUID() };
+      if (connection.current?.key !== key) connection.current = { key, requestId: randomUuid() };
       const result = await api<{ threadId: string; session: NativeOmpSessionInfo }>("/api/native-omp/threads", { method: "POST", timeoutMs: 130000,
         body: JSON.stringify({ botId, threadId, kind: "session", sessionId: session.id, ...(destination === "new-thread" ? { newThreadTitle: request.name, requestId: connection.current.requestId } : {}) }) });
       await reload(); setThreadId(result.threadId); setMessage(`「${session.name}」を作成し、${destination === "new-thread" ? "新しい" : "この"}OMBスレッドへ接続しました。`);
