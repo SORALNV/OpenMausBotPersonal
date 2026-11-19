@@ -57,6 +57,8 @@ Use only mapped, tested commands:
 - [Profile proposal and credential-card lifecycle](proposal-cards.md)
 - [Conversation permission commands and cross-device wait notices](conversation-controls.md)
 - [Full Access without duplicate approvals](full-access.md)
+- [Bots changing app settings, and the guards Full access cannot skip](app-settings.md)
+- [Gmail draft creation, send approval and revision](gmail-drafts.md)
 - [Exact command allowlist UI and saved rules](command-allowlist.md)
 - [The safety floor: a never-list no grant can allow](safety-floor.md)
 - [Waiting for an occupied desktop](computer-wait.md)
@@ -75,6 +77,10 @@ Use only mapped, tested commands:
 - [Waits: tell me when, with no AI while waiting](waits.md)
 - [A new Cloud's first hour](first-hour.md)
 - [Chat widgets](widgets.md)
+- [Pages and apps in a room](room-pages.md)
+- [Published apps](published-apps.md)
+- [Included app hosting](included-hosting.md)
+- [The Inbox on every plan](inbox.md)
 - [Reactions](reactions.md)
 - [Chat widgets: prompts to try with a real bot](widget-prompts.md)
 - [Phone web app installation and safe areas](phone-web-app.md)
@@ -92,6 +98,7 @@ Use only mapped, tested commands:
 - [X URL reading through the Use AI Chrome profile](x-thread-reader.md)
 - [Codex helper event isolation](codex-helpers.md)
 - [Qwen model route selection](qwen-models.md)
+- [Kimi subscription and Platform model selection](kimi-models.md)
 - [Team backups](team-backups.md)
 - [Sharing a whole team](team-sharing.md)
 - [The organization library](org-library.md)
@@ -227,6 +234,11 @@ The [hosted Slack management fixture](hosted-slack-management.md) checks the
 agent settings link to Admin: hosted-only availability, the member-readable
 route module, and stale-response isolation.
 
+The [Slack for Team Clouds fixture](team-slack.md) checks a Slack message handed over with a member's own session:
+a channel's shared conversation, a direct message's private chat, who may ask and stop, and the signed reports a
+stand-in Admin takes; and the same on a My Cloud, where both are the owner's ordinary conversations. It reaches no
+Slack workspace and no real Admin.
+
 The [chat and settings polish fixture](chat-polish.md) exercises attachment
 galleries, opt-in video playback, persisted tool details, and responsive settings
 through the real renderer in an isolated fake-engine workspace.
@@ -333,6 +345,13 @@ The [Group and Goal Local VM recipe](group-local-vm.md) checks per-speaker
 desktop routing, cancellation, and computer authority cleanup.
 
 ## Evidence
+
+The [Gemini speech fixture](gemini-speech.md) checks write-only credentials,
+voice selection and WAV synthesis against an offline provider in an isolated
+server, with manual steps for real Google access and playback.
+The [DeepSeek speech fixture](deepseek-speech.md) checks the shared DeepSeek
+key, the Stella/Tide choice, WAV synthesis and DeepSeek transcription against an
+offline provider in an isolated server.
 
 The [persistence responsiveness benchmark](persistence-performance.md) measures
 synthetic message/log bursts and history scans, with isolated chat, visibility

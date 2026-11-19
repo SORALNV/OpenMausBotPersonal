@@ -58,12 +58,12 @@ describe("permissions matrix uses existing bot ceilings", () => {
     expect(permissionPatch(bot(), mcp("offline"), false, [], servers)).toEqual({ mcpServers: ["search", "files", "delegated"] });
   });
 
-  it("keeps delegation, foreign ownership and busy MCP rows read-only", () => {
+  it("keeps delegation and foreign ownership read-only while busy rows still save", () => {
     for (const [name, reason] of [["delegated", "delegated"], ["foreign", "otherBot"]]) {
       expect(permissionCell(bot(), mcp(name!), servers).reason).toBe(reason);
       expect(permissionPatch(bot(), mcp(name!), false, [], servers)).toBeNull();
     }
-    expect(permissionPatch(bot({ busy: true }), mcp("files"), false, [], servers)).toBeNull();
+    expect(permissionPatch(bot({ busy: true }), mcp("files"), false, [], servers)).toEqual({ mcpServers: ["search", "delegated", "offline"] });
     const disabled: PermissionResource = { kind: "mcp", key: "off", label: "Off", server: { name: "off", enabled: false } };
     expect(permissionCell(bot(), disabled, servers).reason).toBe("globallyOff");
   });

@@ -101,8 +101,8 @@ it("persists independent bot app/MCP switches and enforces their effective grant
     expect((await call(adaToken, "GMAIL_SEND_EMAIL")).result.isError).toBe(true);
     expect((await call(adaToken, "GOOGLECALENDAR_LIST_EVENTS")).result.isError).toBe(true);
     expect(apps.calls).toHaveLength(beforeDenied);
-    expect(await api("PATCH", `/api/bots/${ada.id}`, { mcpServers: [] }, 409)).toMatchObject({ error: "Stop this bot's turns before changing its MCP servers." });
-    expect(saved(ada.id).mcpServers).toEqual(["tasks"]);
+    await api("PATCH", `/api/bots/${ada.id}`, { mcpServers: [] });
+    expect(saved(ada.id).mcpServers).toEqual([]);
     await switchApp(ada.id, "gmail", false);
     expect((await call(adaToken, "GMAIL_FETCH_EMAILS")).result.isError).toBe(true);
     expect(apps.calls).toHaveLength(beforeDenied);

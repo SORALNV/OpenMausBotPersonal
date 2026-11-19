@@ -1,5 +1,6 @@
 import { groupCanSpeak, groupCrossSection, groupMemberPermissions } from "../../shared/group-permissions.ts";
 import { sameAudience } from "../bot-visibility.ts";
+import { isLinkedId } from "../bot-link/protocol.ts";
 import type { HandoffView, RoomAddress } from "../coordinator.ts";
 import { hasTeamAuthority, peerAllowed, reachRefusal, type LookedAfterBy } from "../peer-roster.ts";
 import type { BotRecord, GroupRecord, Store } from "../store.ts";
@@ -49,6 +50,8 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy,
     return undefined;
   }
   function roomHandoffProblem(node: Pick<HandoffView, "groupId" | "threadId" | "botId"> & Partial<Pick<HandoffView, "kind" | "id" | "origin">>, parent?: Pick<HandoffView, "groupId" | "threadId" | "botId">): string | undefined {
+    // A bot of the person's other place is no record here: whether it can be reached is the link's to say.
+    if (isLinkedId(node.botId)) return undefined;
     const group = node.groupId ? store.group(node.groupId) : undefined;
     const bot = store.bot(node.botId);
     if (!bot || bot.hidden) return "The addressed agent no longer exists";
@@ -71,7 +74,8 @@ export function createRoomAccess({ store, privateTo = () => null, lookedAfterBy,
     if (destinationRoom && !groupCanSpeak(destinationRoom, bot.id)) return "Speaking is disabled for this room member";
     if (destinationRoom && destinationRoom.memberIds.some(id => { const member = store.bot(id); return member && !sameAudience(bot.visibility, member.visibility); })) return "Room members no longer share the same audience";
     if (group && !groupCrossSection(group) && outsideSection(group, bot)) return "Destination room includes a member outside the agent's section";
-    if (parent) {
+    // Work the person's other place handed over the link has no sender here to check: the link itself admits it.
+    if (parent && !isLinkedId(parent.botId)) {
       const from = store.bot(parent.botId);
       const source = parent.groupId ? store.group(parent.groupId) : undefined;
       if (!from || from.hidden || (parent.groupId ? !source || !source.memberIds.includes(from.id) || !store.groupTaskByThread(source.id, parent.threadId) : !store.taskByThread(from.id, parent.threadId))) return "Source membership or task was removed";

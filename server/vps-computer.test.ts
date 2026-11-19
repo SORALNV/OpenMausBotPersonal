@@ -15,7 +15,7 @@ vi.mock("node:child_process", async () => ({
 
 vi.mock("./vps-ssh.ts", async () => ({
   ...(await vi.importActual<typeof import("./vps-ssh.ts")>("./vps-ssh.ts")),
-  ensureVpsSshMaster: vi.fn().mockResolvedValue(undefined),
+  ensureVpsSshMaster: vi.fn().mockResolvedValue(0),
 }));
 
 import {
@@ -1184,7 +1184,7 @@ describe("VPS computer", () => {
   });
 
   it("names the one way on that fits what Auto's VPS check found", () => {
-    const connection = "Check the VPS connection in Settings → API keys.";
+    const connection = "Check the VPS connection in Settings → AI → Other services.";
     expect(vpsUnavailableHint({ reachable: true })).toBe("Open Computer and enable Start VPS automatically, or choose Cloud computer to start it manually.");
     expect(vpsUnavailableHint({ reachable: false })).toBe(connection);
     expect(vpsUnavailableHint({ autoStartVps: true, reachable: true })).toBe(connection);

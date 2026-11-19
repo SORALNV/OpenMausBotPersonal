@@ -10,6 +10,7 @@ import { applySkinChoice, readSkinChoice } from "./lib/skins";
 import { applyChatWidth, readChatWidth } from "./lib/chat-width";
 import { applyFont, readFont } from "./lib/fonts";
 import { applySoftwareRendering } from "./lib/software-rendering";
+import { loadTheme, startTheme } from "./lib/theme/runtime";
 import { settleInterfaceMode } from "./lib/new-look";
 import { BrowserSignInPage } from "./pair/BrowserSignInPage";
 import { PairPage, TeamLeftPage } from "./pair/PairPage";
@@ -17,6 +18,7 @@ import { TEAM_LEFT_REFUSAL } from "../shared/cloud-hints";
 import { HomeScreen, SignedOutAtHome } from "./components/HomeScreen";
 import { PageBoundary } from "./components/PageBoundary";
 import { endedBeforeReload, forgetEndedSession } from "./lib/session-ended";
+import { signInGateShown } from "./lib/sign-in-gate";
 import "./styles.css";
 
 // Before first paint; settleInterfaceMode must run before applySkin writes omb-skin.
@@ -25,6 +27,7 @@ applySkinChoice(readSkinChoice());
 applyFont(readFont());
 applySoftwareRendering();
 applyChatWidth(readChatWidth());
+startTheme();
 const pageLanguage = loadPageLanguage();
 
 // The app is its own chunk, so these pages don't parse it. Everywhere else its fetch starts now, alongside the session
@@ -52,13 +55,18 @@ async function chooseRoot(): Promise<React.ReactNode> {
   const session = await readSessionState();
   if (session.kind === "unauthenticated") {
     await pageLanguage;
-    if (session.error === TEAM_LEFT_REFUSAL) return <TeamLeftPage team={await teamName()} />;
+    if (session.error === TEAM_LEFT_REFUSAL) {
+      signInGateShown("team_left");
+      return <TeamLeftPage team={await teamName()} />;
+    }
+    signInGateShown(endedBeforeReload() ? "session_ended" : "signed_out");
     const pair = <PairPage initialCode={null} reason={endedBeforeReload() ? t("pair.sessionEnded") : session.error} />;
     return home ? <SignedOutAtHome bridge={home} fallback={pair} /> : pair;
   }
   forgetEndedSession();
   if (session.kind === "session") rememberTeamSignIn(session.teamSignIn);
   if (session.kind === "loopback" && session.trust === "service") {
+    signInGateShown("service_trust");
     await pageLanguage;
     return <PairPage initialCode={null} reason={t("pair.serviceTrust")} />;
   }
@@ -67,6 +75,7 @@ async function chooseRoot(): Promise<React.ReactNode> {
     return <DesktopViewer />;
   }
   const { default: App } = await (appPage ?? loadApp());
+  void loadTheme();
   return <App />;
 }
 

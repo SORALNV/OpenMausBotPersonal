@@ -7,7 +7,7 @@ export type PermissionResource =
   | { kind: "service"; key: string; label: string }
   | { kind: "mcp"; key: string; label: string; server: McpServerSummary };
 
-export type PermissionReason = "busy" | "delegated" | "otherBot" | "globallyOff" | "unavailable" | "unknownGrant";
+export type PermissionReason = "delegated" | "otherBot" | "globallyOff" | "unavailable" | "unknownGrant";
 export interface PermissionCell {
   checked: boolean;
   reason?: PermissionReason;
@@ -31,7 +31,7 @@ export function permissionCell(bot: Bot, resource: PermissionResource, servers: 
   const reason: PermissionReason | undefined = server.bot && server.bot !== bot.id ? "otherBot"
     : server.delegated ? "delegated"
     : !server.enabled ? "globallyOff"
-    : bot.busy ? "busy" : undefined;
+    : undefined;
   return { checked, reason, ...(server.offFor?.includes(bot.id) ? { warning: "unavailable" as const } : {}) };
 }
 

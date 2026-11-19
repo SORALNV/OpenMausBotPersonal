@@ -23,6 +23,12 @@ import type { SecretCards } from "./secret-cards.ts";
 import type { TeamConnectionsHost } from "./team-connections-host.ts";
 
 export interface McpChatDeps {
+  /** The Personal fork's bot-scoped delegation store; absent on builds without it. */
+  delegated?: {
+    owns(name: string): boolean;
+    view(): { rules: Record<string, { tools: string[] } | undefined> };
+    permitted(botId: string, name: string, tool: string): boolean;
+  };
   store: Store;
   cfg: AppConfig;
   mcpOAuth: McpOAuthManager;
@@ -134,6 +140,16 @@ export function createMcpChat(deps: McpChatDeps) {
       const auth = mcpOAuth.authState(server.name, server.url);
       const listed = server.oauth ? { ...server, oauth: { ...server.oauth, redirectUri: mcpOAuthRedirectUri(server.url) } } : server;
       return auth === "none" ? listed : { ...listed, auth };
+    }).map((server) => {
+      const delegated = deps.delegated;
+      if (!delegated?.owns(server.name)) return server;
+      const bots = deps.store.bots
+        .filter(bot => !bot.hidden && (!bot.mcpServers || bot.mcpServers.includes(server.name)))
+        .flatMap(bot => {
+          const tools = delegated.view().rules[server.name]?.tools.filter(tool => delegated.permitted(bot.id, server.name, tool)) ?? [];
+          return tools.length ? [{ id: bot.id, tools }] : [];
+        });
+      return { ...server, delegated: { bots } };
     }).map(mcpServersHost.listing).map((server) => {
       const managedBy = mcpManagedBy(server.name, server);
       return managedBy ? { ...server, managedBy } : server;

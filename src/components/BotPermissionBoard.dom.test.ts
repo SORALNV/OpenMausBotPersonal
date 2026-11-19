@@ -119,21 +119,22 @@ it("serializes a bot's concurrent checkbox events while allowing another bot to 
   expect(patches().filter(([path]) => path === "/api/bots/a")).toHaveLength(1);
 });
 
-it("disables MCP changes for busy bots but keeps their service controls available", async () => {
+it("keeps both MCP and service controls available for a busy bot", async () => {
   saved[0] = makeBot("a", { busy: true }); f.state = { bots: structuredClone(saved) };
   await render();
-  expect(cell("Alpha", "files").disabled).toBe(true);
+  expect(cell("Alpha", "files").disabled).toBe(false);
   expect(cell("Alpha", "Mail").disabled).toBe(false);
-  expect(host.textContent).toContain("Stop active turns first");
 });
 
-it("rechecks a bot that became busy before the click and does not send an MCP mutation", async () => {
+it("saves a busy bot's MCP change for its next turn without disabling the cell", async () => {
   await render();
-  saved[0] = makeBot("a", { busy: true });
+  saved[0] = makeBot("a", { mcpServers: ["files", "notes"], busy: true });
+  f.state = { bots: structuredClone(saved) };
   await act(async () => cell("Alpha", "files").click());
-  expect(patches()).toHaveLength(0);
-  expect(cell("Alpha", "files").disabled).toBe(true);
-  expect(host.querySelector("[role=alert]")?.textContent).toContain("Stop active turns first");
+  expect(patches()).toHaveLength(1);
+  expect(cell("Alpha", "files").checked).toBe(false);
+  expect(saved[0]!.mcpServers).toEqual(["notes"]);
+  expect(host.textContent).toContain("takes effect from the next turn");
 });
 
 it("refresh retries an unavailable inventory without pretending grants were cleared", async () => {

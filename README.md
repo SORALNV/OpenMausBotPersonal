@@ -195,7 +195,7 @@ channel and its bots under a named context, then rename it or change its members
 
 ### ⚡ Fast decisions with Jev
 
-Add a Cloudflare Workers AI token with its account ID, a TypeSafe Jev key, or an OpenRouter key and model, in **Settings → Decision and extraction** and rooms set to **Auto** pick the bot
+Add a Cloudflare Workers AI token with its account ID, a TypeSafe Jev key, or an OpenRouter key and model, in **Settings › AI › Routing and extraction** and rooms set to **Auto** pick the bot
 that fits each un-mentioned message in a few hundred milliseconds, falling back to the room's lead whenever the decision model is off or unsure.
 See [docs/decision-model.md](docs/decision-model.md).
 
@@ -213,18 +213,15 @@ conversations, permissions, memory, or computer access. Browse the
 [open-source playbook repository](https://github.com/milind-soni/openmausbot-teams) or read its
 [portable format](https://github.com/milind-soni/openmausbot-teams/blob/main/FORMAT.md).
 
-### 🤝 Share a whole department
+### 🤝 Share a bot or a department
 
-Right-click a department and choose **Share department…** (or use **Templates → Share**) to save the whole department as one
-file: its bots with their instructions, pictures and skills, group chats, routines, shared instructions,
-Chief of Staff, connection slots and each bot's starter notes (untick them to leave them out). The dialog
-shows exactly what the file holds before you save it. Chat history, keys and passwords, model choices and
-computers never go in, and anything that looks like a secret is removed from the text. Whoever imports it
-gets new bots on Ask, skills switched off and routines paused. See [docs/team-sharing.md](docs/team-sharing.md).
-Desktops connected to an organization also get **Templates → From {Organization}**: the packages its Admin shares,
-added with one click, skills switched on. See [docs/org-library.md](docs/org-library.md).
-Your New bot defaults can travel too, as a **preset bot** that appears in New bot (in a team file, or on
-their own with **Share as preset…**). See [docs/presets.md](docs/presets.md).
+Ask a bot to share itself ("publish yourself to GitHub"), or open a department's **…** menu and choose **Share**. You
+get one card: the bots, their instructions, skills and pictures, group chats, routines (paused), the Chief of Staff and
+the apps they use, by name. Chats, memory, keys and connection addresses never go in. **Publish** sends it to the
+community repository on GitHub and gives you a link; **Save folder…** keeps it on your computer. Anyone adds it with
+**+ → Import…** and a link or a folder. See [docs/team-sharing.md](docs/team-sharing.md).
+Desktops connected to an organization also get the packages its Admin shares in **Templates**, added with one click,
+skills switched on. See [docs/org-library.md](docs/org-library.md).
 
 ### 🎧 Bots that talk back
 
@@ -350,7 +347,7 @@ See [Run OpenMausBot from scripts and CI](docs/headless-cli.md).
 | **Ubuntu 24.04** (x64) | [OpenMausBot-amd64.deb](https://github.com/milind-soni/OpenMausBot/releases/latest/download/OpenMausBot-amd64.deb) · [OpenMausBot.AppImage](https://github.com/milind-soni/OpenMausBot/releases/latest/download/OpenMausBot.AppImage) | Install the `.deb` with APT (recommended), or make the AppImage executable and run it. Beta; GNOME is the supported desktop. |
 
 See the [Ubuntu Desktop guide](docs/linux-desktop.md) for installation, capabilities, and troubleshooting.
-Any desktop build can also pair as a client to another Windows, macOS, or Ubuntu host over Tailscale; see [desktop-to-desktop companion mode](docs/desktop-companion.md).
+Any desktop build can also open the bots of another Windows, macOS, or Ubuntu computer over Tailscale; see [open one computer's bots from another computer](docs/desktop-companion.md).
 
 
 **From source:**
@@ -535,7 +532,7 @@ For a server on a VPS or an always-on computer, run `npx openmausbot serve`
 with one way in: `--public-url` behind your own cloudflared, Caddy or nginx,
 `--domain` for a certificate on your own domain, `--tailscale` for your
 tailnet, `--lan` for this network only, or `--tunnel` (after
-`npx openmausbot login`) for a free MausBot web address. It prints one
+`npx openmausbot account login`) for a free MausBot web address. It prints one
 pairing link; paste it into the desktop app under **＋ → Connect to a
 server**. The short path for each install method (npx, Docker, a service) is
 at the top of [docs/self-hosting.md](docs/self-hosting.md); a server from

@@ -10,7 +10,7 @@ import { emailAppCard, loadAppCards } from "./bot-settings/useBotApps";
 import { cn } from "@/lib/cn";
 
 const reasonKeys: Record<PermissionReason, LocaleKey> = {
-  busy: "permissionBoard.busy", delegated: "permissionBoard.delegated", otherBot: "permissionBoard.otherBot",
+  delegated: "permissionBoard.delegated", otherBot: "permissionBoard.otherBot",
   globallyOff: "permissionBoard.globallyOff", unavailable: "permissionBoard.unavailable", unknownGrant: "permissionBoard.unknownGrant",
 };
 
@@ -89,7 +89,7 @@ export function BotPermissionBoard() {
       const result = await api<{ bot: Bot }>(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(patch) });
       if (!result.bot || result.bot.id !== bot.id) throw new Error(t("permissionBoard.invalidResponse"));
       dispatch({ type: "botPatched", bot: result.bot });
-      setNotice(t("permissionBoard.saved", { bot: bot.name, resource: resource.label }));
+      setNotice(t("permissionBoard.saved", { bot: bot.name, resource: resource.label }) + (resource.kind === "mcp" && result.bot.busy ? " " + t("permissionBoard.nextTurn") : ""));
     } catch (cause) {
       setError(`${bot.name} · ${resource.label}: ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {

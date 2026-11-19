@@ -66,8 +66,10 @@ function install(target: Record<string, unknown> = {}, extra: Record<string, unk
   }));
   writeFileSync(join(root, "stable.json"), stableRecord(next.version, next.refs[0]!));
   const state = () => JSON.parse(readFileSync(join(fake, "state.json"), "utf8"));
-  const run = (args: string[] = [], options: { input?: string; env?: Record<string, string> } = {}) => {
-    const result = spawnSync("bash", [join(deploy, "update.sh"), ...args], {
+  const run = (args: string[] = [], options: { input?: string; env?: Record<string, string>; umask?: string } = {}) => {
+    const script = [join(deploy, "update.sh"), ...args];
+    const command = options.umask ? ["-c", `umask ${options.umask}; exec bash "$0" "$@"`, ...script] : script;
+    const result = spawnSync("bash", command, {
       encoding: "utf8", input: options.input ?? "", timeout: 60_000,
       env: {
         // sbin: sha256sum is /sbin/sha256sum on macOS.
@@ -170,6 +172,51 @@ describe.skipIf(!posix)("deploy/update.sh", () => {
     expect(failed.stdout).toContain("The update to 0.1.151 did not work: it kept stopping as it started (This data was written by a newer MausBot.).");
     expect(failed.said.at(-1)).toBe("Your server runs 0.1.150 again, with its data as it was before the update.");
     expect(tree(box.data)["started-by.txt"]).toBe("0.1.150\n0.1.150\n");
+  });
+
+  it("runs the new version's doctor on data that stops it from starting, and keeps the update when it then starts", () => {
+    const box = install({ behaviour: "repairable", doctor: "repairs" });
+    const done = box.run();
+    expect(done.status, done.stdout + done.stderr).toBe(0);
+    expect(done.said).toEqual([
+      "Downloading 0.1.151…",
+      "Stopping the server and copying its data aside…",
+      "Starting 0.1.151…",
+      "Waiting for it to answer and to be able to start bots…",
+      "Running 0.1.151's doctor on the data before going back…",
+      expect.stringMatching(/^The doctor repaired the data \(see .*\)\. Starting 0\.1\.151 once more…$/),
+      "Updated from 0.1.150 to 0.1.151.",
+      `The data from before the update is kept in the Docker volume ${box.copies()[0]} until the next update.`,
+      "To go back to it: ./update.sh --rollback",
+    ]);
+    // It kept stopping as it started, so it ran in its own container with the server stopped.
+    expect(box.state().doctorRuns).toEqual(["run"]);
+    expect(box.calls()).toContain("compose run --rm --no-deps -T omb openmausbot doctor --data --fix --json");
+    expect(box.state().containers.omb).toMatchObject({ image: NEW.id, status: "running" });
+    expect(box.env()).toBe(`${ENV}OMB_IMAGE=${NEW.refs[0]}\n`);
+  });
+
+  it("rolls back as before when the doctor repairs nothing, or the new version has none", () => {
+    for (const target of [{ behaviour: "crashes", doctor: "nothing" }, { behaviour: "crashes" }, { behaviour: "silent", doctor: "nothing" }]) {
+      const box = install(target);
+      const failed = box.run();
+      expect(failed.status, JSON.stringify(target)).toBe(1);
+      expect(failed.said).toContain("Running 0.1.151's doctor on the data before going back…");
+      expect(failed.stdout).not.toContain("once more");
+      expect(failed.said.at(-1)).toBe("Your server runs 0.1.150 again, with its data as it was before the update.");
+      expect(box.state().containers.omb.image).toBe(OLD.id);
+      // A server still up is asked in its own container; one that stopped, in a one-off container.
+      expect(box.state().doctorRuns).toEqual([target.behaviour === "silent" ? "exec" : "run"]);
+    }
+  });
+
+  it("rolls back when the version the doctor repaired still does not start", () => {
+    const box = install({ behaviour: "crashes", doctor: "repairs", lastWords: "still broken" });
+    const failed = box.run();
+    expect(failed.status).toBe(1);
+    expect(failed.stdout).toContain("once more");
+    expect(failed.stdout).toContain("The update to 0.1.151 did not work: it kept stopping as it started (still broken).");
+    expect(box.state().containers.omb.image).toBe(OLD.id);
   });
 
   it.each([
@@ -401,9 +448,12 @@ services:
     writeFileSync(join(box.deploy, "compose.yaml"), oldCompose);
     writeFileSync(join(box.deploy, "Caddyfile"), oldCaddyfile);
     expect(box.run(["--check"]).stdout).toContain("It would also move Caddy to its own container");
-    const done = box.run();
+    // Under umask 000, as a root shell may have it: the files root starts from are still the owner's alone to change.
+    const done = box.run([], { umask: "000" });
     expect(done.status, done.stdout).toBe(0);
     expect(done.said).toContain("Caddy moves to its own container, so HTTPS stays up whenever the server restarts on its own.");
+    for (const file of ["compose.yaml", "Caddyfile"]) expect((statSync(join(box.deploy, file)).mode & 0o777).toString(8), file).toBe("644");
+    expect((statSync(join(box.deploy, ".update")).mode & 0o777).toString(8)).toBe("700");
     const compose = readFileSync(join(box.deploy, "compose.yaml"), "utf8");
     expect(compose).not.toContain("network_mode");
     expect(compose).toContain("- edge:/run/openmausbot");
