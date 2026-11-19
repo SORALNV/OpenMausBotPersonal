@@ -3,11 +3,11 @@ import type { NativeOmpBinding } from "../shared/native-omp.ts";
 import type { TurnImageInput } from "./contracts.ts";
 import type { RelayTextGenerator } from "./codex-relay-mediator.ts";
 
-const OMB_TOOLS = ["tool_result_read", "list_bots", "list_rooms", "list_room_targets", "list_threads", "session_search", "session_read", "list_triggers", "list_trigger_events", "create_trigger", "manage_trigger", "propose_profile", "propose_model", "list_team_setup", "list_team_library", "propose_team_setup", "create_room", "manage_room", "memory_update", "memory_log"];
+const LOCAL_AGENT_TOOLS = ["tool_result_read", "list_bots", "list_rooms", "list_room_targets", "list_threads", "session_search", "session_read", "list_triggers", "list_trigger_events", "create_trigger", "manage_trigger", "propose_profile", "propose_model", "list_team_setup", "list_team_library", "propose_team_setup", "create_room", "manage_room", "memory_update", "memory_log"];
 
 /** Only fixed OMB APIs can run; no engine process, shell, remote MCP, executable registration, or delegation is exposed. */
 export function nativeOmpLocalScope(previous: ToolScope | undefined): ToolScope {
-  return { allow: OMB_TOOLS.filter(name => allowsTool(previous, { kind: "mcp", server: "agents", name })).map(name => `mcp:agents:${name}`), ...(previous?.deny ? { deny: previous.deny } : {}) };
+  return { allow: LOCAL_AGENT_TOOLS.filter(name => allowsTool(previous, { kind: "mcp", server: "agents", name })).map(name => `mcp:agents:${name}`), ...(previous?.deny ? { deny: previous.deny } : {}) };
 }
 
 function canonical(value: unknown): unknown {
