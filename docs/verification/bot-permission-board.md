@@ -9,7 +9,7 @@ search and service/MCP filters only change the view, never grants.
 ## Automated qualification
 
 ```sh
-pnpm exec vitest run src/lib/bot-permission-board.test.ts src/components/BotPermissionBoard.dom.test.ts src/components/SettingsModal.botPermissions.test.ts server/settings-permissions-matrix.e2e.test.ts
+pnpm exec vitest run src/lib/bot-permission-board.test.ts src/components/BotPermissionBoard.dom.test.ts server/settings-permissions-matrix.e2e.test.ts
 node --experimental-strip-types scripts/verify-bot-permissions.mjs
 ```
 

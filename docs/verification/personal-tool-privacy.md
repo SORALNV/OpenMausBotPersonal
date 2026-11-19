@@ -33,7 +33,7 @@ the accepted queue entry and reports the error. Goal mode uses its existing queu
 Use fictional data in isolated homes and loopback-only mock services:
 
 ```sh
-pnpm exec vitest run server/privacy src/lib/privacy-alias-preview.test.ts src/components/PersonalPrivacySettings.test.ts src/components/PrivacyText.test.ts src/components/PrivacyWorkbench.test.ts server/google-chat.test.ts server/google-chat-diagnostics.test.ts
+pnpm exec vitest run server/privacy src/lib/privacy-alias-preview.test.ts src/components/PersonalPrivacySettings.test.ts src/components/PrivacyText.test.ts server/google-chat.test.ts server/google-chat-diagnostics.test.ts
 node scripts/registered-words-acceptance.mjs
 pnpm typecheck
 pnpm lint
