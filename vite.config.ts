@@ -55,9 +55,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include,
+    setupFiles: ["server/testing/setup.ts", "src/testing/all-locales.ts", "src/testing/local-storage.ts"],
     // OMB_VITEST_E2E=host (CI's Windows and macOS shards) leaves the e2e files that run on Linux only.
     exclude: [...configDefaults.exclude, ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
-    setupFiles: ["server/testing/setup.ts", "src/testing/all-locales.ts"],
     // One file at a time by default: the suite spawns fake provider CLIs and real
     // harness servers, which a laptop feels. CI sets its runner's count (scripts/ci-scope.mjs).
     fileParallelism: workers > 1,
