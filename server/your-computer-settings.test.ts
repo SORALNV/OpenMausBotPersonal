@@ -17,7 +17,7 @@ function fixture(host = "test-host-a") {
   return { privateDir, fingerprint, settings: new YourComputerSettings(privateDir, fingerprint) };
 }
 
-it("defaults off, requires a one-use confirmation, persists on restart, and revokes", () => {
+it.skipIf(process.platform === "win32")("defaults off, requires a one-use confirmation, persists on restart, and revokes", () => {
   const { privateDir, fingerprint, settings } = fixture();
   const initial = settings.snapshot();
   expect(initial.enabled).toBe(false);
@@ -31,7 +31,7 @@ it("defaults off, requires a one-use confirmation, persists on restart, and revo
   expect(new YourComputerSettings(privateDir, fingerprint).snapshot()).toMatchObject({ enabled: false, deviceId: initial.deviceId });
 });
 
-it("does not transfer the permission to another connection, even on the same physical PC", () => {
+it.skipIf(process.platform === "win32")("does not transfer the permission to another connection, even on the same physical PC", () => {
   const first = fixture("host-a");
   const confirmation = first.settings.challenge();
   first.settings.configure({ enabled: true, confirmationId: confirmation.confirmationId });
@@ -44,7 +44,7 @@ it("does not transfer the permission to another connection, even on the same phy
   expect(otherPc.settings.snapshot().enabled).toBe(false);
 });
 
-it("shares one PC permission across all bot calls without changing other approvals", async () => {
+it.skipIf(process.platform === "win32")("shares one PC permission across all bot calls without changing other approvals", async () => {
   const { settings } = fixture();
   let message: { id: string; card?: { requestId?: string; title?: string } } | undefined;
   const appendMessage = vi.fn((_threadId: string, input: { card?: { requestId?: string; title?: string } }) => (message = { ...input, id: "ask-card" }));
@@ -56,7 +56,7 @@ it("shares one PC permission across all bot calls without changing other approva
   } as unknown as Store;
   expect(settings.enabled()).toBe(false);
   const denied = expect(askToUseYourComputer({ store, alwaysAllowed: () => settings.enabled() }, undefined, { threadId: "off-bot-thread", generation: "off" })).rejects.toThrow();
-  expect(message?.card?.title).toBe("I need to use your computer's screen for this. Allow once?");
+  expect(message?.card?.title).toBe("I need to use your files and apps on this computer for this. Allow once?");
   expect(resolveYourComputerAsk(message?.card?.requestId ?? "", "deny")).toBe(true);
   await denied;
   const promptedOnce = appendMessage.mock.calls.length;
@@ -70,7 +70,7 @@ it("shares one PC permission across all bot calls without changing other approva
   expect(settings.enabled()).toBe(false);
 });
 
-it("serves status and confirmation only to an owner, and cannot enable through the phone client scope", async () => {
+it.skipIf(process.platform === "win32")("serves status and confirmation only to an owner, and cannot enable through the phone client scope", async () => {
   const { settings } = fixture();
   const route = yourComputerSettingsRoute(settings);
   const call = async (path: string, method: string, auth: RouteContext["auth"], body: unknown = {}) => {
@@ -89,4 +89,14 @@ it("serves status and confirmation only to an owner, and cannot enable through t
   const confirmationId = (challenge.body as { confirmationId: string }).confirmationId;
   expect((await call("/api/your-computer/settings", "PUT", service, { enabled: true, confirmationId })).status).toBe(403);
   expect(settings.snapshot().enabled).toBe(false);
+});
+
+it("does not grant persistent computer permission without secure storage support", async () => {
+  const json = vi.fn();
+  const readBody = vi.fn();
+  await yourComputerSettingsRoute(null)({ req: {}, res: { setHeader: vi.fn() },
+    path: "/api/your-computer/settings", method: "PUT", auth: { kind: "loopback", scopes: ["admin"] },
+    json, readBody } as unknown as RouteContext);
+  expect(json).toHaveBeenCalledWith(expect.anything(), 501, expect.anything());
+  expect(readBody).not.toHaveBeenCalled();
 });

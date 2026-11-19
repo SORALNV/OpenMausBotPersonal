@@ -114,11 +114,12 @@ export class YourComputerSettings {
   }
 }
 
-export function yourComputerSettingsRoute(settings: YourComputerSettings): RouteHandler {
+export function yourComputerSettingsRoute(settings: YourComputerSettings | null): RouteHandler {
   return async ({ req, res, path, method, auth, json, readBody }) => {
     if (path !== "/api/your-computer/settings" && path !== "/api/your-computer/confirmation") return PASS;
     res.setHeader("cache-control", "no-store");
     if (!ownerOrAdmin(auth)) return json(res, 403, { error: "所有者の設定権限が必要です。" });
+    if (!settings) return json(res, 501, { error: "Persistent computer permission is unavailable on this platform." });
     try {
       if (path === "/api/your-computer/settings" && method === "GET") return json(res, 200, settings.snapshot());
       if (path === "/api/your-computer/confirmation" && method === "POST") return json(res, 200, settings.challenge());
