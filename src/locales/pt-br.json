@@ -9398,6 +9398,8 @@
   "activity.tool.team.publishPage": "Publicar página",
   "activity.tool.team.publishApp": "Publicar app",
   "activity.tool.team.checkAppHosting": "Verificar hospedagem de apps",
+  "activity.tool.team.manageMcpAccess": "Gerenciar acesso ao MCP",
+  "activity.tool.team.nativeConnect": "Delegar a um agente nativo",
   "activity.tool.team.raiseEscalation": "Pedir uma decisão",
   "activity.tool.team.requestCredential": "Pedir credencial",
   "activity.tool.team.requestSignIn": "Pedir login",

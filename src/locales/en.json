@@ -9478,6 +9478,8 @@
   "activity.tool.team.publishPage": "Publish page",
   "activity.tool.team.publishApp": "Publish app",
   "activity.tool.team.checkAppHosting": "Check app hosting",
+  "activity.tool.team.manageMcpAccess": "Manage MCP access",
+  "activity.tool.team.nativeConnect": "Delegate to a native agent",
   "activity.tool.team.raiseEscalation": "Raise escalation",
   "activity.tool.team.requestCredential": "Request credential",
   "activity.tool.team.requestSignIn": "Request sign in",

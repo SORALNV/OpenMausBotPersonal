@@ -107,7 +107,9 @@ const TEAM_ACTION_KEYS: Record<string, string> = {
   list_threads: "activity.tool.team.listThreads",
   list_trigger_events: "activity.tool.team.listTriggerEvents",
   list_triggers: "activity.tool.team.listTriggers",
+  manage_mcp_access: "activity.tool.team.manageMcpAccess",
   manage_room: "activity.tool.team.manageRoom",
+  native_connect: "activity.tool.team.nativeConnect",
   manage_trigger: "activity.tool.team.manageTrigger",
   mcp_server: "activity.tool.team.mcpServer",
   memory_log: "activity.tool.team.memoryLog",
@@ -201,8 +203,13 @@ function researchCallLabel(input: unknown): { label: string; labelKey: string } 
 
 const ownApp = (app: string): Pick<Described, "app" | "appKey"> => ({ app, ...(Object.hasOwn(APP_KEYS, app) ? { appKey: APP_KEYS[app] } : {}) });
 
+const PERSONAL_TEAM_LABELS = new Map([
+  ["manage_mcp_access", "Manage MCP access"],
+  ["native_connect", "Delegate to a native agent"],
+]);
+
 const ownAction = (app: string, action: string, keys: Record<string, string>): Described =>
-  ({ ...ownApp(app), label: humanize(action), ...(Object.hasOwn(keys, action) ? { labelKey: keys[action] } : {}) });
+  ({ ...ownApp(app), label: (app === "Team" ? PERSONAL_TEAM_LABELS.get(action) : undefined) ?? humanize(action), ...(Object.hasOwn(keys, action) ? { labelKey: keys[action] } : {}) });
 
 export function describeTool(name: string, input?: unknown): { app: string | null; label: string } {
   const { app, label } = describedTool(name, input);
