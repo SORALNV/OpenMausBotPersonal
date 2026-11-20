@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
+import { reachableForKeepAwake } from "./keep-awake.mjs";
+import { startCheckedManagedConnection } from "./managed-companion-start.mjs";
 
 const source = fs.readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 function slice(from, to) {
@@ -25,10 +27,11 @@ function fixture(t, saved, { advertise = true } = {}) {
   const managedOperation = new Promise(resolve => { resolveConnector = resolve; });
   const handlers = new Map();
   const context = vm.createContext({
-    URL, fs, path, process, AbortSignal,
+    URL, fs, path, process, AbortSignal, startCheckedManagedConnection, reachableForKeepAwake,
     app: { isPackaged: false, getPath: () => directory },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     localOnly: (_name, handler) => handler,
+    companionE2E: null,
     companionDesiredThisLaunch: false,
     companionLaunchGeneration: 0,
     advertisementTransition: Promise.resolve(),
@@ -36,7 +39,8 @@ function fixture(t, saved, { advertise = true } = {}) {
     secureCredentials: {},
     companionAccountCleanupPending: () => false,
     managedCompanionTunnelAccess: () => ({ endpoint: "https://managed.example.test" }),
-    companionRouteOn: () => true,
+    companionRouteOn: (route) => route === "https",
+    companionAccountService: null,
     companionOriginTarget: () => "http://127.0.0.1:8810",
     runtimeResourcesPath: directory,
     SERVER_PORT: 4000,
