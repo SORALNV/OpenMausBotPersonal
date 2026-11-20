@@ -19,7 +19,9 @@ export class CodexSharedClient implements NativeClient {
   private closing?: Promise<void>;
   private connected: Promise<void>;
   constructor(socketPath: string) {
-    const dir = dirname(socketPath), owner = process.getuid?.();
+    const owner = process.getuid?.();
+    if (owner === undefined) throw new Error("Shared native Codex requires owner-private Unix socket support");
+    const dir = dirname(socketPath);
     if (!isAbsolute(socketPath) || realpathSync(dir) !== dir) throw new Error("A private absolute native socket is required");
     const parent = lstatSync(dir), entry = lstatSync(socketPath), targetPath = realpathSync(socketPath);
     const targetParent = lstatSync(dirname(targetPath)), socket = lstatSync(targetPath);
