@@ -62,8 +62,8 @@ beforeAll(async () => {
   bob = (await team.pair(BOB)).token!;
   scout = await create({ name: "Scout", title: "Assistant", section: "Support", reportsTo: BOB.email });
   quill = await create({ name: "Quill", title: "Analyst", section: "Support", reportsTo: BOB.email });
-  bolt = await create({ name: "Bolt", title: "Developer", section: "Dev", reportsTo: OLIVE.email });
-  pip = await create({ name: "Pip", title: "Assistant", section: "Dev", reportsTo: OLIVE.email });
+  bolt = await create({ name: "Bolt", title: "Developer", section: "Support", reportsTo: OLIVE.email });
+  pip = await create({ name: "Pip", title: "Assistant", section: "Support", reportsTo: OLIVE.email });
   writeFileSync(planPath(), JSON.stringify({
     [scout.id]: { turns: [
       { steps: [
