@@ -115,12 +115,17 @@ const messagesOf = async (threadId: string): Promise<StoredMessage[]> => {
   return Array.isArray(messages) ? (messages as StoredMessage[]) : [];
 };
 
-const awaitIdleBots = async () => {
-  await expect.poll(async () => {
-    const { status, body } = await api("GET", "/api/bots?messages=0");
-    if (status !== 200 || !Array.isArray(body.bots)) return false;
-    return body.bots.every(bot => !field(bot as Record<string, unknown>, "busy"));
-  }, { timeout: 10_000 }).toBe(true);
+const patchFixtureBot = async (id: string, body: Record<string, unknown>) => {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const patched = await api("PATCH", `/api/bots/${id}`, body);
+    const retryable = patched.status === 409 && str(patched.body.error).startsWith("A bot is working right now,");
+    if (!retryable || Date.now() >= deadline) {
+      expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 };
 
 const makeBot = async (
@@ -131,13 +136,11 @@ const makeBot = async (
   const created = await api("POST", "/api/bots");
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = str(field(created.body, "bot", "id"));
-  await awaitIdleBots();
-  const patched = await api("PATCH", `/api/bots/${id}`, {
+  await patchFixtureBot(id, {
     name,
     section,
     modelSelection: { instanceId, model: "claude-sonnet-5" },
   });
-  expect(patched.status).toBe(200);
   return { id, threadId: str(field(created.body, "bot", "threadId")) };
 };
 
@@ -150,8 +153,7 @@ const makeCoordinator = async (
   const created = await api("POST", "/api/bots");
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = str(field(created.body, "bot", "id"));
-  await awaitIdleBots();
-  const patched = await api("PATCH", `/api/bots/${id}`, {
+  await patchFixtureBot(id, {
     name,
     section,
     chiefOfStaff: true,
@@ -159,7 +161,6 @@ const makeCoordinator = async (
     acknowledgePeerScope: true,
     modelSelection: { instanceId, model: "claude-sonnet-5" },
   });
-  expect(patched.status).toBe(200);
   return { id, threadId: str(field(created.body, "bot", "threadId")) };
 };
 
