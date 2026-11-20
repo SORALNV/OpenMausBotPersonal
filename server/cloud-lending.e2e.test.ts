@@ -368,6 +368,9 @@ it("the person's Mac, lent by itself through the real connector, is usable by th
   expect((await reads(updatesCall)).isError).toBe(true);
 
   expect(await sees(await run(rewritten))).toBe(0);
+  const previousThread = turn.mcpConfig.mcpServers.agents.env.OMB_THREAD_ID;
+  expect(previousThread).toBeTruthy();
+  expect((await api("POST", `/api/bots/${rewritten.botId}/interrupt`, { token: owner, body: { threadId: previousThread } })).status).toBe(200);
   const ownRetimed = await routineFor("Owner retimed");
   expect((await api("PATCH", `/api/routines/${ownRetimed.id}`, { token: owner, body: { schedule: { type: "interval", everyMinutes: 30, anchorAt: Date.now() + 60_000 } } })).status).toBe(200);
   expect(await sees(await run(ownRetimed))).toBe(1);
