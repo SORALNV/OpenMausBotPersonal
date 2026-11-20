@@ -89,11 +89,11 @@ export class DirectCodexService {
     await Promise.all([...this.active.keys()].map(thread => this.stop(thread)));
     await this.closeWatchers();
   }
-  async stop(threadId: string): Promise<boolean> {
+  stop(threadId: string): false | Promise<true> {
     const active = this.active.get(threadId);
     if (!active) return false;
     active.controller.abort();
-    await active.client?.close(); return true;
+    return (async () => { await active.client?.close(); return true as const; })();
   }
   answer(threadId: string, requestId: string, behavior: string, message?: string): RequestOutcome | undefined {
     const pending = this.pending.get(requestId);

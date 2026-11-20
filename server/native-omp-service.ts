@@ -913,15 +913,17 @@ export class NativeOmpService {
     return permission ? behavior === "allow" ? "allowed-once" : "rejected" : "answered";
   }
 
-  async stop(threadId: string): Promise<boolean> {
+  stop(threadId: string): boolean | Promise<true> {
     this.consent.delete(threadId);
     const controllers = this.steering.get(threadId); for (const controller of controllers ?? []) controller.abort();
     const job = this.active.get(threadId); if (!job) return Boolean(controllers?.size);
     job.stopped = true; job.controller.abort();
-    if (job.client) {
-      try { await job.client.stop(); } finally { job.client.close(); }
-    }
-    return true;
+    const client = job.client;
+    if (!client) return true;
+    return (async () => {
+      try { await client.stop(); } finally { client.close(); }
+      return true as const;
+    })();
   }
 
   close(): void {

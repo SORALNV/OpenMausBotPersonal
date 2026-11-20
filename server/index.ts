@@ -2252,8 +2252,8 @@ function requestedTaskBot(botId: string, rawThreadId: unknown): BotRecord {
 
 async function interruptDirectThread(botId: string, threadId: string, cause?: string): Promise<void> {
   nativeConnect?.stop(botId, threadId);
-  if (await nativeOmp?.stop(threadId)) return;
-  if (await directCodex?.stop(threadId)) return;
+  const nativeStop = nativeOmp?.stop(threadId) || directCodex?.stop(threadId);
+  if (nativeStop) { await nativeStop; return; }
   if (store.taskByThread(botId, threadId)?.activity === "parked.computer") store.setTaskActivity(botId, threadId, "idle");
   const requestOwner = directRequestOwners.get(threadId);
   if (requestOwner) {
