@@ -115,13 +115,23 @@ const messagesOf = async (threadId: string): Promise<StoredMessage[]> => {
   return Array.isArray(messages) ? (messages as StoredMessage[]) : [];
 };
 
+const awaitIdleBots = async () => {
+  await expect.poll(async () => {
+    const { status, body } = await api("GET", "/api/bots?messages=0");
+    if (status !== 200 || !Array.isArray(body.bots)) return false;
+    return body.bots.every(bot => !field(bot as Record<string, unknown>, "busy"));
+  }, { timeout: 10_000 }).toBe(true);
+};
+
 const makeBot = async (
   name: string,
   section: string,
   instanceId = "claude",
 ): Promise<{ id: string; threadId: string }> => {
   const created = await api("POST", "/api/bots");
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = str(field(created.body, "bot", "id"));
+  await awaitIdleBots();
   const patched = await api("PATCH", `/api/bots/${id}`, {
     name,
     section,
@@ -138,7 +148,9 @@ const makeCoordinator = async (
   instanceId = "claude",
 ): Promise<{ id: string; threadId: string }> => {
   const created = await api("POST", "/api/bots");
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = str(field(created.body, "bot", "id"));
+  await awaitIdleBots();
   const patched = await api("PATCH", `/api/bots/${id}`, {
     name,
     section,
