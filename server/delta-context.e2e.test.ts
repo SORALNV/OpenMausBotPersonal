@@ -202,7 +202,7 @@ it("resumes the source session and gives it each of three results exactly once, 
   expect(text).not.toMatch(/^Assistant: @/m);
 }), hostTimeout(60_000));
 
-it("keeps the source's and the teammate's engines through reports and the person's next messages", () => fixture(async (f) => {
+it("keeps the foreground engine and resumes the background teammate's session through repeated reports", () => fixture(async (f) => {
   await warmUp(f);
   for (const round of [1, 2]) {
     f.plan[f.lead.id] = { reply: `ROUND_${round}_RESULT` };
@@ -216,7 +216,10 @@ it("keeps the source's and the teammate's engines through reports and the person
   await f.wait();
 
   expect(f.launches()).toHaveLength(1);
-  expect(f.launches(f.lead.id)).toHaveLength(1);
+  const [firstPeer, resumedPeer] = f.launches(f.lead.id);
+  expect(f.launches(f.lead.id)).toHaveLength(2);
+  expect(firstPeer.sessionId).toBeTruthy();
+  expect(resumedPeer.resume).toBe(firstPeer.sessionId);
   expect(f.consumed()).toBe(6);
   expect(f.consumed(f.lead.id)).toBe(2);
   expect(f.prompt(f.turns().at(-1))).not.toMatch(/ROUND_\d_RESULT/);
@@ -231,8 +234,10 @@ it("keeps an ACP teammate's session through two hand-offs", () => fixture(async 
     await f.wait();
   }
   const sessions = f.acpCalls().filter((call: any) => ["session/new", "session/load", "session/prompt"].includes(call.method));
-  expect(sessions.map((call: any) => call.method)).toEqual(["session/new", "session/prompt", "session/prompt"]);
-  expect(new Set(sessions.map((call: any) => call.pid)).size).toBe(1);
+  expect(sessions.map((call: any) => call.method)).toEqual(["session/new", "session/prompt", "session/load", "session/prompt"]);
+  const sessionId = sessions[1]?.sessionId;
+  expect(sessionId).toBeTruthy();
+  expect(sessions.slice(1).map((call: any) => call.sessionId)).toEqual([sessionId, sessionId, sessionId]);
 }, { acp: true }), hostTimeout(90_000));
 
 it("gives the return turn a result that landed while a newer message was running, exactly once", () => fixture(async (f) => {
