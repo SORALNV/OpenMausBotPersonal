@@ -204,8 +204,9 @@ it("a bot on the computer and a bot on the person's own server hand each other w
     // Turning the link off removes nobody from a room: the far member stays, named, marked as out of reach, and takes no turn.
     const savedMembers = () => JSON.parse(readFileSync(join(computer.dataDir, "groups.json"), "utf8")).find((group: any) => group.id === launch.id).memberIds;
     expect(savedMembers()).toEqual([writer.id, standIn.id]);
-    // Saving the members again, with an address no record answers to among them, is not refused: that address is left out.
-    const resaved = (await computer.api("PATCH", `/api/groups/${launch.id}`, { memberIds: [writer.id, standIn.id, "link-0000abcd-nobody"] })).group;
+    await computer.api("PATCH", `/api/groups/${launch.id}`, { memberIds: [writer.id, standIn.id, "link-0000abcd-nobody"] }, { status: 400 });
+    expect(savedMembers()).toEqual([writer.id, standIn.id]);
+    const resaved = (await computer.api("PATCH", `/api/groups/${launch.id}`, { memberIds: [writer.id, standIn.id] })).group;
     expect(resaved.memberIds).toEqual([writer.id, standIn.id]);
     expect(resaved.farMembers).toEqual([{ id: standIn.id, name: "Atlas", place: "My server", state: "off" }]);
     await computer.cli("send-channel", "--channel", launch.id, "--text", "@Atlas are you there?");
