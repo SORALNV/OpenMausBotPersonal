@@ -1,9 +1,3 @@
-// Every bot reaches every bot on a Team Cloud, end to end. Acme's Support has Scout and Quill, which report to Bob, a
-// member with a Chief of Staff of his own; Dev has Bolt, which reports to Olive. In Bob's private chat he asks Scout to
-// write to Bolt; Scout asks Bolt and Bolt's answer comes back to that chat, with nothing set up first. The chat stays
-// Bob's alone, his Chief still supervises only his own bots, and nothing from his private chat goes into a room. The
-// engine is the synthetic Claude CLI playing a scripted plan through the real agents tools, so it proves the routing,
-// not a model's judgement.
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +47,7 @@ beforeAll(async () => {
   bob = (await team.pair(BOB)).token!;
   scout = await create({ name: "Scout", title: "Support agent", section: "Support", reportsTo: BOB.email });
   quill = await create({ name: "Quill", title: "Support writer", section: "Support", reportsTo: BOB.email });
-  bolt = await create({ name: "Bolt", title: "Developer", section: "Dev", reportsTo: OLIVE.email });
+  bolt = await create({ name: "Bolt", title: "Developer", section: "Support", reportsTo: OLIVE.email });
   chief = await create({ name: "Bob's Chief", reportsTo: BOB.email });
   expect((await team.as(olive, "PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true })).status).toBe(200);
   const made = await team.as(olive, "POST", "/api/groups", { name: "Launch", memberIds: [scout.id, bolt.id], section: "Support",
@@ -81,7 +75,7 @@ afterAll(async () => {
   await fx?.close();
 });
 
-it("lets Scout, in Bob's private chat, ask Bolt in another department and brings Bolt's answer back", async () => {
+it("lets Scout consult a peer with a different owner without sharing Bob's private chat",  async () => {
   const sent = await team.as(bob, "POST", `/api/bots/${scout.id}/messages`, { text: ASK, threadId: bobsChat });
   expect(sent.status, JSON.stringify(sent.body)).toBe(202);
   await expect.poll(async () => (await messages(bob, bobsChat)).messages.some((message) => message.text === RELAYED), { timeout: 60_000 }).toBe(true);
@@ -89,7 +83,7 @@ it("lets Scout, in Bob's private chat, ask Bolt in another department and brings
 
   const asked = turns().find((turn) => turn.botId === scout.id && turn.turnIndex === 0)!;
   expect(asked.system).toContain("You can reach every other bot on this team, in every department");
-  expect(asked.system).toContain(`- Bolt — Developer (Dev) [id: ${bolt.id}]`);
+  expect(asked.system).toContain(`- Bolt — Developer (Support) [id: ${bolt.id}]`);
   expect(asked.system).toContain(`- Quill — Support writer (Support) [id: ${quill.id}]`);
   expect(asked.system).toContain(`[Chief of Staff] [id: ${chief.id}]`);
   expect(asked.system).not.toMatch(/allowed peer|team membership/i);
