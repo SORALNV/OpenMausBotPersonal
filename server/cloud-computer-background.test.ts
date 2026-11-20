@@ -254,26 +254,49 @@ describe.each([
     expect(json(await call("exec_status", { process_id: processId, wait_seconds: 3 }).done)).toMatchObject({ status: "running", exitCode: null });
   });
 
+  const stalledStatus = (processId: string, signal: AbortSignal) => {
+    holdStatusAfterFirst = true;
+    let now = Date.UTC(2026, 0, 1);
+    const deadline = new AbortController();
+    const timeout = vi.fn(() => deadline.signal);
+    const pending = background.backgroundStatus(cfg, BOX, { process_id: processId, wait_seconds: 3 }, signal, {
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
+      timeout,
+    });
+    const arrived = () => expect.poll(() => calls.filter(entry => entry.method === "GET").length, { timeout: 5_000 }).toBe(2);
+    return { pending, arrived, deadline, timeout };
+  };
+
   it("bounds a stalled follow-up status read by the requested wait", async () => {
     const processId = await start();
     processes.get(`${BOX}:${processId.split("-")[1]}`)!.stdout = "partial output";
-    holdStatusAfterFirst = true;
-    const result = await call("exec_status", { process_id: processId, wait_seconds: 3 }).done;
-    expect(result.isError).not.toBe(true);
-    expect(json(result)).toMatchObject({ status: "running", stdout: "partial output", observedAt: expect.any(String), note: expect.stringContaining("may have changed") });
-    expect(calls.filter(entry => entry.method === "GET")).toHaveLength(2);
-    server.closeAllConnections();
+    const { pending, arrived, deadline, timeout } = stalledStatus(processId, new AbortController().signal);
+    try {
+      await arrived();
+      expect(timeout.mock.calls).toEqual([[1_000]]);
+      deadline.abort();
+      const result = await pending;
+      expect(result.isError).not.toBe(true);
+      expect(json(result)).toMatchObject({ status: "running", stdout: "partial output", observedAt: "2026-01-01T00:00:00.000Z", note: expect.stringContaining("may have changed") });
+    } finally {
+      deadline.abort();
+      await pending.catch(() => undefined);
+    }
   });
 
   it("propagates cancellation during a follow-up status read", async () => {
     const processId = await start();
-    holdStatusAfterFirst = true;
     const controller = new AbortController();
-    const pending = background.backgroundStatus(cfg, BOX, { process_id: processId, wait_seconds: 1 }, controller.signal);
-    await expect.poll(() => calls.filter(entry => entry.method === "GET").length).toBe(2);
-    controller.abort();
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
-    server.closeAllConnections();
+    const { pending, arrived } = stalledStatus(processId, controller.signal);
+    try {
+      await arrived();
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      controller.abort();
+      await pending.catch(() => undefined);
+    }
   });
 
   it("returns only the end of long output, and never half a character", async () => {
