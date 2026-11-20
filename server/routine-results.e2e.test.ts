@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
+import { isBackgroundThread } from "../shared/background-thread.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 import { splitLaunchNote } from "./testing/launch-note.ts";
 import { readRegistry, writeRegistry } from "./testing/registry.ts";
@@ -75,8 +76,10 @@ it("reports every run into the bot's main thread while fresh executions, approva
     evidence.push(await control(["wait", "--bot", bot.id, "--task", completed[0].threadId]));
     await api("POST", `/api/routine-runs/${completed[0].id}/seen`);
     const inspected = (await currentBot()).tasks.find((task: any) => task.threadId === completed[0].threadId);
-    expect(inspected).toMatchObject({ routineRunId: completed[0].id, background: true });
-    expect((await currentBot()).mainThreadId).toBe(originalThread);
+    expect(inspected?.threadId).toBe(completed[0].threadId);
+    expect(inspected.routineRunId).toBeUndefined();
+    expect(inspected.background).not.toBe(true);
+    expect((await currentBot()).mainThreadId).toBe(completed[0].threadId);
     const { task: manual } = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Explicit new conversation" }, 201);
     const live = manual.threadId as string;
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: live, text: "Use this explicitly created conversation." }, 202);
@@ -129,7 +132,8 @@ it("reports every run into the bot's main thread while fresh executions, approva
 
     await api("DELETE", `/api/bots/${bot.id}/tasks/${dedicated}`);
     const fallback = (await currentBot()).tasks.find((task: any) => task.threadId === active.threadId);
-    expect(fallback).toMatchObject({ routineRunId: pending.id, background: true, unread: false });
+    expect(fallback).toMatchObject({ routineRunId: pending.id, unread: false });
+    expect(isBackgroundThread(fallback)).toBe(true);
     await expect.poll(async () => (await messages(live)).find((message) => message.card?.requestId === approval.card.requestId), { timeout: 15_000 })
       .toMatchObject({ kind: "options", automation: { needsYou: true, executionThreadId: active.threadId } });
     expect((await runState(pending.id)).resultsThreadId).toBe(dedicated);
