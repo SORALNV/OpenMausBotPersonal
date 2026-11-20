@@ -32,6 +32,7 @@ interface RoutineBody {
   prompt: string;
   botId: string;
   runOn: "maus";
+  enabled: boolean;
   schedule: { type: "once"; at: number };
 }
 
@@ -120,6 +121,7 @@ posixOnly("routine failure notification wiring", () => {
         prompt: "Prepare the report",
         botId: bot.id,
         runOn: "maus",
+        enabled: false,
         schedule: { type: "once", at: Date.now() + 60_000 },
       });
       expect(created.status).toBe(201);
@@ -136,7 +138,10 @@ posixOnly("routine failure notification wiring", () => {
             candidate.notification?.kind === "routine-failed" &&
             candidate.notification?.botId === bot.id,
           30_000,
-        );
+        ).catch(async (error: unknown) => {
+          const state = await api("GET", "/api/routines").then(({ body }) => body.runs.find((run: { id: string }) => run.id === launched.body.run.id)?.status).catch(() => undefined);
+          throw new Error(`${String(error)}; manually started routine status: ${state ?? "unknown"}`, { cause: error });
+        });
         expect(frame.notification).toMatchObject({
           kind: "routine-failed",
           botId: bot.id,
