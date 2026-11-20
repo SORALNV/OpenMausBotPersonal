@@ -6,6 +6,9 @@ describe("owner-defined group permissions",()=>{
   const room={memberIds:["a","b"]};expect(groupCrossSection(room)).toBe(false);expect(groupCanSpeak(room,"outsider")).toBe(false);expect(groupMemberPermissions(room,"a")).toEqual(defaults);
   expect(permittedGroupResponders(room,[a,b],[a],[])).toEqual([a]);
  });
+ it("preserves the order chosen by default routing", () => {
+  expect(permittedGroupResponders({ memberIds: ["a", "b", "c"] }, [a, b, c], [c, a, c], [])).toEqual([c, a]);
+ });
  it("routes always, mentioned-only and read-only members independently",()=>{
   const room={memberIds:["a","b","c"],permissions:{crossSection:true,members:{a:{...defaults,response:"always" as const},b:{...defaults,response:"mentions" as const},c:{...defaults,response:"off" as const}}}};
   expect(permittedGroupResponders(room,[a,b,c],[c],[])).toEqual([a]);

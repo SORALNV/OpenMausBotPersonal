@@ -43,9 +43,16 @@ export function parseGroupPermissions(value: unknown, memberIds: string[]): Grou
   return { crossSection: raw.crossSection, members: Object.fromEntries(entries) };
 }
 export function permittedGroupResponders<T extends { id: string }>(room: Room, available: T[], defaults: T[], mentioned: T[]): T[] {
-  return available.filter(member => {
+  const eligible = new Map(available.filter(member => {
     if (!groupCanSpeak(room, member.id)) return false;
     const mode = groupMemberPermissions(room, member.id).response;
     return mode === "always" || (mode === "mentions" ? mentioned : defaults).some(p => p.id === member.id);
-  });
+  }).map(member => [member.id, member]));
+  const routed: T[] = [];
+  for (const { id } of defaults) {
+    const member = eligible.get(id);
+    if (member) routed.push(member);
+    eligible.delete(id);
+  }
+  return [...routed, ...eligible.values()];
 }
