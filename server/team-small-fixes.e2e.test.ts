@@ -99,7 +99,7 @@ beforeAll(async () => {
   expect((await team.as(ada, "PUT", "/api/me", { name: "Ada" })).status).toBe(200);
   expect((await team.as(mira, "PUT", "/api/me", { name: "Mira" })).status).toBe(200);
   support = await create({ name: "Support", title: "Support", section: "Support", reportsTo: ADA.email });
-  sales = await create({ name: "Sales", title: "Sales", section: "Sales", reportsTo: ADA.email });
+  sales = await create({ name: "Sales", title: "Sales", section: support.section, reportsTo: ADA.email });
   // Sales is shared with nobody but Ada: "Only people added", with no one added.
   const shared = await team.as(ada, "PUT", `/api/bots/${sales.id}/access`, { everyone: "none", people: {} });
   expect(shared.status, JSON.stringify(shared.body)).toBe(200);
