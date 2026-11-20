@@ -212,6 +212,7 @@ it("a confined run has no device integration", async () => {
   // Nobody typed it: the run is told so, not that the person is at the computer.
   expect(look.systemPrompt).toContain(PHONE_PLACE_PROMPT.unattended);
   expect(look.systemPrompt).not.toContain(PHONE_PLACE_PROMPT.computer);
+  await settle();
   const confined = await run(await routine("Calendar watch", "read-and-draft"), "Calendar watch");
   expect(Object.keys(confined.launch.mcpConfig.mcpServers)).not.toContain(PHONE_MCP_SERVER);
   const refused = await rpc(await mint(chief.id, confined.threadId), "tools/list");
