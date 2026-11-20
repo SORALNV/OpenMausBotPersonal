@@ -178,12 +178,16 @@ it("marks a job's review answer and a webhook post unread where they land", asyn
     await replied(asker.id, asker.activeTaskId, "Reviewed: the books balance.");
     expect(await unread(asker.id, asker.activeTaskId)).toBe(true);
 
+    await api("POST", `/api/bots/${asker.id}/read`, { threadId: asker.activeTaskId });
     const hook = await api("POST", "/api/webhooks", { name: "Deploys", prompt: "", botId: asker.id, delivery: "post" }, 201);
     const delivered = await fetch(hook.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Deploy finished." }) });
     expect(delivered.ok).toBe(true);
-    await expect.poll(async () => ((await api("GET", `/api/threads/${asker.activeTaskId}/messages?limit=50`)).messages as any[])
-      .some(message => message.webhookPost && message.text === "Deploy finished."), { timeout: 20_000 }).toBe(true);
-    expect((await tasks(asker.id)).some(task => task.title === "Updates")).toBe(false);
+    await expect.poll(async () => (await tasks(asker.id)).find(task => task.title === "Updates")?.unread, { timeout: 20_000 }).toBe(true);
+    const updatesThread = (await tasks(asker.id)).find(task => task.title === "Updates");
+    expect(updatesThread.threadId).not.toBe(asker.activeTaskId);
+    const posts = (await api("GET", `/api/threads/${updatesThread.threadId}/messages?limit=50`)).messages;
+    expect(posts).toEqual(expect.arrayContaining([expect.objectContaining({ webhookPost: true, text: "Deploy finished." })]));
+    expect(await unread(asker.id, asker.activeTaskId)).toBe(false);
   } finally {
     await fixture.close();
   }
