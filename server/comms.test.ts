@@ -622,7 +622,7 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
   );
 
   it(
-    "keeps the asker's session when the teammate's result lands instead of rebuilding it",
+    "reloads the same background session when the teammate's result lands",
     async () => {
       await hideAll();
       await named("Helper", { modelSelection: HELPER });
@@ -639,13 +639,12 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
         return delegated && woke && !askerBot.busy;
       }, 30_000, "the hand-off never settled");
 
-      // The result's landing marks the thread externally updated; a strict-resume driver keeps the live session and is
-      // handed only the unseen lines, so the wake prompt rides the same session rather than session/new again.
-      const sessions = readFileSync(join(home, "asker-resume-rpc.jsonl"), "utf8").trim().split("\n")
-        .map((line) => JSON.parse(line) as { method: string })
-        .map((call) => call.method)
-        .filter((method) => ["session/new", "session/load", "session/prompt"].includes(method));
-      expect(sessions).toEqual(["session/new", "session/prompt", "session/prompt"]);
+      const calls = readFileSync(join(home, "asker-resume-rpc.jsonl"), "utf8").trim().split("\n")
+        .map((line) => JSON.parse(line) as { method: string; sessionId?: string })
+        .filter(({ method }) => ["session/new", "session/load", "session/prompt"].includes(method));
+      expect(calls.map(({ method }) => method)).toEqual(["session/new", "session/prompt", "session/load", "session/prompt"]);
+      expect(calls[1]?.sessionId).toBeTruthy();
+      expect(calls.slice(1).map(({ sessionId }) => sessionId)).toEqual(Array(3).fill(calls[1]?.sessionId));
     },
     45_000,
   );
