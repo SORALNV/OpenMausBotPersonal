@@ -273,7 +273,7 @@ it("P1 lets Clive, as Mira's Chief, answer for the person the question she asks 
 
 it("P2 refuses the person's chat with Mira to a bot that is not her Chief, and her question stays the person's", () => scenario(async (f) => {
   await f.askMeFirst();
-  expect((await f.api("PATCH", `/api/bots/${f.clive.id}`, { chiefOfStaff: false })).status).toBe(200);
+  expect((await f.api("PATCH", `/api/bots/${f.clive.id}`, { chiefOfStaff: false, section: f.mira.section })).status).toBe(200);
   const chat = f.mira.activeTaskId as string;
   askThePerson(f, "P2");
   f.script(f.clive.id, { key: "C0", match: ["P2-SAG"], steps: [{ arguments: { bot_ids: [f.mira.id], message: "Keep it", thread: chat }, expectError: true }], reply: "C0: refused." });
