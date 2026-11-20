@@ -33,19 +33,24 @@ if (expectedVersion !== release.version) {
 }
 
 async function binaryVersion(candidate) {
-  if (!candidate || !existsSync(candidate)) return null;
+  if (!candidate || !existsSync(candidate)) return { detail: "executable not found" };
   try {
     const { stdout } = await run(candidate, ["--version"], { timeout: 5000, windowsHide: true });
-    return stdout.match(/cua-driver\s+([\d.]+)/)?.[1] ?? null;
-  } catch {
-    return null;
+    const version = stdout.match(/cua-driver\s+([\d.]+)/)?.[1];
+    return version ? { version, detail: `reported ${version}` } : { detail: "unexpected --version output" };
+  } catch (error) {
+    const code = typeof error.code === "number" ? `0x${(error.code >>> 0).toString(16)}` : error.code;
+    const stderr = error.stderr?.trim().replace(/\s+/g, " ").slice(0, 300);
+    return { detail: [`--version failed`, code && `code ${code}`, error.signal && `signal ${error.signal}`, error.killed && "process killed", stderr].filter(Boolean).join(": ") };
   }
 }
 
 async function officialBinary() {
   const cache = join(root, "node_modules", ".cache", "openmausbot", `cua-driver-${release.version}-win`);
   const cachedBinary = join(cache, "cua-driver.exe");
-  if ((await binaryVersion(cachedBinary)) === expectedVersion) return cachedBinary;
+  const cached = await binaryVersion(cachedBinary);
+  if (cached.version === expectedVersion) return cachedBinary;
+  if (existsSync(cachedBinary)) console.warn(`Cached CUA Driver probe: ${cached.detail}`);
 
   await rm(cache, { recursive: true, force: true });
   await mkdir(cache, { recursive: true });
@@ -69,8 +74,9 @@ async function officialBinary() {
     timeout: 60_000,
     windowsHide: true,
   });
-  if ((await binaryVersion(cachedBinary)) !== expectedVersion) {
-    throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}`);
+  const downloaded = await binaryVersion(cachedBinary);
+  if (downloaded.version !== expectedVersion) {
+    throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}: ${downloaded.detail}`);
   }
   return cachedBinary;
 }
@@ -78,9 +84,9 @@ async function officialBinary() {
 let binary;
 if (process.env.CUA_DRIVER_PATH) {
   const suppliedVersion = await binaryVersion(process.env.CUA_DRIVER_PATH);
-  if (suppliedVersion !== expectedVersion) {
+  if (suppliedVersion.version !== expectedVersion) {
     throw new Error(
-      `CUA_DRIVER_PATH must point to cua-driver ${expectedVersion}; found ${suppliedVersion ?? "an unreadable binary"}`,
+      `CUA_DRIVER_PATH must point to cua-driver ${expectedVersion}: ${suppliedVersion.detail}`,
     );
   }
   binary = process.env.CUA_DRIVER_PATH;
@@ -99,8 +105,9 @@ if (process.env.CUA_DRIVER_PATH) {
   }
 }
 
-if ((await binaryVersion(binary)) !== expectedVersion) {
-  throw new Error(`CUA executable must match SDK ${expectedVersion}`);
+const selected = await binaryVersion(binary);
+if (selected.version !== expectedVersion) {
+  throw new Error(`CUA executable must match SDK ${expectedVersion}: ${selected.detail}`);
 }
 const details = await stat(binary);
 if (!details.isFile()) {
