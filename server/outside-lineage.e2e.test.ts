@@ -100,6 +100,7 @@ describe("a Team Cloud", () => {
     expect(confined(turn)).toBe(true);
     const made = await internal(scout.id, thread, "/api/internal/trigger-requests", { action: "create", kind: "schedule", routine: { name: "From outside", instructions: "routine-made-outside", schedule: { type: "interval", everyMinutes: 60 } } });
     expect(made.body?.state).toBe("applied");
+    await finish(scout.id);
     expect((await internal(scout.id, thread, "/api/internal/trigger-requests", { action: "run_now", triggerId: made.body.result.resultId })).status).toBe(201);
     const routineTurn = await turnWith("routine-made-outside");
     expect(confined(routineTurn)).toBe(true);
@@ -131,6 +132,7 @@ describe("a Team Cloud", () => {
     const { thread } = await webhookTurn(scout.id, "Lineage hook", "marker-lineage");
     const made = await internal(scout.id, thread, "/api/internal/trigger-requests", { action: "create", kind: "schedule", routine: { name: "Outside first", instructions: "lineage-first-run", schedule: { type: "interval", everyMinutes: 60 } } });
     const first = made.body.result.resultId as string;
+    await finish(scout.id);
     expect((await internal(scout.id, thread, "/api/internal/trigger-requests", { action: "run_now", triggerId: first })).status).toBe(201);
     expect(confined(await turnWith("lineage-first-run"))).toBe(true);
     const runThread = (await runs()).find((run) => run.routineId === first).threadId as string;
@@ -519,6 +521,9 @@ describe("a personal Cloud only its owner has used", () => {
     const runs = async () => (await cloud("GET", "/api/routines")).body.runs as any[];
     const hookThread = (await runs()).find((run) => run.webhookId === hook.webhook.id).threadId as string;
     const made = await call(hookThread, "/api/internal/trigger-requests", { action: "create", kind: "schedule", routine: { name: "Solo routine", instructions: "solo-routine-run", schedule: { type: "interval", everyMinutes: 60 } } });
+    writeFileSync(release, "");
+    await expect.poll(async () => (await runs()).find((run) => run.webhookId === hook.webhook.id)?.status).toBe("completed");
+    rmSync(release, { force: true });
     expect((await call(hookThread, "/api/internal/trigger-requests", { action: "run_now", triggerId: made.body.result.resultId })).status).toBe(201);
     expect(confined(await turnWith("solo-routine-run"))).toBe(true);
     const runThread = (await runs()).find((run) => run.routineId === made.body.result.resultId).threadId as string;
