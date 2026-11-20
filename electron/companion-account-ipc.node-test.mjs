@@ -127,6 +127,8 @@ test("the connector reports every status to the account service", () => {
       options = passed;
       return { fixture: true };
     },
+    runtimeResourcesPath: "/fixture",
+    runtimeAppPath: "/fixture",
     resolveCloudflaredBinary: () => "/fixture/cloudflared",
     resolveManagedCompanionGuardian: () => "/fixture/guardian.mjs",
     app: { isPackaged: true, getAppPath: () => "/fixture", getPath: () => "/fixture" },
@@ -145,6 +147,7 @@ test("the connector reports every status to the account service", () => {
 
 test("starting the phone link checks a stored address first and waits on it only without Anywhere", async () => {
   const starts = [];
+  const managedStarts = [];
   const routesOn = new Set();
   const context = vm.createContext({
     managedRemoteAccessRefusal: () => null,
@@ -152,13 +155,14 @@ test("starting the phone link checks a stored address first and waits on it only
     companionLaunchGeneration: 0,
     startCompanion: async () => ({ enabled: true }),
     companionLaunchOptions: () => ({}),
+    readSavedHostedUrl: () => null,
     rememberCompanionRoute: async (route, on) => { if (on) routesOn.add(route); },
     phoneLinkRoutes: { touched: () => {} },
     companionRouteOn: (route) => routesOn.has(route),
     managedCompanionTunnelAccess: () => ({ endpoint: "https://c-fixture.example.test", token: "fixture" }),
     secureCredentials: {},
     companionAccountService: { checkStoredAddress: async () => null },
-    startManagedCompanionConnection: async () => ({}),
+    startManagedCompanionConnection: async ({ waitForVerification }) => { managedStarts.push(waitForVerification); },
     startCheckedManagedConnection: async (options) => { starts.push(options); },
     desktopCompanionState: async () => ({ enabled: true }),
   });
@@ -178,6 +182,7 @@ test("starting the phone link checks a stored address first and waits on it only
   assert.equal(starts[0].check(), null);
   routesOn.add("https");
   assert.equal(typeof starts[0].check()?.then, "function");
-  assert.equal(starts[0].start, context.startManagedCompanionConnection);
+  for (const options of starts) await options.start();
+  assert.deepEqual(managedStarts, [true, true, true, false]);
   assert.equal(starts[0].desired(), true);
 });
