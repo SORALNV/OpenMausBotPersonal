@@ -214,10 +214,14 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       expect((await runState(second.id))?.status).toBe("queued");
       finish(threads[0]);
+      await expect.poll(() => busyThreads(botId), { timeout: 15_000 }).toEqual([firstRun.threadId]);
+      expect((await runState(second.id))?.status).toBe("queued");
+      finish(firstRun.threadId);
       await expect.poll(async () => (await runState(second.id))?.status, { timeout: 15_000 }).toBe("running");
       const secondRun = await runState(second.id);
       expect(secondRun.threadId).not.toBe(firstRun.threadId);
       await dump(secondRun.threadId);
+      finish(secondRun.threadId);
     } finally {
       for (const threadId of await busyThreads(botId)) finish(threadId);
       await expect.poll(async () => (await busyThreads(botId)).length, { timeout: 15_000 }).toBe(0);
