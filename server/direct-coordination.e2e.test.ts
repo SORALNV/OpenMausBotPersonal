@@ -94,6 +94,7 @@ it("sends cross-bot work onward without resuming either sender", () => fixture(a
 }), 60_000);
 
 it("lets a teammate answer a one-way ask in the thread that asked, with a notice and nothing more", () => fixture(async f => {
+  await f.api(`/api/bots/${f.lead.id}`, { section: "Leadership" }, "PATCH");
   const asking = f.chief.activeTaskId;
   f.plan[f.chief.id] = { steps: [{ arguments: {
     bot_ids: [f.lead.id], message: `Ask the person which day suits, then tell me in thread ${asking}.`, thread: "new", reply: "none",
@@ -133,27 +134,21 @@ it("marks a failed one-way send so restart recovery cannot duplicate its notice"
   expect((await failureNotice())?.tool?.handoffId).toEqual(expect.any(String));
 }), 45_000);
 
-it("lets a bot ask a bot in another department directly, with nothing set up first", () => fixture(async f => {
-  // Engineering lead and Clive, the Chief in Leadership: different departments, no peers list, no grant either way.
+it("refuses a direct consultation across departments without management scope", () => fixture(async f => {
   await f.api(`/api/bots/${f.chief.id}`, { managedSections: [] }, "PATCH");
   f.plan[f.lead.id] = {
-    steps: [{ arguments: { bot_ids: ["Clive"], message: "Can we upgrade to the latest PHP version?", consult: true } }],
-    reply: "Asked Clive", resumeReply: "Clive says yes: the latest PHP is fine for us.",
+    steps: [{ arguments: { bot_ids: ["Clive"], message: "Can we upgrade to the latest PHP version?", consult: true }, expectError: true }],
+    reply: "I couldn't ask Clive from this department.",
   };
-  f.plan[f.chief.id] = { reply: "Yes, the latest PHP version is fine for us." };
   f.save();
   await f.cli("send", "--bot", f.lead.id, "--task", f.lead.activeTaskId, "--text", "Please ask Clive if we can upgrade to the latest PHP version");
   expect((await f.cli("wait", "--bot", f.lead.id, "--task", f.lead.activeTaskId, "--timeout", "30")).status).toBe("settled");
   const asked = f.evidence().find((turn: any) => turn.botId === f.lead.id);
-  expect(asked.system).toContain("You can reach every other bot on this team, in every department");
-  expect(asked.system).toContain("Clive — General assistant (Leadership) [Chief of Staff]");
-  const response = asked.evidence.find((entry: any) => entry.step).response;
-  expect(response.result.isError).toBeFalsy();
-  const child = f.nodes().find((node: any) => node.parentId);
-  expect(child).toMatchObject({ botId: f.chief.id, mode: "consult", status: "completed" });
-  const said = await f.messages(f.lead.activeTaskId);
-  expect(said.some((message: any) => message.tool?.name === "Sent to Clive")).toBe(true);
-  expect(said.some((message: any) => message.text === "Clive says yes: the latest PHP is fine for us.")).toBe(true);
+  const { result } = asked.evidence.find((entry: any) => entry.step).response;
+  expect(result.isError).toBe(true);
+  expect(result.content[0].text).toContain("Room work cannot cross the sender's section boundary");
+  expect(f.nodes().some((node: any) => node.parentId)).toBe(false);
+  expect(f.evidence().some((turn: any) => turn.botId === f.chief.id)).toBe(false);
 }), 45_000);
 
 it.each([false, true])("starts independent work immediately and frees the Chief while waiting (source fails: %s)", fail => fixture(async f => {
