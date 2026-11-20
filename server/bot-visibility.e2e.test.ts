@@ -506,13 +506,15 @@ posixOnly("per-bot visibility on a shared workspace", () => {
     };
     const linesBefore = logLines();
     expect((await api("POST", `/api/groups/${ids.roomMixed}/messages`, { text: "SECRET-AFTER-77 severance list" }, BOSS)).status).toBe(202);
-    expect(await waitFor(async () => {
-      const { body } = await api("GET", `/api/threads/${ids.roomMixedThread}/messages`, undefined, BOSS);
-      const messages = body.messages ?? [];
-      const asked = messages.findIndex((m: any) => m.text?.includes("SECRET-AFTER-77"));
-      return asked >= 0 && messages.slice(asked + 1).some((m: any) => m.role === "bot" && m.from?.botId === ids.pub && m.text);
-    })).toBe(true);
-    await new Promise((r) => setTimeout(r, 500));
+    await expect.poll(async () => {
+      const { body } = await api("GET", "/api/bots?messages=0", undefined, BOSS);
+      return body.groups.find((group: any) => group.id === ids.roomMixed)?.working;
+    }).toBe(false);
+    const { body: roomTranscript } = await api("GET", `/api/threads/${ids.roomMixedThread}/messages`, undefined, BOSS);
+    const roomMessages = roomTranscript.messages as Array<{ role: string; text?: string }>;
+    const asked = roomMessages.findIndex(message => message.text === "SECRET-AFTER-77 severance list");
+    expect(asked).toBeGreaterThanOrEqual(0);
+    expect(roomMessages.slice(asked + 1).some(message => message.role === "bot" && message.text)).toBe(false);
     expect(logLines()).toBe(linesBefore);
     const roomToken = await fetch(`${BASE}/api/testing/internal-capability`, {
       method: "POST", headers: { "content-type": "application/json", "x-openmausbot-test-capability": CAPABILITY_KEY },
