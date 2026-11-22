@@ -336,6 +336,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The official CUA Driver release carries no Authenticode signature, and
+      # Defender's real-time scan removes such an executable mid-extraction on
+      # hosted runners, so the staging script probes a file that is already gone.
+      - name: Exclude this workspace from real-time Defender scans
+        continue-on-error: true
+        run: Add-MpPreference -ExclusionPath (Get-Location).Path -ErrorAction Stop
+        shell: powershell
       - name: Smoke the staged Windows CUA host (no computer actions)
         timeout-minutes: 5
         run: pnpm build:cua:win && pnpm smoke:cua-win

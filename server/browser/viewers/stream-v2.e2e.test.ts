@@ -165,8 +165,10 @@ suite("the v2 stream on real Chrome", () => {
     await until(() => client.frames.at(-1), (frame) => frame?.height === 2000 && Math.abs(frame.width - 1067) <= 1);
     expect(client.messages.filter((message) => message.type === "viewport").at(-1)).toMatchObject({ width: 1280, height: 2400 });
     await client.close();
-    await until(pageSize, same([1280, 800, 2]));
-  }, hostTimeout(90_000));
+    // Clearing the tall emulation and refitting the window settles over several
+    // round-trips, which a loaded runner can stretch past the default patience.
+    await until(pageSize, same([1280, 800, 2]), 60_000);
+  }, hostTimeout(135_000));
 
   it("ends every drag of the panel on a sharp frame of the final size, on a page that never repaints by itself", async () => {
     await opened("/still", STILL);

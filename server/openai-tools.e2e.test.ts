@@ -124,6 +124,8 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
     else expect(response.ok, JSON.stringify(result)).toBe(true);
     return result;
   };
+  const busyBots = async () => (await api("GET", "/api/bots")).bots.filter((bot: any) => bot.busy).map((bot: any) => bot.name);
+  const awaitIdleBots = () => expect.poll(busyBots, { timeout: 30_000, interval: 100 }).toEqual([]);
   try {
     const saved = await api("PATCH", "/api/config", { [instanceId]: {
       key: "synthetic-fixture-key", url: `http://127.0.0.1:${address.port}/v1`,
@@ -143,6 +145,7 @@ it.each(["openaiCompat", "groq", "meta"] as const)("%s runs structured MCP calls
       const startupMarker = join(fixture.info.dataDir, `${mode}-mcp-started.txt`);
       await api("POST", "/api/mcp/servers", { name: mode, command: process.execPath, args: [mcpScript], env: { FIXTURE_ARTIFACT: artifact, FIXTURE_STARTED: startupMarker }, enabled: true });
       if (mode === "tools-off") {
+        await awaitIdleBots();
         await api("PATCH", `/api/instances/${instanceId}`, { tools: "false" }, 400);
         await api("PATCH", "/api/instances/claude", { tools: false }, 400);
         const changed = await api("PATCH", `/api/instances/${instanceId}`, { tools: false });

@@ -1,6 +1,6 @@
 // Stage the Windows CUA executable and native SDK outside ASAR.
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -76,7 +76,8 @@ async function officialBinary() {
   });
   const downloaded = await binaryVersion(cachedBinary);
   if (downloaded.version !== expectedVersion) {
-    throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}: ${downloaded.detail}`);
+    const extracted = existsSync(cache) ? (await readdir(cache)).join(", ") : "cache directory missing";
+    throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}: ${downloaded.detail}; extracted: ${extracted}`);
   }
   return cachedBinary;
 }
