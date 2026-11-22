@@ -35,7 +35,8 @@ async function boot(home: string, knobs: Record<string, string> = {}) {
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server/index.ts")], {
     cwd: ROOT,
-    env: verificationServerEnvironment({ ...process.env, ...knobs }, home, port),
+    // A manifest download changing the world between two of the concurrent reads would describe an honest extra probe.
+    env: verificationServerEnvironment({ ...process.env, OMB_DISABLE_MODEL_MANIFEST_FETCH: "1", ...knobs }, home, port),
     stdio: ["ignore", "pipe", "pipe"],
   });
   children.push(child);
