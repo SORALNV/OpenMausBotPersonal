@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { inspectPrivate } from "./private-file.ts";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -25,8 +26,7 @@ export class ChatDiagnostics {
     this.file = join(dir, "google-chat-diagnostics.json");
     if (existsSync(this.file)) {
       try {
-        const stat = lstatSync(this.file);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size > 262144) return;
+        if (!inspectPrivate(this.file, { kind: "file", singleLink: true, maxBytes: 262_144 }).ok) return;
         const saved = JSON.parse(readFileSync(this.file, "utf8"));
         if (typeof saved.lastNotice === "string" && /^[A-Z_]{1,64}$/.test(saved.lastNotice)) this.lastNotice = saved.lastNotice;
         for (const item of [...(saved.recent ?? []), saved.latestBody, saved.latestWarmup].filter(Boolean)) {

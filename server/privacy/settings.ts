@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PERSONAL_PRIVACY, PRIVACY_SOURCES, type PersonalPrivacySettings } from "../../shared/personal-privacy.ts";
 import { PrivacyBlocked } from "./policy.ts";
+import { inspectPrivate } from "../private-file.ts";
 
 export function validatePrivacySettings(value: unknown): PersonalPrivacySettings {
   const s = value as PersonalPrivacySettings;
@@ -37,8 +38,7 @@ export class PrivacySettingsStore {
   read(): PersonalPrivacySettings {
     try {
       if (!existsSync(this.file)) return structuredClone(DEFAULT_PERSONAL_PRIVACY);
-      const st = lstatSync(this.file);
-      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || (st.mode & 0o077) || st.size > 2_000_000) throw new Error();
+      if (!inspectPrivate(this.file, { kind: "file", singleLink: true, maxBytes: 2_000_000 }).ok) throw new Error();
       return validatePrivacySettings(JSON.parse(readFileSync(this.file, "utf8")));
     } catch { throw new PrivacyBlocked("Mac内の保護設定を読み込めません。対象データの送信を停止します。"); }
   }

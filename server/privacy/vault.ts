@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { LABELS, type PrivacyLabel, type ProtectedTerm } from "./labels.ts";
 import { PrivacyBlocked } from "./policy.ts";
+import { inspectPrivate } from "../private-file.ts";
 
 interface Entry extends ProtectedTerm { token: string; scope: string; scopes?: string[]; displayAliases?: string[]; restoreAs?: string }
 export const TOKEN = /⟦(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d{3,}⟧/gu;
@@ -17,7 +18,7 @@ export class PrivacyVault {
     chmodSync(dir, 0o700);
     this.file = join(dir, "vault.json");
     try {
-      if (existsSync(this.file) && (lstatSync(this.file).isSymbolicLink() || (lstatSync(this.file).mode & 0o077))) throw new Error();
+      if (existsSync(this.file) && !inspectPrivate(this.file, {}).ok) throw new Error();
       const data: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, "utf8")) : [];
       if (!Array.isArray(data) || data.some(e => !e || typeof e.text !== "string" || !e.text || typeof e.scope !== "string" || !Object.hasOwn(LABELS, e.label) || typeof e.token !== "string" || !/^⟦[^⟧]+_\d{3,}⟧$/u.test(e.token))) throw new Error();
       if (data.some(e => e.scopes !== undefined && (!Array.isArray(e.scopes) || e.scopes.some((s: unknown) => typeof s !== "string")))) throw new Error();

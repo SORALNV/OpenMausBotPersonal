@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { inspectPrivate } from "./private-file.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -11,8 +12,7 @@ export class GoogleChatReceipts {
   constructor(dir: string) {
     this.file = join(dir, "google-chat-receipts.json");
     if (!existsSync(this.file)) return;
-    const stat = lstatSync(this.file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size > 8_000_000) throw new Error("Invalid Google Chat receipts");
+    if (!inspectPrivate(this.file, { kind: "file", singleLink: true, maxBytes: 8_000_000 }).ok) throw new Error("Invalid Google Chat receipts");
     const saved = JSON.parse(readFileSync(this.file, "utf8"));
     if (saved.version !== 1 || !saved.entries || typeof saved.entries !== "object" || Array.isArray(saved.entries)) throw new Error("Invalid Google Chat receipts");
     for (const [key, value] of Object.entries(saved.entries) as [string, Receipt][]) {

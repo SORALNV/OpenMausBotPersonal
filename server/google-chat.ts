@@ -6,6 +6,7 @@ import type { McpServerSpec } from "./contracts.ts";
 import type { RouteHandler } from "./routes/table.ts";
 import { PASS } from "./routes/table.ts";
 import { ChatDiagnostics, ChatFailure, chatDeadline, type ChatCode, type ChatStage } from "./google-chat-diagnostics.ts";
+import { inspectPrivate } from "./private-file.ts";
 import { googleChatDirectNotice, googleChatSenderIsSelf, type GoogleChatCalendarAction, type GoogleChatClassification, type GoogleChatClassificationInput, type GoogleChatContextMessage, type GoogleChatNotificationAction } from "./google-chat-notification.ts";
 import { GoogleChatReceipts } from "./google-chat-receipts.ts";
 
@@ -54,8 +55,7 @@ export class GoogleChatLink {
     this.file = join(dir, "google-chat.json");
     if (existsSync(this.file)) {
       try {
-      const stat = lstatSync(this.file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size > 16384) throw new Error("Invalid private Google Chat configuration");
+      if (!inspectPrivate(this.file, { kind: "file", singleLink: true, maxBytes: 16384 }).ok) throw new Error("Invalid private Google Chat configuration");
       this.config = this.validate(JSON.parse(readFileSync(this.file, "utf8")));
       } catch { this.state = "configuration_error"; }
     }
@@ -321,8 +321,7 @@ export class GoogleChatLink {
         if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) return json(res, 415, { error: "JSON required" });
         const body = await readBody(req, 16384);
         const file = this.deps.credentialsFile ?? join(homedir(), "Code", "GoogleChatExtensionMCP", ".local", "credentials.json");
-        const stat = lstatSync(file);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size > 16384) throw new Error("Private credentials required");
+        if (!inspectPrivate(file, { kind: "file", singleLink: true, maxBytes: 16384 }).ok) throw new Error("Private credentials required");
         const token = JSON.parse(readFileSync(file, "utf8")).mcpToken;
         await this.configure({ enabled: true, url: this.deps.bridgeUrl ?? "http://127.0.0.1:17321/mcp", token, botId: body.botId, threadId: body.threadId });
       } else if (method === "PUT") {

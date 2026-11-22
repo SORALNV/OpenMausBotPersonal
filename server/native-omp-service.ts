@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { NativeOmpTransport, nativeOmpCommand, type OmpQuestion, type OmpDestination } from "../scripts/native-omp-transport.mjs";
+import { inspectPrivate } from "./private-file.ts";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
 import { NativeDsh, nativeDshCatalog } from "../scripts/native-dsh.mjs";
 import { NativeOmpCatalog } from "../scripts/native-omp-catalog.mjs";
@@ -115,8 +116,7 @@ export class NativeOmpService {
   }
 
   private read(file: string): any {
-    const info = lstatSync(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.mode & 0o077 || info.uid !== process.getuid?.() || info.size > 2_000_000) throw refuse("Invalid private OhMyPi settings");
+    if (!inspectPrivate(file, { kind: "file", owner: true, singleLink: true, maxBytes: 2_000_000 }).ok) throw refuse("Invalid private OhMyPi settings");
     return JSON.parse(readFileSync(file, "utf8"));
   }
 

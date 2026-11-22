@@ -6,6 +6,7 @@ import type { DirectCodexSettings, DirectThreadBinding } from "../shared/direct-
 import { DirectThreadBridge, presentDirectReply, type ReplyFormatter } from "./direct-thread-bridge.ts";
 import { nativeHistory, nativeTurn, type NativeAsk, type NativeClient } from "./direct-codex-client.ts";
 import type { Message, Store } from "./store.ts";
+import { inspectPrivate } from "./private-file.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
 import type { RequestOutcome } from "./contracts.ts";
 import { relayThroughMediator, type RelayTextGenerator } from "./codex-relay-mediator.ts";
@@ -40,8 +41,7 @@ export class DirectCodexService {
     this.file = join(dir, "direct-codex.json");
     this.generate = generate;
     if (existsSync(this.file)) {
-      const info = lstatSync(this.file);
-      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.mode & 0o077 || info.size > 100_000) throw error("Invalid private native binding settings");
+      if (!inspectPrivate(this.file, { kind: "file", singleLink: true, maxBytes: 100_000 }).ok) throw error("Invalid private native binding settings");
       this.settings = this.validate(JSON.parse(readFileSync(this.file, "utf8")));
     }
   }

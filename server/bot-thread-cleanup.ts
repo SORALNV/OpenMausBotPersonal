@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
+import { inspectPrivate } from "./private-file.ts";
 
 export const BOT_THREAD_SWEEP_MS = 10 * 60_000;
 export interface BotThreadCleanupPolicy { enabled: boolean; idleHours: number }
@@ -41,10 +42,10 @@ export class BotThreadCleanup {
   private run?: () => number;
   constructor(file: string, run?: () => number) {
     this.file = file; this.run = run;
-    if (!existsSync(file)) return;
-    const stat = lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.mode & 0o077 || stat.size > 4096) throw Error("Invalid private cleanup settings");
-    this.policy = this.validate(JSON.parse(readFileSync(file, "utf8")));
+    if (existsSync(file)) {
+      if (!inspectPrivate(file, { kind: "file", owner: true, singleLink: true, maxBytes: 4096 }).ok) throw Error("Invalid private cleanup settings");
+      this.policy = this.validate(JSON.parse(readFileSync(file, "utf8")));
+    }
   }
   private validate(value: any): BotThreadCleanupPolicy {
     if (!value || typeof value.enabled !== "boolean" || !Number.isInteger(value.idleHours) || value.idleHours < 1 || value.idleHours > 720 || Object.keys(value).some(key => !["enabled", "idleHours"].includes(key))) throw Error("未使用期間は1〜720時間で指定してください。");
@@ -61,8 +62,7 @@ export class BotThreadCleanup {
     try {
       const next = this.validate(await readBody(req));
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
-      const parent = lstatSync(dirname(this.file));
-      if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== process.getuid?.() || parent.mode & 0o077) throw Error("Private cleanup directory is unavailable");
+      if (!inspectPrivate(dirname(this.file), { kind: "directory", owner: true }).ok) throw Error("Private cleanup directory is unavailable");
       const temp = this.file + "." + randomUUID() + ".tmp";
       writeFileSync(temp, JSON.stringify(next), { mode: 0o600, flag: "wx" }); renameSync(temp, this.file); this.policy = next;
       return json(res, 200, this.policy);

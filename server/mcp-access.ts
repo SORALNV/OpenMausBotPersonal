@@ -5,6 +5,7 @@ import { z } from "zod";
 import { allowsTool } from "../shared/tool-scope.ts";
 import { isRemoteMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
 import { RemoteMcpClient } from "./mcp-http.ts";
+import { inspectPrivate } from "./private-file.ts";
 import type { BotRecord } from "./store.ts";
 
 const name = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u);
@@ -25,8 +26,7 @@ export class McpAccess {
   constructor(input: McpAccess["input"]) {
     this.input = input;
     if (existsSync(input.file)) {
-      const st = lstatSync(input.file);
-      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.mode & 0o077 || st.uid !== process.getuid?.() || st.size > 2_000_000) throw error("MCP委任設定の保存先が不正です。");
+      if (!inspectPrivate(input.file, { kind: "file", owner: true, singleLink: true, maxBytes: 2_000_000 }).ok) throw error("MCP委任設定の保存先が不正です。");
       this.saved = savedSchema.parse(JSON.parse(readFileSync(input.file, "utf8")));
       this.beforeServersChange(input.servers());
     }
