@@ -47,13 +47,13 @@ async function binaryVersion(candidate) {
 
 async function officialBinary() {
   const cache = join(root, "node_modules", ".cache", "openmausbot", `cua-driver-${release.version}-win`);
-  const cachedBinary = join(cache, "cua-driver.exe");
+  const contents = join(cache, "contents"), cachedBinary = join(contents, "cua-driver.exe");
   const cached = await binaryVersion(cachedBinary);
   if (cached.version === expectedVersion) return cachedBinary;
   if (existsSync(cachedBinary)) console.warn(`Cached CUA Driver probe: ${cached.detail}`);
 
   await rm(cache, { recursive: true, force: true });
-  await mkdir(cache, { recursive: true });
+  await mkdir(contents, { recursive: true });
   const url = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${release.version}/${release.file}`;
   console.log(`Downloading CUA Driver ${release.version} from the official release…`);
   const response = await fetch(url, {
@@ -68,15 +68,15 @@ async function officialBinary() {
   }
   const archive = join(cache, release.file);
   await writeFile(archive, bytes);
-  await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-    "Expand-Archive -LiteralPath $env:OMB_CUA_ARCHIVE -DestinationPath $env:OMB_CUA_EXTRACT"], {
-    env: { ...process.env, OMB_CUA_ARCHIVE: archive, OMB_CUA_EXTRACT: cache },
-    timeout: 60_000,
-    windowsHide: true,
-  });
+  try {
+    await run("tar", ["-xf", archive, "-C", contents], { timeout: 120_000, windowsHide: true });
+  } catch (error) {
+    const stderr = (error.stderr ?? "").trim().replace(/\s+/g, " ").slice(0, 300);
+    throw new Error(`CUA Driver extraction failed: ${[error.message, stderr].filter(Boolean).join("; ")}`);
+  }
   const downloaded = await binaryVersion(cachedBinary);
   if (downloaded.version !== expectedVersion) {
-    const extracted = existsSync(cache) ? (await readdir(cache)).join(", ") : "cache directory missing";
+    const extracted = existsSync(contents) ? (await readdir(contents)).join(", ") : "extraction directory missing";
     throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}: ${downloaded.detail}; extracted: ${extracted}`);
   }
   return cachedBinary;
