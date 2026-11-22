@@ -48,6 +48,19 @@ describe("a cloud computer goes to sleep after use and wakes on the next", () =>
     expect(result.status, `${method} ${path}: ${JSON.stringify(result.body)}`).toBeLessThan(400);
     return result.body;
   };
+  // Computer settings answer this while a created computer still settles; the refusal itself says to wait.
+  const apiOkWhenSettled = async (method: string, path: string, body?: unknown) => {
+    const end = Date.now() + 15_000;
+    for (;;) {
+      const result = await api(method, path, body);
+      const transient = result.status === 409 && typeof result.body?.error === "string" && result.body.error.includes("cloud computer is being changed");
+      if (!transient || Date.now() >= end) {
+        expect(result.status, `${method} ${path}: ${JSON.stringify(result.body)}`).toBeLessThan(400);
+        return result.body;
+      }
+      await pause(100);
+    }
+  };
   async function until<T>(read: () => T | Promise<T>, accept: (value: T) => boolean, ms = 30_000): Promise<T> {
     const end = Date.now() + ms;
     for (;;) {
@@ -271,7 +284,7 @@ describe("a cloud computer goes to sleep after use and wakes on the next", () =>
     teamBox = rows.at(-1)!.id;
     ada = await newBot("Ada", { ...model("uses"), section: "Ops" });
     ben = await newBot("Ben", { ...model("slow"), section: "Ops", computer: "off" });
-    await apiOk("PATCH", `/api/team-computers/${requestId}`, { section: "Ops", acknowledgeSharedAccess: true });
+    await apiOkWhenSettled("PATCH", `/api/team-computers/${requestId}`, { section: "Ops", acknowledgeSharedAccess: true });
 
     rmSync(gate, { force: true });
     await send(ben.id, "Draft the quarterly plan");
