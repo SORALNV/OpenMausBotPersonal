@@ -1,0 +1,13 @@
+{
+  "name": "@openmausbot/win-private",
+  "version": "0.1.170",
+  "private": true,
+  "description": "Verifies owner-private files and directories through Windows ACLs for the OpenMausBot server.",
+  "main": "build/Release/win_private.node",
+  "scripts": {
+    "install": "node install.mjs"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.2.0"
+  }
+}

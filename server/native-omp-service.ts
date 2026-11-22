@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { NativeOmpTransport, nativeOmpCommand, type OmpQuestion, type OmpDestination } from "../scripts/native-omp-transport.mjs";
-import { inspectPrivate } from "./private-file.ts";
+import { inspectPrivate, windowsPrivateFiles } from "./private-file.ts";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
 import { NativeDsh, nativeDshCatalog } from "../scripts/native-dsh.mjs";
 import { NativeOmpCatalog } from "../scripts/native-omp-catalog.mjs";
@@ -121,6 +121,15 @@ export class NativeOmpService {
   }
 
   private save(file: string, value: unknown): void {
+    if (windowsPrivateFiles) {
+      // node's chmod cannot express a private directory or file here; the addon makes
+      // each with its own protected DACL, and the ACL rides the rename.
+      if (!windowsPrivateFiles.createPrivate(this.dir, "directory", "").ok) throw refuse("Invalid private OhMyPi settings");
+      const temp = `${file}.${randomUUID()}.tmp`;
+      if (!windowsPrivateFiles.createPrivate(temp, "file", JSON.stringify(value)).ok) throw refuse("Invalid private OhMyPi settings");
+      renameSync(temp, file);
+      return;
+    }
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     if (lstatSync(this.dir).isSymbolicLink()) throw refuse("Native settings must not use a symlink");
     chmodSync(this.dir, 0o700);
