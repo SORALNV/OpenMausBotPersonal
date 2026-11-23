@@ -8,6 +8,7 @@
 
 #include <string>
 #include <vector>
+#include <cstring>
 
 namespace {
 
@@ -122,7 +123,6 @@ napi_value verifyPrivate(napi_env env, napi_callback_info info) {
                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                 &ownerSid, &group, &dacl, nullptr, &descriptor) != ERROR_SUCCESS) rejection = "unavailable";
             else {
-              const PSID user = tokenSids().user;
               SECURITY_DESCRIPTOR_CONTROL control = 0;
               DWORD revision = 0;
               BOOL daclPresent = FALSE, daclDefaulted = FALSE;
@@ -202,9 +202,8 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
   size_t contentLength = 0;
   bool binary = false;
   void* contentBytes = nullptr;
-  napi_value buffer = nullptr;
-  if (napi_is_buffer(env, argv[2], &buffer) == napi_ok && buffer != nullptr) {
-    binary = true;
+  bool isBuffer = false;
+  if (napi_is_buffer(env, argv[2], &isBuffer) == napi_ok && isBuffer) {
     size_t bufferLength = 0;
     napi_get_buffer_info(env, argv[2], &contentBytes, &bufferLength);
     contentLength = bufferLength;
