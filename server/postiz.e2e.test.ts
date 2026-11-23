@@ -55,7 +55,9 @@ function filesHolding(secret: string): string[] {
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
-      const stat = statSync(path);
+      // The live server's saves create and rename atomic temps as we walk, so an entry may vanish under the stat.
+      let stat;
+      try { stat = statSync(path); } catch { continue; }
       if (stat.isDirectory()) walk(path);
       else if (stat.isFile() && stat.size < 20_000_000 && path !== fixture.fixtureDumpPath && !name.startsWith(CONFIG_BACKUP_PREFIX) && readFileSync(path).includes(secret)) found.push(relative(fixture.info.dataDir, path));
     }
