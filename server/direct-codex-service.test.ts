@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { saveImage } from "./attachments.ts";
 import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
 import { DirectCodexService } from "./direct-codex-service.ts";
+import { inspectPrivate } from "./private-file.ts";
 import type { NativeAsk, NativeClient } from "./direct-codex-client.ts";
 import type { RouteContext } from "./routes/table.ts";
 
@@ -57,7 +58,7 @@ it("persists owner-only per-thread bindings and refuses destination changes and 
   const f = fixture();
   expect((await f.route("PUT", { bindings: [f.binding] }, false)).status).toBe(403);
   expect((await f.route("PUT", { bindings: [f.binding] })).status).toBe(200);
-  expect(statSync(join(f.dir, "direct-codex.json")).mode & 0o777).toBe(0o600);
+  expect(inspectPrivate(join(f.dir, "direct-codex.json"), { kind: "file", owner: true, singleLink: true }).ok).toBe(true);
   expect((await f.route("PUT", { bindings: [{ ...f.binding, codexThreadId: "wrong" }] })).status).toBe(409);
   expect(f.service.binding(f.bot.id, "other")).toBeUndefined();
   expect(JSON.parse(readFileSync(join(f.dir, "direct-codex.json"), "utf8")).bindings[0].codexThreadId).toBe("native-one");

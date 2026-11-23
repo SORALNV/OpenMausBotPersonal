@@ -16,11 +16,15 @@ import {
 } from "node:fs";
 
 import { timeBlocking } from "./perf/loop-stalls.ts";
+import { windowsPrivateFiles } from "./private-file.ts";
 
 export type AtomicWriteOptions = {
   mode?: number;
   /** false skips the fsync. Default true. */
   durable?: boolean;
+  /** Owner-only storage: on Windows the temp file is made through the ACL addon (text only,
+   * and without the fsync), so the rename rides a protected owner-only DACL. */
+  private?: boolean;
 };
 
 /** Windows refuses a rename onto a path while anything (a virus scanner, the indexer) holds a handle, as EPERM or EACCES
@@ -56,6 +60,13 @@ export function writeFileAtomic(path: string, data: string | Uint8Array, options
 
 function writeWhole(path: string, data: string | Uint8Array, options: AtomicWriteOptions): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  if (options.private && windowsPrivateFiles) {
+    if (typeof data !== "string") throw new Error("Private writes support text only.");
+    const made = windowsPrivateFiles.createPrivate(tmp, "file", data);
+    if (!made.ok) throw new Error(`Private file is unavailable: ${made.rejection}`);
+    renameWithRetry(tmp, path);
+    return;
+  }
   let fd: number | null = null;
   try {
     // Permissions go on the temp inode itself, so a broader-permission file is never visible before a chmod.

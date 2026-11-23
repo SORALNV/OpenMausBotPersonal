@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, lstatSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from "jose";
 import { writeFileAtomic } from "../atomic.ts";
+import { ensurePrivateDir } from "../private-file.ts";
 import type { ModelCatalog, ProviderAuthenticationStart, ProviderAuthenticationStatus, ProviderSnapshot } from "../contracts.ts";
 
 const ISSUER = "https://auth.openai.com";
@@ -42,7 +43,7 @@ function string(value: unknown, max = 65_536): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 function privateDirectory(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
+  ensurePrivateDir(path);
   if (!lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) throw new Error("ChatGPT credential storage must be a private directory.");
   chmodSync(path, 0o700);
 }
@@ -124,7 +125,7 @@ export class ChatGptPlanAuthController {
     return record as Credentials;
   }
   private save(record: Credentials): void {
-    writeFileAtomic(join(this.options.directory, "credentials.json"), JSON.stringify(record), { mode: 0o600 });
+    writeFileAtomic(join(this.options.directory, "credentials.json"), JSON.stringify(record), { mode: 0o600, private: true });
   }
   private refusedPath(): string { return join(this.options.directory, "refused-models.json"); }
   private savedRefused(subject: string): string[] {
@@ -159,7 +160,7 @@ export class ChatGptPlanAuthController {
       const subject = this.read()?.subject;
       // A saved list that can't be read throws here, so it is never overwritten with this one model.
       const models = subject ? this.savedRefused(subject) : [];
-      if (subject && !models.includes(slug)) writeFileAtomic(this.refusedPath(), JSON.stringify({ subject, models: [...models, slug] }), { mode: 0o600 });
+      if (subject && !models.includes(slug)) writeFileAtomic(this.refusedPath(), JSON.stringify({ subject, models: [...models, slug] }), { mode: 0o600, private: true });
     });
   }
   private async hostId(): Promise<string> {
@@ -173,7 +174,7 @@ export class ChatGptPlanAuthController {
         return value;
       }
       const value = `urn:uuid:${randomUUID()}`;
-      writeFileAtomic(path, JSON.stringify({ hostId: value }), { mode: 0o600 });
+      writeFileAtomic(path, JSON.stringify({ hostId: value }), { mode: 0o600, private: true });
       return value;
     });
   }

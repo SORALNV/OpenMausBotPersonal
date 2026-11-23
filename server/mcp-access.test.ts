@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const remote = vi.hoisted(() => ({ initialize: vi.fn(), request: vi.fn(), close: vi.fn() }));
 vi.mock("./mcp-http.ts", () => ({ RemoteMcpClient: class { initialize = remote.initialize; request = remote.request; close = remote.close; } }));
 import { McpAccess } from "./mcp-access.ts";
+import { inspectPrivate } from "./private-file.ts";
 const dirs: string[] = [];
 beforeEach(() => { remote.initialize.mockReset().mockResolvedValue({}); remote.request.mockReset(); remote.close.mockReset().mockResolvedValue(undefined); });
 afterEach(() => { dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); });
@@ -42,7 +43,7 @@ it.each(["url", "headers"])("invalidates delegation when the registered %s chang
   const f = fixture(); f.servers.home[key] = key === "url" ? "http://127.0.0.1:2/mcp" : { Authorization: "changed-synthetic-secret" }; expect(f.access.mounted("reporter")).toEqual([]); expect(f.access.owns("home")).toBe(true); expect(() => f.access.manage("manager", { action: "revoke", server: "home", targetId: "reporter", reason: "変更" })).toThrow();
 });
 it("keeps a revoked rule as a tombstone so shared enabled defaults cannot restore access", () => { const f = fixture(); f.servers.home.enabled = true; f.access.revokePolicy("home"); expect(f.access.owns("home")).toBe(true); expect(f.access.mounted("reporter")).toEqual([]); });
-it("persists private grants and receipts across a restart without storing upstream credentials", () => { const f = fixture(); expect(statSync(f.input.file).mode & 0o077).toBe(0); expect(readFileSync(f.input.file, "utf8")).not.toContain("synthetic-secret"); const again = new McpAccess(f.input); expect(again.mounted("reporter")).toEqual(["home"]); });
+it("persists private grants and receipts across a restart without storing upstream credentials", () => { const f = fixture(); expect(inspectPrivate(f.input.file, { kind: "file", owner: true, singleLink: true }).ok).toBe(true); expect(readFileSync(f.input.file, "utf8")).not.toContain("synthetic-secret"); const again = new McpAccess(f.input); expect(again.mounted("reporter")).toEqual(["home"]); });
 it("fails closed on corrupt saved policy and unknown tools", () => { const f = fixture(); expect(() => f.access.configure({ ...f.policy, tools: ["unknown"] }, ["list"])).toThrow(); writeFileSync(f.input.file, '{"version":1,"rules":false,"audit":[]}'); expect(() => new McpAccess(f.input)).toThrow(); });
 it("lists only permitted tools and removes echoed credentials from the reply", async () => {
   const f = fixture(); remote.request.mockResolvedValue({ tools: [{ name: "list", description: "Bearer synthetic-secret-never-print" }, { name: "read" }, { name: "write" }] });

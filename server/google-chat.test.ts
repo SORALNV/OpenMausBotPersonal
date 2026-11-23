@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GoogleChatLink } from "./google-chat.ts";
+import { inspectPrivate } from "./private-file.ts";
 import { writePrivateJson } from "./testing/private-fixture.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -98,7 +99,7 @@ describe("Google Chat local link", () => {
     const restarted = new GoogleChatLink(f.dir, f.deps); cleanup.push(() => restarted.stop());
     await restarted.poll(); restarted.stop(); expect(f.queued).toHaveLength(1);
     f.add("outgoing"); await restarted.poll(); restarted.stop(); expect(f.queued).toHaveLength(1);
-    expect(statSync(join(f.dir, "google-chat.json")).mode & 0o077).toBe(0);
+    expect(inspectPrivate(join(f.dir, "google-chat.json"), { kind: "file", owner: true, singleLink: true }).ok).toBe(true);
     expect(JSON.stringify(restarted.status())).not.toContain(f.token);
   });
   it("keeps failed classification and enqueue events unprocessed, then deduplicates queued work across restart", async () => {
@@ -158,7 +159,7 @@ describe("Google Chat local link", () => {
     expect(f.classifications).toHaveLength(3); expect(f.reported).toHaveLength(2);
     const receipts = readFileSync(join(f.dir, "google-chat-receipts.json"), "utf8");
     expect(receipts).not.toContain("星野架空"); expect(receipts).not.toContain(f.events[0].message.text);
-    expect(statSync(join(f.dir, "google-chat-receipts.json")).mode & 0o077).toBe(0);
+    expect(inspectPrivate(join(f.dir, "google-chat-receipts.json"), { kind: "file", owner: true, singleLink: true }).ok).toBe(true);
   });
   it("bounds classification context before masking without duplicating JSON text mirrors", async () => {
     const f = await fixture();

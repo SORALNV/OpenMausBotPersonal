@@ -1,9 +1,11 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { PersonalPrivacyService } from "./service.ts";
 import { PrivacySettingsStore, validatePrivacySettings } from "./settings.ts";
+import { inspectPrivate } from "../private-file.ts";
+import { writePrivateJson } from "../testing/private-fixture.ts";
 import { DEFAULT_PERSONAL_PRIVACY } from "../../shared/personal-privacy.ts";
 import type { RouteContext } from "../routes/table.ts";
 import { assertPrivacyMode } from "./policy.ts";
@@ -40,7 +42,7 @@ it("replaces only configured variants, keeps unregistered PII, and restores the 
   expect(service.display("scheduled", masked)).toContain("架空さん");
   expect(service.display("ordinary", masked)).toBe(masked);
   expect(new PersonalPrivacyService(dir, () => null).display("scheduled", "⟦ユーザーA⟧")).toBe("架空さん");
-  for (const name of ["settings.json", "vault.json"]) expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+  for (const name of ["settings.json", "vault.json"]) expect(inspectPrivate(join(dir, name), { kind: "file", owner: true, singleLink: true }).ok).toBe(true);
 });
 it("uses longest literal matches and prevents regex interpretation or replacement cascades", async () => {
   const { service, store, settings } = fixture();
@@ -62,13 +64,13 @@ it("keeps ordinary chats untouched and applies only selected local routines and 
 it("preserves aliases while retiring the old model setting, with an owner-only backup and no model configuration", async () => {
   const { service, dir, settings } = fixture();
   vi.stubEnv("OMB_PRIVACY_PYTHON", "/nonexistent/model-must-never-run");
-  writeFileSync(join(dir, "settings.json"), JSON.stringify({ ...settings, modelDetectionEnabled: true }), { mode: 0o600 });
+  writePrivateJson(join(dir, "settings.json"), { ...settings, modelDetectionEnabled: true });
   service.start();
   expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))).not.toHaveProperty("modelDetectionEnabled");
   expect(service.settings.aliases).toEqual(settings.aliases);
   const backups = readdirSync(dir).filter(name => name.startsWith("settings.json.before-model-removal-"));
   expect(backups).toHaveLength(1);
-  expect(statSync(join(dir, backups[0])).mode & 0o777).toBe(0o600);
+  expect(inspectPrivate(join(dir, backups[0]), { kind: "file", owner: true, singleLink: true }).ok).toBe(true);
   expect(JSON.parse(readFileSync(join(dir, backups[0]), "utf8")).modelDetectionEnabled).toBe(true);
   service.start(); expect(readdirSync(dir).filter(name => name.startsWith("settings.json.before-model-removal-"))).toHaveLength(1);
   expect(await service.mask("a", "星野架空")).toBe("⟦ユーザーA⟧");
