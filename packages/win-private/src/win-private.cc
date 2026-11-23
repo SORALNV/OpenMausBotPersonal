@@ -11,28 +11,37 @@
 
 namespace {
 
-PSID currentUserSid() {
-  static PSID cached = nullptr;
-  if (cached != nullptr) return cached;
+// A user SID and, for an elevated token, the Administrators group: Windows gives an
+// elevated process's plain creations the latter as owner, so both count as "owned by us".
+struct TokenSids { PSID user = nullptr; PSID owner = nullptr; };
+
+const TokenSids& tokenSids() {
+  static TokenSids cached;
+  if (cached.user != nullptr) return cached;
   HANDLE token = nullptr;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return nullptr;
-  DWORD size = 0;
-  GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-  if (size == 0) { CloseHandle(token); return nullptr; }
-  std::vector<BYTE> buffer(size);
-  PSID sid = nullptr;
-  if (GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
-    auto* user = reinterpret_cast<TOKEN_USER*>(buffer.data());
-    DWORD length = GetLengthSid(user->User.Sid);
-    sid = LocalAlloc(LMEM_FIXED, length);
-    if (sid != nullptr && !CopySid(length, sid, user->User.Sid)) {
-      LocalFree(sid);
-      sid = nullptr;
-    }
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return cached;
+  for (const TOKEN_INFORMATION_CLASS which : { TokenUser, TokenOwner }) {
+    DWORD size = 0;
+    GetTokenInformation(token, which, nullptr, 0, &size);
+    if (size == 0) continue;
+    std::vector<BYTE> buffer(size);
+    if (!GetTokenInformation(token, which, buffer.data(), size, &size)) continue;
+    auto* granted = reinterpret_cast<TOKEN_USER*>(buffer.data());
+    const DWORD length = GetLengthSid(granted->User.Sid);
+    PSID copy = LocalAlloc(LMEM_FIXED, length);
+    if (copy == nullptr || !CopySid(length, copy, granted->User.Sid)) { LocalFree(copy); continue; }
+    if (which == TokenUser) cached.user = copy;
+    else cached.owner = copy;
   }
   CloseHandle(token);
-  if (sid != nullptr) cached = sid;
   return cached;
+}
+
+// An object whose owner is either SID of this token belongs to this process's trust boundary.
+bool ownedByUs(PSID owner) {
+  const TokenSids& ours = tokenSids();
+  if (owner == nullptr || ours.user == nullptr) return false;
+  return EqualSid(owner, ours.user) || (ours.owner != nullptr && EqualSid(owner, ours.owner));
 }
 
 // Opens the path itself: a reparse point is reported, never followed.
@@ -113,11 +122,11 @@ napi_value verifyPrivate(napi_env env, napi_callback_info info) {
                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                 &ownerSid, &group, &dacl, nullptr, &descriptor) != ERROR_SUCCESS) rejection = "unavailable";
             else {
-              const PSID user = currentUserSid();
+              const PSID user = tokenSids().user;
               SECURITY_DESCRIPTOR_CONTROL control = 0;
               DWORD revision = 0;
               BOOL daclPresent = FALSE, daclDefaulted = FALSE;
-              if (user == nullptr || ownerSid == nullptr || !EqualSid(ownerSid, user)) rejection = "owner";
+              if (!ownedByUs(ownerSid)) rejection = "owner";
               else if (!GetSecurityDescriptorControl(descriptor, &control, &revision) || (control & SE_DACL_PRESENT) == 0 || (control & SE_DACL_PROTECTED) == 0) rejection = "mode";
               else if (!GetSecurityDescriptorDacl(descriptor, &daclPresent, &dacl, &daclDefaulted) || !daclPresent) rejection = "mode";
               else {
@@ -195,7 +204,7 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
   std::vector<char> content(contentLength);
   napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
 
-  const PSID user = currentUserSid();
+  const PSID user = tokenSids().user;
   const char* failure = nullptr;
   if (user == nullptr) failure = "unavailable";
   else {
@@ -214,14 +223,24 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
       }
       if (failure == nullptr && kind == "file") {
         HANDLE created = CreateFileW(path.c_str(), GENERIC_WRITE, 0, &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (created == INVALID_HANDLE_VALUE) failure = "cannot create file";
+        if (created == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS) {
+          // A save over an existing file: the content stays, the owner-only descriptor is forced onto it.
+          if (SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
+              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing file";
+        } else if (created == INVALID_HANDLE_VALUE) failure = "cannot create file";
         else {
           DWORD written = 0;
           if (!WriteFile(created, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) || written != content.size()) failure = "cannot write file";
           CloseHandle(created);
         }
-      } else if (failure == nullptr && CreateDirectoryW(path.c_str(), &attributes) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
-        failure = "cannot create directory";
+      } else if (failure == nullptr) {
+        if (CreateDirectoryW(path.c_str(), &attributes) == 0) {
+          if (GetLastError() == ERROR_ALREADY_EXISTS) {
+            // An existing directory keeps its content; the descriptor is forced onto it.
+            if (SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing directory";
+          } else failure = "cannot create directory";
+        }
       }
       LocalFree(acl);
     }
