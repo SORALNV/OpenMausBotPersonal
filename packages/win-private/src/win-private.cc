@@ -103,7 +103,7 @@ napi_value verifyPrivate(napi_env env, napi_callback_info info) {
           else if (singleLink && about.nNumberOfLinks != 1) rejection = "links";
           else if (maxBytes >= 0) {
             ULARGE_INTEGER bytes = { { about.nFileSizeLow, about.nFileSizeHigh } };
-            if (bytes.QuadPart > static_cast<LONGLONG>(maxBytes)) rejection = "size";
+            if (bytes.QuadPart > maxBytes) rejection = "size";
           }
           if (rejection == nullptr) {
             PSID ownerSid = nullptr, group = nullptr;
@@ -126,7 +126,8 @@ napi_value verifyPrivate(napi_env env, napi_callback_info info) {
                   if (!GetAce(dacl, at, &ace)) { rejection = "unavailable"; break; }
                   auto* header = reinterpret_cast<ACE_HEADER*>(ace);
                   // A record that is not the owner's own allow grant fails the check, deny or audit alike.
-                  if (header->AceType != ACCESS_ALLOWED_ACE_TYPE || !EqualSid(reinterpret_cast<ACCESS_ALLOWED_ACE*>(ace)->Trustee.Sid, ownerSid)) rejection = "mode";
+                  // The allow ACE carries its SID inline at SidStart, not in a Trustee field.
+                  if (header->AceType != ACCESS_ALLOWED_ACE_TYPE || !EqualSid(reinterpret_cast<PSID>(&reinterpret_cast<ACCESS_ALLOWED_ACE*>(ace)->SidStart), ownerSid)) rejection = "mode";
                 }
               }
               if (descriptor != nullptr) LocalFree(descriptor);
@@ -205,11 +206,11 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
     if (!ownerOnlyDescriptor(&descriptor, &acl, user, aceBytes)) failure = "unavailable";
     else {
       attributes.lpSecurityDescriptor = &descriptor;
-      // The driver of a save: every missing ancestor is created privately before the leaf.
-      const size_t leaf = (kind == "file") ? path.find_last_of(L'\\') : path.size();
-      for (size_t at = path.find(L'\\', 3); at != std::wstring::npos && at < leaf; at = path.find(L'\\', at + 1)) {
+      // The driver of a save: every separator names an ancestor directory, created
+      // privately before the leaf; the leaf itself is made last, after them.
+      for (size_t at = path.find(L'\\', 3); at != std::wstring::npos && failure == nullptr; at = path.find(L'\\', at + 1)) {
         const std::wstring prefix = path.substr(0, at);
-        if (CreateDirectoryW(prefix.c_str(), &attributes) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) { failure = "cannot create directory"; break; }
+        if (CreateDirectoryW(prefix.c_str(), &attributes) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) failure = "cannot create directory";
       }
       if (failure == nullptr && kind == "file") {
         HANDLE created = CreateFileW(path.c_str(), GENERIC_WRITE, 0, &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
