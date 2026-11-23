@@ -226,7 +226,7 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
         if (created == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS) {
           // A save over an existing file: the content stays, the owner-only descriptor is forced onto it.
           if (SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
-              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing file";
+              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing file";
         } else if (created == INVALID_HANDLE_VALUE) failure = "cannot create file";
         else {
           DWORD written = 0;
@@ -238,7 +238,7 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
           if (GetLastError() == ERROR_ALREADY_EXISTS) {
             // An existing directory keeps its content; the descriptor is forced onto it.
             if (SetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing directory";
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, user, nullptr, acl, nullptr) != ERROR_SUCCESS) failure = "cannot privatize existing directory";
           } else failure = "cannot create directory";
         }
       }
