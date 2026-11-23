@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { NativeOmpTransport, OmpDestination } from "../scripts/native-omp-transport.mjs";
 import { DATA_DIR } from "./config.ts";
 import { NativeOmpService } from "./native-omp-service.ts";
+import { writePrivateJson } from "./testing/private-fixture.ts";
 import { NativeOmpCollab } from "../scripts/native-omp-collab.mjs";
 import { saveImage } from "./attachments.ts";
 import { Store } from "./store.ts";
@@ -23,7 +24,7 @@ function fixture(conversationFull?: (threadId: string) => boolean) {
   const bot = store.createBot({ name: "Synthetic Pi" });
   const selection = { providerId: "fixture", modelId: "fixture-small", timeoutMs: 1000 };
   const binding = { botId: bot.id, enabled: true, host: "fixture.test", user: "fixture", binary: "/fixture/omp", stateRoot: "/fixture/threads", profile: "fixture", cwd: "/fixture/workspace", model: "fixture/model", mediator: selection };
-  writeFileSync(join(dir, "native-omp.json"), JSON.stringify({ bindings: [binding] }), { mode: 0o600 });
+  writePrivateJson(join(dir, "native-omp.json"), JSON.stringify({ bindings: [binding] }));
   const generate = vi.fn(async (_provider: string, _model: string, _prompt: string, _signal: AbortSignal, _images?: readonly import("./contracts.ts").TurnImageInput[]) => JSON.stringify({ action: "chat", note: "架空の整理メモ" }));
   const open = vi.fn((_binding: OmpDestination) => {
     const client = new EventEmitter();
@@ -70,7 +71,7 @@ it("does not replay or relabel a submitted indeterminate request after restart",
   const f = fixture();
   const source = f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: "架空の未完了入力" });
   const digest = createHash("sha256").update(JSON.stringify([f.bot.id, f.bot.threadId, source.text])).digest("hex");
-  writeFileSync(join(f.dir, "native-omp-ledger.json"), JSON.stringify({ [source.id]: { digest, stage: "submitted", sessionId: "native-one" } }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp-ledger.json"), JSON.stringify({ [source.id]: { digest, stage: "submitted", sessionId: "native-one" } }));
   const restarted = f.create();
   restarted.dispatch(restarted.binding(f.bot.id, f.bot.threadId)!, source.text!, {}, source);
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
@@ -111,7 +112,7 @@ function sharedFixture(approvalPolicy?: "mediator") {
   const f = fixture(); f.service.close();
   const native = f.open({} as OmpDestination);
   vi.spyOn(NativeOmpCollab, "connect").mockReturnValue(native as NativeOmpCollab);
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", ...(approvalPolicy ? { approvalPolicy } : {}) }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", ...(approvalPolicy ? { approvalPolicy } : {}) }] }));
   const service = f.create();
   return { ...f, service, native };
 }
@@ -164,7 +165,7 @@ it("a detached shared connector is replaced before the next explicit BOT input",
 
 function reviewingFixture(conversationFull?: (threadId: string) => boolean) {
   const f = fixture(conversationFull); f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, approvalPolicy: "mediator" }] }));
   let finish!: (value: { requestId: string; sessionId: string; sessionFile: string; text: string }) => void;
   const client = Object.assign(new EventEmitter(), {
     initialize: vi.fn(async () => ({ sessionId: "native-one", sessionFile: "/fixture/session", resumed: true })),
@@ -245,7 +246,7 @@ it("shared pending approvals remain reachable after a BOT request fails", async 
 it("a replayed shared approval is surfaced immediately on startup without a new user prompt", async () => {
   const f = sharedFixture(); f.service.close();
   Object.assign(f.native, { answerUi: vi.fn() });
-  writeFileSync(join(f.dir, "native-omp-sessions.json"), JSON.stringify({ [f.bot.threadId]: "native-one" }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp-sessions.json"), JSON.stringify({ [f.bot.threadId]: "native-one" }));
   vi.mocked(f.native.initialize).mockImplementation(async () => {
     f.native.emit("question", { id: "replayed", method: "select", title: "Allow tool: write\nPath: proc://synthetic", options: ["Approve", "Deny"] });
     return { sessionId: "native-one", sessionFile: "/fixture/session", resumed: true, cancelled: false };
@@ -323,7 +324,7 @@ it("renders ordinary native questions as questions and maps Japanese choices to 
 it("recovers the review context from admitted history after a failed BOT turn, but never lends it to a human turn", async () => {
   const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() });
   f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }));
   const service = f.create();
   vi.mocked(f.native.submit).mockRejectedValue(new Error("synthetic disconnect"));
   service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "ディスクの容量を調べて");
@@ -371,7 +372,7 @@ it("cannot use a foreign human answer to settle an interrupted BOT receipt", asy
 it("restores completed BOT authorization for native background work after restart without lending it to a new human", async () => {
   const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn(), recentFileWrites: vi.fn(() => [{ path: "tests/test_a.py", content: "import unittest\n" }]) });
   f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }));
   const service = f.create(); const source = service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "プロジェクトのコードとテストを作って");
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce()); service.close();
   const restart = f.create(); restart.start();
@@ -396,7 +397,7 @@ it("closing OMB detaches shared native work without sending a native Stop", asyn
 
 it("an active OMB request never authorizes a new human native turn", async () => {
   const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() }); f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }));
   vi.mocked(f.native.submit).mockImplementation(() => new Promise(() => {})); const service = f.create();
   const source = service.dispatch(service.binding(f.bot.id, f.bot.threadId)!, "元のBOT作業");
   await vi.waitFor(() => expect(f.native.submit).toHaveBeenCalledOnce());
@@ -432,7 +433,7 @@ it("reads fresh edited source before reviewing execution and carries same-reques
 
 it("revokes an in-flight model approval when a human takes over the shared TUI", async () => {
   const f = sharedFixture(); Object.assign(f.native, { answerUi: vi.fn() }); f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }));
   const service=f.create();const source=service.dispatch(service.binding(f.bot.id,f.bot.threadId)!,"接続状態を確認して");
   await vi.waitFor(() => expect(f.settled).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry",{entryId:"owned",role:"user",text:source.text,sessionId:"native-one",own:true,snapshot:true});
@@ -566,7 +567,7 @@ it("an idle grant covers only the next request, and cannot survive Stop or resta
 
 it("idle shared-state refresh does not consume a grant for the next request", async () => {
   const f = sharedFixture(); f.service.close();
-  writeFileSync(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }), { mode: 0o600 });
+  writePrivateJson(join(f.dir, "native-omp.json"), JSON.stringify({ bindings: [{ ...f.binding, connection: "shared-tui", approvalPolicy: "mediator" }] }));
   const service = f.create();
   Object.assign(f.native, { answerUi: vi.fn() });
   let finish!: (value: Awaited<ReturnType<NativeOmpTransport["submit"]>>) => void;
@@ -712,8 +713,8 @@ it("separates reconnecting and queued state from actual working without draining
 
 it("surfaces a recovered approval without request context instead of silently deadlocking mediator mode", async () => {
   const f=sharedFixture();f.service.close();Object.assign(f.native,{answerUi:vi.fn()});
-  writeFileSync(join(f.dir,"native-omp.json"),JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}),{mode:0o600});
-  writeFileSync(join(f.dir,"native-omp-sessions.json"),JSON.stringify({[f.bot.threadId]:"native-one"}),{mode:0o600});
+  writePrivateJson(join(f.dir,"native-omp.json"), JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}));
+  writePrivateJson(join(f.dir,"native-omp-sessions.json"), JSON.stringify({[f.bot.threadId]:"native-one"}));
   vi.mocked(f.native.initialize).mockImplementation(async()=>{
     f.native.emit("nativeState",{busy:true,streaming:true,waiting:true});
     f.native.emit("question",{id:"unowned-recovered",method:"select",title:"Allow tool: bash\nCommand: mkfs.ext4 /dev/sda",options:["Approve","Deny"]});
@@ -730,7 +731,7 @@ it("surfaces a recovered approval without request context instead of silently de
 
 it("keeps an automatic approval with missing receipt visible rather than silently abandoning native input", async () => {
   const f=sharedFixture();f.service.close();Object.assign(f.native,{answerUi:vi.fn(async()=>{throw Error("missing receipt");})});
-  writeFileSync(join(f.dir,"native-omp.json"),JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}),{mode:0o600});
+  writePrivateJson(join(f.dir,"native-omp.json"), JSON.stringify({bindings:[{...f.binding,connection:"shared-tui",approvalPolicy:"mediator"}]}));
   const service=f.create(),source=service.dispatch(service.binding(f.bot.id,f.bot.threadId)!,"状態を調べて");
   await vi.waitFor(()=>expect(f.settled).toHaveBeenCalledOnce());
   f.native.emit("nativeEntry",{entryId:"approval-owner",role:"user",text:source.text,sessionId:"native-one",own:true,snapshot:false});

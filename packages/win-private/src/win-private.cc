@@ -159,14 +159,13 @@ bool ownerOnlyDescriptor(PSECURITY_DESCRIPTOR descriptor, PACL* acl, PSID user, 
   if (!InitializeAcl(*acl, aceBytes, ACL_REVISION) ||
       !AddAccessAllowedAceEx(*acl, ACL_REVISION, 0, FILE_ALL_ACCESS, user) ||
       !SetSecurityDescriptorOwner(descriptor, user, FALSE) ||
-      !SetSecurityDescriptorDacl(descriptor, TRUE, *acl, FALSE)) {
+      !SetSecurityDescriptorDacl(descriptor, TRUE, *acl, FALSE) ||
+      !SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED)) {
     LocalFree(*acl);
     *acl = nullptr;
     return false;
   }
-  DWORD revision = 0;
-  SECURITY_DESCRIPTOR_CONTROL control = 0;
-  return GetSecurityDescriptorControl(descriptor, &control, &revision) && (control & SE_DACL_PROTECTED) != 0;
+  return true;
 }
 
 napi_value createPrivate(napi_env env, napi_callback_info info) {
@@ -207,8 +206,8 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
     else {
       attributes.lpSecurityDescriptor = &descriptor;
       // The driver of a save: every missing ancestor is created privately before the leaf.
-      for (size_t at = 3; at <= path.size(); at++) {
-        if (at != path.size() && path[at] != L'\\') continue;
+      const size_t leaf = (kind == "file") ? path.find_last_of(L'\\') : path.size();
+      for (size_t at = path.find(L'\\', 3); at != std::wstring::npos && at < leaf; at = path.find(L'\\', at + 1)) {
         const std::wstring prefix = path.substr(0, at);
         if (CreateDirectoryW(prefix.c_str(), &attributes) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) { failure = "cannot create directory"; break; }
       }
@@ -220,6 +219,8 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
           if (!WriteFile(created, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) || written != content.size()) failure = "cannot write file";
           CloseHandle(created);
         }
+      } else if (failure == nullptr && CreateDirectoryW(path.c_str(), &attributes) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
+        failure = "cannot create directory";
       }
       LocalFree(acl);
     }
