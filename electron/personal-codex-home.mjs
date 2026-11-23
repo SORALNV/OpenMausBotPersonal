@@ -29,7 +29,9 @@ export function preparePersonalCodexHome({ directory, loginHome }) {
   chmodSync(config, 0o600);
   const auth = join(source, "auth.json");
   const credentials = inspect(auth);
-  if (credentials && (!credentials.isFile() || credentials.nlink !== 1 || (credentials.mode & 0o077) ||
+  // Windows has no mode bits (any file reports 0666); its sign-in file is private through the profile's ACLs.
+  if (credentials && (!credentials.isFile() || credentials.nlink !== 1 ||
+    (process.platform !== "win32" && (credentials.mode & 0o077)) ||
     (process.getuid && credentials.uid !== process.getuid()))) {
     throw new Error("The shared Codex sign-in must be an owned private regular file");
   }
