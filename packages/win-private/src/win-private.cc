@@ -201,7 +201,8 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
   std::string kind(kindBuffer.data(), kindLength);
   size_t contentLength = 0;
   napi_get_value_string_utf8(env, argv[2], nullptr, 0, &contentLength);
-  std::vector<char> content(contentLength);
+  // The reported length excludes the terminator the second call writes.
+  std::vector<char> content(contentLength + 1);
   napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
 
   const PSID user = tokenSids().user;
@@ -230,7 +231,7 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
         } else if (created == INVALID_HANDLE_VALUE) failure = "cannot create file";
         else {
           DWORD written = 0;
-          if (!WriteFile(created, content.data(), static_cast<DWORD>(content.size()), &written, nullptr) || written != content.size()) failure = "cannot write file";
+          if (!WriteFile(created, content.data(), static_cast<DWORD>(contentLength), &written, nullptr) || written != contentLength) failure = "cannot write file";
           CloseHandle(created);
         }
       } else if (failure == nullptr) {
