@@ -8,6 +8,6 @@
     "install": "node install.mjs"
   },
   "devDependencies": {
-    "node-gyp": "^10.2.0"
+    "node-gyp": "^13.1.0"
   }
 }

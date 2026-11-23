@@ -5,6 +5,7 @@
 import { createRequire } from "node:module";
 import { lstatSync, mkdirSync, writeFileSync, type Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 export type PrivateRejection = "kind" | "symlink" | "links" | "mode" | "owner" | "size" | "missing" | "unavailable";
 
@@ -24,14 +25,21 @@ export interface WindowsPrivateFiles {
   createPrivate(path: string, kind: "file" | "directory", content: string): { ok: true } | { ok: false; rejection: string };
 }
 
+// The addon's calls where it built, and null everywhere else. The packaged app ships no
+// node_modules; the built binding is staged under <resources>/win-private, and the anchor
+// makes createRequire resolve upwards into it first, the way duckdb's slice does.
 function loadWindowsPrivateFiles(): WindowsPrivateFiles | null {
   if (process.platform !== "win32") return null;
-  try {
-    const found = createRequire(import.meta.url)("@openmausbot/win-private") as Partial<WindowsPrivateFiles>;
-    return typeof found.verifyPrivate === "function" && typeof found.createPrivate === "function" ? (found as WindowsPrivateFiles) : null;
-  } catch {
-    return null;
+  const anchors: (string | null)[] = [];
+  if (process.env.OMB_RESOURCES_PATH) anchors.push(join(process.env.OMB_RESOURCES_PATH, "win-private", "node_modules", "openmausbot-win-private-anchor.js"));
+  anchors.push(null);
+  for (const anchor of anchors) {
+    try {
+      const found = createRequire(anchor ?? import.meta.url)("@openmausbot/win-private") as Partial<WindowsPrivateFiles>;
+      if (typeof found.verifyPrivate === "function" && typeof found.createPrivate === "function") return found as WindowsPrivateFiles;
+    } catch { /* the packaged tree may not stage it; the dev checkout resolves from source */ }
   }
+  return null;
 }
 
 /** The addon's calls where it built, and null everywhere else. */

@@ -177,6 +177,9 @@ win:
       to: browser-engine
     - from: dist-native/duckdb/win32-x64/node_modules
       to: duckdb/node_modules
+    # Owner-private file verification addon for Windows — must live outside ASAR for its .node binding
+    - from: dist-native/win-private/win32-x64/node_modules
+      to: win-private/node_modules
     # CUA driver and SDK for Windows — must live outside ASAR for native modules
     - from: dist-native/cua-win32-x64/cua-driver.exe
       to: cua-driver.exe
