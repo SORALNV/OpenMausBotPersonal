@@ -18,8 +18,11 @@ test("separates native state and follows a replaced login without copying creden
   writeFileSync(join(loginHome, "config.toml"), "sqlite_home = \"/synthetic/shared\"\n");
   const env = preparePersonalCodexHome(options);
   assert.deepEqual(env, { CODEX_HOME: directory, CODEX_SQLITE_HOME: directory });
-  assert.equal(lstatSync(directory).mode & 0o777, 0o700);
-  assert.equal(lstatSync(join(directory, "config.toml")).mode & 0o777, 0o600);
+  // Windows has no mode bits; its privacy is the profile ACL the directory already sits under.
+  if (process.platform !== "win32") {
+    assert.equal(lstatSync(directory).mode & 0o777, 0o700);
+    assert.equal(lstatSync(join(directory, "config.toml")).mode & 0o777, 0o600);
+  }
   assert(lstatSync(join(directory, "auth.json")).isSymbolicLink());
   assert(!readFileSync(join(directory, "config.toml"), "utf8").includes("/synthetic/shared"));
   writeFileSync(join(loginHome, "rotated"), "synthetic-after", { mode: 0o600 });

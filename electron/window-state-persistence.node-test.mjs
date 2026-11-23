@@ -20,7 +20,7 @@ test("persists and restores normal window bounds atomically on close", () => {
     window.emit("move"); window.emit("close");
     const file = join(directory, "window-state.json");
     assert.deepEqual(persistence.readWindowState(), JSON.parse(readFileSync(file, "utf8")));
-    assert.equal(statSync(file).mode & 0o077, 0);
+    if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o077, 0);
     assert.deepEqual(logs, []);
     writeFileSync(file, "invalid json");
     assert.equal(persistence.readWindowState(), null);
