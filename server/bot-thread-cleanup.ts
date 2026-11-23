@@ -1,9 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Store } from "./store.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
-import { inspectPrivate } from "./private-file.ts";
+import { ensurePrivateDir, inspectPrivate, writePrivateTemp } from "./private-file.ts";
 
 export const BOT_THREAD_SWEEP_MS = 10 * 60_000;
 export interface BotThreadCleanupPolicy { enabled: boolean; idleHours: number }
@@ -61,10 +60,9 @@ export class BotThreadCleanup {
     if (method !== "PUT") return json(res, 405, { error: "Method not allowed" });
     try {
       const next = this.validate(await readBody(req));
-      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      ensurePrivateDir(dirname(this.file));
       if (!inspectPrivate(dirname(this.file), { kind: "directory", owner: true }).ok) throw Error("Private cleanup directory is unavailable");
-      const temp = this.file + "." + randomUUID() + ".tmp";
-      writeFileSync(temp, JSON.stringify(next), { mode: 0o600, flag: "wx" }); renameSync(temp, this.file); this.policy = next;
+      renameSync(writePrivateTemp(this.file, JSON.stringify(next)), this.file); this.policy = next;
       return json(res, 200, this.policy);
     } catch (error) { return json(res, 400, { error: error instanceof Error ? error.message : "設定を保存できません。" }); }
   };

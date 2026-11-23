@@ -1,12 +1,11 @@
 import { nativeAttachmentInput } from "./native-attachments.ts";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { DirectCodexSettings, DirectThreadBinding } from "../shared/direct-codex.ts";
 import { DirectThreadBridge, presentDirectReply, type ReplyFormatter } from "./direct-thread-bridge.ts";
 import { nativeHistory, nativeTurn, type NativeAsk, type NativeClient } from "./direct-codex-client.ts";
 import type { Message, Store } from "./store.ts";
-import { inspectPrivate } from "./private-file.ts";
+import { ensurePrivateDir, inspectPrivate, writePrivateTemp } from "./private-file.ts";
 import { PASS, type RouteHandler } from "./routes/table.ts";
 import type { RequestOutcome } from "./contracts.ts";
 import { relayThroughMediator, type RelayTextGenerator } from "./codex-relay-mediator.ts";
@@ -62,11 +61,10 @@ export class DirectCodexService {
     }) };
   }
   private save(): void {
-    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDir(this.dir);
     if (lstatSync(this.dir).isSymbolicLink()) throw error("Native settings directory must not be a symlink");
     chmodSync(this.dir, 0o700);
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temp, JSON.stringify(this.settings), { mode: 0o600, flag: "wx" }); renameSync(temp, this.file);
+    renameSync(writePrivateTemp(this.file, JSON.stringify(this.settings)), this.file);
   }
   binding(botId: string, threadId: string): Binding | undefined { return this.settings.bindings.find(b => b.enabled && b.botId === botId && b.threadId === threadId); }
   private syncState(threadId: string, state: string): void {

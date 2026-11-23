@@ -1,5 +1,5 @@
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { inspectPrivate } from "./private-file.ts";
+import { chmodSync, existsSync, readFileSync, renameSync } from "node:fs";
+import { inspectPrivate, writePrivateTemp } from "./private-file.ts";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -65,9 +65,7 @@ export class ChatDiagnostics {
   }
   notified(status: string): void { if (/^[A-Z_]{1,64}$/.test(status)) { this.lastNotice = status; this.save(); } }
   private save(): void {
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temp, JSON.stringify({ lastNotice: this.lastNotice, latestBody: this.latestBody, latestWarmup: this.latestWarmup, recent: this.recent }), { mode: 0o600, flag: "wx" });
-    renameSync(temp, this.file); chmodSync(this.file, 0o600);
+    renameSync(writePrivateTemp(this.file, JSON.stringify({ lastNotice: this.lastNotice, latestBody: this.latestBody, latestWarmup: this.latestWarmup, recent: this.recent })), this.file); chmodSync(this.file, 0o600);
   }
 }
 

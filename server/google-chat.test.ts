@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GoogleChatLink } from "./google-chat.ts";
+import { writePrivateJson } from "./testing/private-fixture.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
@@ -112,7 +113,7 @@ describe("Google Chat local link", () => {
     f.setQueueFail(false); await f.link.poll(); f.link.stop();
     expect(f.queued).toHaveLength(1); expect(f.link.status().cursor).toBe(1);
     const saved = JSON.parse(readFileSync(join(f.dir, "google-chat.json"), "utf8")); saved.cursor = 0;
-    writeFileSync(join(f.dir, "google-chat.json"), JSON.stringify(saved), { mode: 0o600 });
+    writePrivateJson(join(f.dir, "google-chat.json"), saved);
     const restarted = new GoogleChatLink(f.dir, f.deps); cleanup.push(() => restarted.stop());
     await restarted.poll(); restarted.stop(); expect(f.queued).toHaveLength(1);
   });
@@ -249,7 +250,7 @@ describe("Google Chat local link", () => {
   });
   it("desktop connect reads private credentials locally and stop needs no token in the request or response", async () => {
     const f = await fixture();
-    const credentials = join(f.dir, "synthetic-credentials.json"); writeFileSync(credentials, JSON.stringify({ mcpToken: f.token }), { mode: 0o600 });
+    const credentials = join(f.dir, "synthetic-credentials.json"); writePrivateJson(credentials, { mcpToken: f.token });
     const link = new GoogleChatLink(join(f.dir, "other"), { ...f.deps, credentialsFile: credentials, bridgeUrl: f.url }); cleanup.push(() => link.stop());
     let result: any, status: number;
     const route = async (path: string, method: string, body: unknown, kind = "loopback", scopes = ["admin"]) => {

@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { allowsTool } from "../shared/tool-scope.ts";
 import { isRemoteMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
 import { RemoteMcpClient } from "./mcp-http.ts";
-import { inspectPrivate } from "./private-file.ts";
+import { ensurePrivateDir, inspectPrivate, writePrivateTemp } from "./private-file.ts";
 import type { BotRecord } from "./store.ts";
 
 const name = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u);
@@ -69,12 +69,11 @@ export class McpAccess {
   view() { return structuredClone(this.saved); }
   policyRevision(server: string): string { return createHash("sha256").update(JSON.stringify(this.saved.rules[server] ?? null)).digest("hex"); }
   private commit(next: Saved): void {
-    const checked = savedSchema.parse(next), folder = dirname(this.input.file); mkdirSync(folder, { recursive: true, mode: 0o700 });
+    const checked = savedSchema.parse(next), folder = dirname(this.input.file); ensurePrivateDir(folder);
     if (lstatSync(folder).isSymbolicLink()) throw error("MCP委任設定の保存先が不正です。");
     const serialized = JSON.stringify(checked);
     if (Buffer.byteLength(serialized) > 2_000_000 || Object.keys(checked.rules).length > 20) throw error("MCP権限設定の保存上限に達しました。", 409);
-    const temp = this.input.file + "." + randomUUID() + ".tmp";
-    writeFileSync(temp, serialized, { mode: 0o600, flag: "wx" });
+    const temp = writePrivateTemp(this.input.file, serialized);
     try { renameSync(temp, this.input.file); } finally { rmSync(temp, { force: true }); }
     this.saved = checked;
   }

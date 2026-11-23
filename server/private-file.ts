@@ -3,7 +3,8 @@
 // Windows has no primitives for; there the addon (packages/win-private) verifies a held
 // handle's owner and protected DACL, and a machine without the built addon fails closed.
 import { createRequire } from "node:module";
-import { lstatSync, type Stats } from "node:fs";
+import { lstatSync, mkdirSync, writeFileSync, type Stats } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 export type PrivateRejection = "kind" | "symlink" | "links" | "mode" | "owner" | "size" | "missing" | "unavailable";
 
@@ -51,4 +52,31 @@ export function inspectPrivate(path: string, want: PrivateExpectation): { ok: tr
               : (want.maxBytes !== undefined && stat.size > want.maxBytes) ? "size"
                 : null;
   return rejection ? { ok: false, rejection } : { ok: true, stat };
+}
+
+// node's chmod and mkdir cannot express an owner-only Windows file: the DACL that makes a
+// file private is invisible to them, and the ACL rides the rename. The addon builds the
+// descriptor instead; POSIX keeps mode bits in the plain fs calls.
+export function ensurePrivateDir(dir: string): void {
+  if (windowsPrivateFiles) {
+    const made = windowsPrivateFiles.createPrivate(dir, "directory", "");
+    if (!made.ok) throw new Error(`Private directory is unavailable: ${made.rejection}`);
+    return;
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+export function createPrivateFile(file: string, body: string): void {
+  if (windowsPrivateFiles) {
+    const made = windowsPrivateFiles.createPrivate(file, "file", body);
+    if (!made.ok) throw new Error(`Private file is unavailable: ${made.rejection}`);
+    return;
+  }
+  writeFileSync(file, body, { mode: 0o600, flag: "wx" });
+}
+
+export function writePrivateTemp(file: string, body: string): string {
+  const temp = `${file}.${randomUUID()}.tmp`;
+  createPrivateFile(temp, body);
+  return temp;
 }

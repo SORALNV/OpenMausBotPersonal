@@ -1,12 +1,11 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import type { McpServerSpec } from "./contracts.ts";
 import type { RouteHandler } from "./routes/table.ts";
 import { PASS } from "./routes/table.ts";
 import { ChatDiagnostics, ChatFailure, chatDeadline, type ChatCode, type ChatStage } from "./google-chat-diagnostics.ts";
-import { inspectPrivate } from "./private-file.ts";
+import { ensurePrivateDir, inspectPrivate, writePrivateTemp } from "./private-file.ts";
 import { googleChatDirectNotice, googleChatSenderIsSelf, type GoogleChatCalendarAction, type GoogleChatClassification, type GoogleChatClassificationInput, type GoogleChatContextMessage, type GoogleChatNotificationAction } from "./google-chat-notification.ts";
 import { GoogleChatReceipts } from "./google-chat-receipts.ts";
 
@@ -46,7 +45,7 @@ export class GoogleChatLink {
   readonly diagnostics: ChatDiagnostics;
   constructor(dir: string, deps: Deps) {
     this.deps = deps;
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDir(dir);
     if (lstatSync(dir).isSymbolicLink()) throw new Error("Private Google Chat storage must not be a symlink");
     chmodSync(dir, 0o700);
     try { this.receipts = new GoogleChatReceipts(dir); } catch { this.state = "STORAGE_FAILED"; }
@@ -69,9 +68,7 @@ export class GoogleChatLink {
     return { enabled: c.enabled, url: url.href, token: c.token, botId: c.botId, threadId: c.threadId, cursor: c.cursor };
   }
   private save(c: Config): void {
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temp, JSON.stringify(c), { mode: 0o600, flag: "wx" });
-    renameSync(temp, this.file);
+    renameSync(writePrivateTemp(this.file, JSON.stringify(c)), this.file);
     this.config = c;
   }
   status() {

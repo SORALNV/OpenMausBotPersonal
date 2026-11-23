@@ -1,9 +1,8 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { LABELS, type PrivacyLabel, type ProtectedTerm } from "./labels.ts";
 import { PrivacyBlocked } from "./policy.ts";
-import { inspectPrivate } from "../private-file.ts";
+import { ensurePrivateDir, inspectPrivate, writePrivateTemp } from "../private-file.ts";
 
 interface Entry extends ProtectedTerm { token: string; scope: string; scopes?: string[]; displayAliases?: string[]; restoreAs?: string }
 export const TOKEN = /⟦(?:人物|住所|メール|電話|口座|秘密|URL|日付)_\d{3,}⟧/gu;
@@ -13,7 +12,7 @@ export class PrivacyVault {
   private entries: Entry[];
 
   constructor(dir: string) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDir(dir);
     if (lstatSync(dir).isSymbolicLink()) throw new PrivacyBlocked("保護用ディレクトリにシンボリックリンクは使えません。");
     chmodSync(dir, 0o700);
     this.file = join(dir, "vault.json");
@@ -44,10 +43,8 @@ export class PrivacyVault {
   }
 
   commit(): void {
-    const temp = `${this.file}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(temp, JSON.stringify(this.entries), { mode: 0o600, flag: "wx" });
-      renameSync(temp, this.file);
+      renameSync(writePrivateTemp(this.file, JSON.stringify(this.entries)), this.file);
     } catch { throw new PrivacyBlocked("ローカル対応表を保存できません。送信は停止しています。"); }
   }
 

@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { inspectPrivate } from "./private-file.ts";
-import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync } from "node:fs";
+import { inspectPrivate, writePrivateTemp } from "./private-file.ts";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 type Receipt = { revisions: string[]; notice?: string };
@@ -33,9 +33,7 @@ export class GoogleChatReceipts {
     const entries = { ...this.entries, [key]: receipt };
     const json = JSON.stringify({ version: 1, entries });
     if (json.length > 8_000_000) throw new Error("Google Chat receipt storage is full");
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temp, json, { mode: 0o600, flag: "wx" });
-    renameSync(temp, this.file);
+    renameSync(writePrivateTemp(this.file, json), this.file);
     this.entries = entries;
   }
 }

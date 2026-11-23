@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { writePrivateJson } from "../testing/private-fixture.ts";
 import { ChatGptPlanAuthController } from "./chatgpt-plan-auth.ts";
 
 // Real loopback callback and signed synthetic OIDC/JWKS/token/model endpoints; no real account or token.
@@ -31,7 +32,7 @@ describe("official ChatGPT plan OAuth", () => {
   const stored = () => JSON.parse(readFileSync(join(directory, "credentials.json"), "utf8"));
   const expire = () => {
     const record = stored(); record.tokens.expiresAt = Date.now() - 1000;
-    writeFileSync(join(directory, "credentials.json"), JSON.stringify(record), { mode: 0o600 });
+    writePrivateJson(join(directory, "credentials.json"), record);
   };
   async function begin(controller: ChatGptPlanAuthController) {
     const flow = await controller.start();

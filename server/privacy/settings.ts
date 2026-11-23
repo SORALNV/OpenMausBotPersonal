@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PERSONAL_PRIVACY, PRIVACY_SOURCES, type PersonalPrivacySettings } from "../../shared/personal-privacy.ts";
 import { PrivacyBlocked } from "./policy.ts";
-import { inspectPrivate } from "../private-file.ts";
+import { createPrivateFile, ensurePrivateDir, inspectPrivate, writePrivateTemp } from "../private-file.ts";
 
 export function validatePrivacySettings(value: unknown): PersonalPrivacySettings {
   const s = value as PersonalPrivacySettings;
@@ -31,7 +31,7 @@ export function validatePrivacySettings(value: unknown): PersonalPrivacySettings
 export class PrivacySettingsStore {
   private readonly file: string;
   constructor(dir: string) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDir(dir);
     if (lstatSync(dir).isSymbolicLink()) throw new PrivacyBlocked("保護設定にシンボリックリンクは使えません。");
     chmodSync(dir, 0o700); this.file = join(dir, "settings.json");
   }
@@ -47,14 +47,13 @@ export class PrivacySettingsStore {
     const settings = this.read();
     const previous = readFileSync(this.file, "utf8");
     if (!Object.hasOwn(JSON.parse(previous), "modelDetectionEnabled")) return;
-    writeFileSync(`${this.file}.before-model-removal-${randomUUID()}`, previous, { mode: 0o600, flag: "wx" });
+    createPrivateFile(`${this.file}.before-model-removal-${randomUUID()}`, previous);
     this.save(settings);
   }
   save(value: unknown): PersonalPrivacySettings {
     const s = validatePrivacySettings(value);
     this.read();
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temp, JSON.stringify(s), { mode: 0o600, flag: "wx" }); renameSync(temp, this.file);
+    renameSync(writePrivateTemp(this.file, JSON.stringify(s)), this.file);
     return s;
   }
 }
