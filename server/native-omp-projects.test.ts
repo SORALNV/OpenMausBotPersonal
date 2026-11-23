@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { writePrivateJson } from "./testing/private-fixture.ts";
 import { NativeOmpService } from "./native-omp-service.ts";
 import { Store } from "./store.ts";
 import type { NativeOmpTransport, OmpDestination } from "../scripts/native-omp-transport.mjs";
@@ -18,9 +19,9 @@ function fixture() {
   const selection = { providerId: "fixture", modelId: "small", timeoutMs: 10000 };
   const binding = { botId: bot.id, enabled: true, host: "fixture.test", user: "fixture", binary: "/fixture/omp", stateRoot: "/fixture/sessions", profile: "fixture", cwd: "/fixture/work", model: "fixture/model", connection: "shared-tui", mediator: selection, formatter: selection };
   const sessions = [{ id: "shelf-id", name: "MyShelf", directory: "/fixture/sessions/shelf", running: true, shared: true }, { id: "mcp-id", name: "新しいセッション", directory: "/fixture/sessions/mcp", running: true, shared: true }];
-  writeFileSync(join(dir, "native-omp.json"), JSON.stringify({ bindings: [binding] }), { mode: 0o600 });
-  writeFileSync(join(dir, "native-omp-targets.json"), JSON.stringify({ [shelf.threadId]: { kind: "session", session: sessions[0] }, [mcp.threadId]: { kind: "session", session: sessions[1] } }), { mode: 0o600 });
-  writeFileSync(join(dir, "native-omp-modes.json"), JSON.stringify({ [bot.threadId]: "router" }), { mode: 0o600 });
+  writePrivateJson(join(dir, "native-omp.json"), { bindings: [binding] });
+  writePrivateJson(join(dir, "native-omp-targets.json"), { [shelf.threadId]: { kind: "session", session: sessions[0] }, [mcp.threadId]: { kind: "session", session: sessions[1] } });
+  writePrivateJson(join(dir, "native-omp-modes.json"), { [bot.threadId]: "router" });
   const plan = { action: "chat", steps: [{ name: "MyShelf", request: "一覧の読み取りだけを確認" }, { name: "MyMCP", request: "前段の一覧とMCP側の読み取り結果を照合" }] };
   const generate = vi.fn(async (_provider: string, _model: string, _prompt: string) => JSON.stringify(plan)), settled = vi.fn(), catalog = vi.fn(async () => ({ sessions }));
   const failure: { sessionId?: string } = {};

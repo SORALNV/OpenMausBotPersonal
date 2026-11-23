@@ -1,5 +1,6 @@
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import type { TurnImageInput } from "./contracts.ts";
+import { inspectPrivate } from "./private-file.ts";
 import { extractTurnImages } from "./turn-images.ts";
 
 export function nativeAttachmentInput(raw: string): { text: string; images: TurnImageInput[] } {
@@ -16,7 +17,8 @@ export function nativeImageContents(images: readonly TurnImageInput[]): { type: 
     const fd = openSync(image.path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const info = fstatSync(fd);
-      if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || info.size !== image.bytes || info.size <= 0 || info.size > 10 * 1024 * 1024) throw Error("添付画像が変更されています。添付し直してください。");
+      // fstat misses the DACL claim, which only the shared predicate (the Windows addon) can judge.
+      if (!inspectPrivate(image.path, { kind: "file", singleLink: true, owner: true }).ok || info.size !== image.bytes || info.size <= 0 || info.size > 10 * 1024 * 1024) throw Error("添付画像が変更されています。添付し直してください。");
       const bytes = readFileSync(fd);
       if (bytes.length !== info.size) throw Error("添付画像の読み込み中に内容が変更されました。");
       return { type: "image" as const, data: bytes.toString("base64"), mimeType: image.mime };

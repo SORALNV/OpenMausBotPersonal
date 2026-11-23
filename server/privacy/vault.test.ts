@@ -1,14 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { PrivacyVault } from "./vault.ts";
+import { writePrivateJson } from "../testing/private-fixture.ts";
 const dirs: string[] = [];
 const directory = () => { const dir = mkdtempSync(join(tmpdir(), "omb-mapping-")); dirs.push(dir); return dir; };
-afterEach(() => dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })));
+afterEach(() => dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })));
 it("keeps old model-generated tokens restorable only in scopes that already observed them", () => {
   const dir = directory();
-  writeFileSync(join(dir, "vault.json"), JSON.stringify([{ scope: "old", text: "legacy@example.invalid", label: "private_email", token: "⟦メール_001⟧" }]), { mode: 0o600 });
+  writePrivateJson(join(dir, "vault.json"), [{ scope: "old", text: "legacy@example.invalid", label: "private_email", token: "⟦メール_001⟧" }]);
   const vault = new PrivacyVault(dir);
   expect(vault.restoreForDisplay("old", "⟦メール_001⟧")).toBe("legacy@example.invalid");
   expect(vault.restoreForDisplay("other", "⟦メール_001⟧")).toBe("⟦メール_001⟧");

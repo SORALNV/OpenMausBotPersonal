@@ -13,6 +13,7 @@ import {
 import { link, open, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { FILE_MAX_BYTES, PREVIEW_MAX_BYTES } from "../shared/upload-limits.ts";
+import { createPrivateFile } from "./private-file.ts";
 import { DATA_DIR } from "./config.ts";
 import { boxUploadsDir } from "./bot-box/plan.ts";
 
@@ -616,7 +617,7 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
   activePartials.add(partialPath);
   let partialCleanupFailed = false;
   try {
-    writeFileSync(partialPath, bytes, { mode: 0o600, flag: "wx" });
+    createPrivateFile(partialPath, bytes);
     try {
       linkSync(partialPath, path);
       addCommittedBytes(bytes.byteLength);

@@ -36,7 +36,8 @@ it("accepts only exact standalone control words, never quoted instructions", () 
 it("saves one room's explicit Full across restart and revokes it live", () => {
   const f = fixture(); expect(f.control("/allow-all")).toHaveProperty("message");
   expect(f.permissions.mode("room")).toBe("full"); expect(f.permissions.mode("other-room")).toBeUndefined();
-  expect(f.make().mode("room")).toBe("full"); expect(statSync(f.file).mode & 0o077).toBe(0);
+  expect(f.make().mode("room")).toBe("full");
+  if (process.platform !== "win32") expect(statSync(f.file).mode & 0o077).toBe(0);
   expect(f.patches).not.toHaveBeenCalled(); expect(f.changed).toHaveBeenCalledWith("room");
   f.control("/ask"); expect(f.permissions.mode("room")).toBe("ask");
   expect(f.bots.pi!.approvalMode).toBe("ask");

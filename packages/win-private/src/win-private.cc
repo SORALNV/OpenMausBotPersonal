@@ -200,10 +200,21 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
   napi_get_value_string_utf8(env, argv[1], kindBuffer.data(), kindBuffer.size(), &kindLength);
   std::string kind(kindBuffer.data(), kindLength);
   size_t contentLength = 0;
-  napi_get_value_string_utf8(env, argv[2], nullptr, 0, &contentLength);
-  // The reported length excludes the terminator the second call writes.
+  bool binary = false;
+  void* contentBytes = nullptr;
+  napi_value buffer = nullptr;
+  if (napi_is_buffer(env, argv[2], &buffer) == napi_ok && buffer != nullptr) {
+    binary = true;
+    size_t bufferLength = 0;
+    napi_get_buffer_info(env, argv[2], &contentBytes, &bufferLength);
+    contentLength = bufferLength;
+  } else {
+    napi_get_value_string_utf8(env, argv[2], nullptr, 0, &contentLength);
+  }
+  // The reported utf8 length excludes the terminator the copy writes.
   std::vector<char> content(contentLength + 1);
-  napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
+  if (binary) std::memcpy(content.data(), contentBytes, contentLength);
+  else napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
 
   const PSID user = tokenSids().user;
   const char* failure = nullptr;
