@@ -33,6 +33,9 @@ it.skipIf(!onWindows)("the addon creates and verifies its own private files on W
   expect(inspectPrivate(fat, { kind: "file", maxBytes: 8 })).toMatchObject({ ok: false, rejection: "size" });
   expect(inspectPrivate(file, { kind: "directory" })).toMatchObject({ ok: false, rejection: "kind" });
   expect(inspectPrivate(join(dir, "absent.json"), { kind: "file" })).toMatchObject({ ok: false, rejection: "missing" });
+  const binary = join(dir, "bytes.bin");
+  expect(addon.createPrivate(binary, "file", Buffer.from([0, 255, 1, 254]).toString("hex"), "hex")).toEqual({ ok: true });
+  expect(readFileSync(binary)).toEqual(Buffer.from([0, 255, 1, 254]));
   try {
     symlinkSync(file, join(dir, "linked.json"));
     expect(inspectPrivate(join(dir, "linked.json"), { kind: "file" })).toMatchObject({ ok: false, rejection: "symlink" });

@@ -22,7 +22,7 @@ export interface PrivateExpectation {
 
 export interface WindowsPrivateFiles {
   verifyPrivate(path: string, want: PrivateExpectation): { ok: true } | { ok: false; rejection: PrivateRejection };
-  createPrivate(path: string, kind: "file" | "directory", content: string | Buffer): { ok: true } | { ok: false; rejection: string };
+  createPrivate(path: string, kind: "file" | "directory", content: string, encoding?: "hex"): { ok: true } | { ok: false; rejection: string };
 }
 
 // The addon's calls where it built, and null everywhere else. The packaged app ships no
@@ -76,7 +76,8 @@ export function ensurePrivateDir(dir: string): void {
 
 export function createPrivateFile(file: string, body: string | Buffer): void {
   if (windowsPrivateFiles) {
-    const made = windowsPrivateFiles.createPrivate(file, "file", body);
+    const binary = Buffer.isBuffer(body);
+    const made = windowsPrivateFiles.createPrivate(file, "file", binary ? body.toString("hex") : body, binary ? "hex" : undefined);
     if (!made.ok) throw new Error(`Private file is unavailable: ${made.rejection}`);
     return;
   }

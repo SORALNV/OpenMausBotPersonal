@@ -179,8 +179,8 @@ bool ownerOnlyDescriptor(PSECURITY_DESCRIPTOR descriptor, PACL* acl, PSID user, 
 }
 
 napi_value createPrivate(napi_env env, napi_callback_info info) {
-  size_t argc = 3;
-  napi_value argv[3];
+  size_t argc = 4;
+  napi_value argv[4];
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
   napi_valuetype type = napi_undefined;
@@ -200,20 +200,31 @@ napi_value createPrivate(napi_env env, napi_callback_info info) {
   napi_get_value_string_utf8(env, argv[1], kindBuffer.data(), kindBuffer.size(), &kindLength);
   std::string kind(kindBuffer.data(), kindLength);
   size_t contentLength = 0;
-  bool binary = false;
-  void* contentBytes = nullptr;
-  bool isBuffer = false;
-  if (napi_is_buffer(env, argv[2], &isBuffer) == napi_ok && isBuffer) {
-    size_t bufferLength = 0;
-    napi_get_buffer_info(env, argv[2], &contentBytes, &bufferLength);
-    contentLength = bufferLength;
-  } else {
-    napi_get_value_string_utf8(env, argv[2], nullptr, 0, &contentLength);
-  }
+  napi_get_value_string_utf8(env, argv[2], nullptr, 0, &contentLength);
   // The reported utf8 length excludes the terminator the copy writes.
   std::vector<char> content(contentLength + 1);
-  if (binary) std::memcpy(content.data(), contentBytes, contentLength);
-  else napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
+  napi_get_value_string_utf8(env, argv[2], content.data(), content.size(), &contentLength);
+  // Binary callers hand over hex, because the utf8 copy mangles raw bytes.
+  bool hex = false;
+  if (argc > 3) {
+    napi_valuetype encodingType = napi_undefined;
+    napi_typeof(env, argv[3], &encodingType);
+    if (encodingType == napi_string) {
+      size_t encodingLength = 0;
+      napi_get_value_string_utf8(env, argv[3], nullptr, 0, &encodingLength);
+      std::vector<char> encoding(encodingLength + 1);
+      napi_get_value_string_utf8(env, argv[3], encoding.data(), encoding.size(), &encodingLength);
+      hex = std::strcmp(encoding.data(), "hex") == 0;
+    }
+  }
+  if (hex) {
+    for (size_t at = 0; at + 1 < contentLength; at += 2) {
+      const int high = content[at] <= '9' ? content[at] - '0' : (content[at] | 0x20) - 'a' + 10;
+      const int low = content[at + 1] <= '9' ? content[at + 1] - '0' : (content[at + 1] | 0x20) - 'a' + 10;
+      content[at / 2] = static_cast<char>((high << 4) | low);
+    }
+    contentLength /= 2;
+  }
 
   const PSID user = tokenSids().user;
   const char* failure = nullptr;
