@@ -16,7 +16,7 @@ const FIELD = "w-full rounded-xl border border-hairline/60 bg-panel px-3.5 py-2.
 const LABEL = "mb-1.5 block text-[12px] font-medium text-ink-secondary";
 
 export function AppEventEditor({ trigger, bots, initialBotId, onClose, onSaved }: { trigger?: AppTrigger; bots: Bot[]; initialBotId?: string; onClose: () => void; onSaved?: (trigger: AppTrigger) => void }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const [botId, setBotId] = useState(trigger?.botId ?? (initialBotId && bots.some((bot) => bot.id === initialBotId) ? initialBotId : bots[0]?.id) ?? "");
   const [catalog, setCatalog] = useState<AppEventCatalog | null>(null);
   const [app, setApp] = useState(trigger?.app ?? "");
@@ -26,10 +26,19 @@ export function AppEventEditor({ trigger, bots, initialBotId, onClose, onSaved }
   const [config, setConfig] = useState<Record<string, string>>({});
   const [prompt, setPrompt] = useState(trigger?.prompt ?? "");
   const [name, setName] = useState(trigger?.name ?? "");
+  const [destination, setDestination] = useState<"new" | "same" | "pinned">(trigger?.conversationThreadId ? "pinned" : trigger?.sameConversation ? "same" : "new");
+  const [pinnedThread, setPinnedThread] = useState(trigger?.conversationThreadId ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalDialog(dialogRef, onClose);
+
+  // The automation's bot chats only: its main chat and the chats a person opened, never another automation's runs.
+  const bot = bots.find((candidate) => candidate.id === botId) ?? (trigger ? state.bots.find((candidate) => candidate.id === trigger.botId) : undefined);
+  const chats = [
+    { threadId: bot?.threadId ?? "", title: t("automations.editor.appEvent.destination.mainChat") },
+    ...(bot?.tasks ?? []).filter((task) => !task.routineRunId).map((task) => ({ threadId: task.threadId, title: task.title })),
+  ];
 
   useEffect(() => {
     if (trigger || !botId) return;
@@ -59,15 +68,19 @@ export function AppEventEditor({ trigger, bots, initialBotId, onClose, onSaved }
   const save = async () => {
     const bot = bots.find((candidate) => candidate.id === botId);
     const cleanFilter = Object.fromEntries(Object.entries(filter).filter(([, value]) => typeof value === "string" && value.trim())) as AppTriggerFilter;
+    const conversation = destination === "same" ? { sameConversation: true, conversationThreadId: null as string | null }
+      : destination === "pinned" ? { sameConversation: false, conversationThreadId: pinnedThread }
+      : { sameConversation: false, conversationThreadId: null as string | null };
     setSaving(true);
     setError("");
     try {
       const saved = trigger
-        ? await appTriggerApi.update(trigger.id, { name: name.trim() || trigger.name, prompt: prompt.trim(), filter: Object.keys(cleanFilter).length ? cleanFilter : null })
+        ? await appTriggerApi.update(trigger.id, { name: name.trim() || trigger.name, prompt: prompt.trim(), filter: Object.keys(cleanFilter).length ? cleanFilter : null, ...conversation })
         : await appTriggerApi.create({
           botId, app, event: chosen?.event ?? event, prompt: prompt.trim(), name: name.trim() || suggestedName(prompt, bot),
           ...(account ? { account } : {}), ...(Object.keys(cleanFilter).length ? { filter: cleanFilter } : {}),
           ...(Object.keys(config).length ? { config } : {}),
+          ...(destination === "same" ? { sameConversation: true } : destination === "pinned" && pinnedThread ? { conversationThreadId: pinnedThread } : {}),
         });
       onSaved?.(saved);
       onClose();
@@ -158,6 +171,28 @@ export function AppEventEditor({ trigger, bots, initialBotId, onClose, onSaved }
             </label>
           )}
           {(trigger || appEntry) && (
+            <div>
+              <span className={LABEL}>{t("automations.editor.appEvent.destination")}</span>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {([["new", t("automations.editor.appEvent.destination.new")], ["same", t("automations.editor.appEvent.destination.same")], ["pinned", t("automations.editor.appEvent.destination.pinned")]] as const).map(([value, label]) => (
+                  <button key={value} type="button" onClick={() => setDestination(value)} className={cn("rounded-xl border px-3 py-2 text-left text-[12px] font-medium", destination === value ? "border-accent/70 bg-accent/10 text-ink" : "border-hairline/50 bg-inset text-ink-secondary hover:bg-raised/60")}>{label}</button>
+                ))}
+              </div>
+              {destination === "pinned" && (
+                <>
+                  <label className="mt-3 block">
+                    <span className={LABEL}>{t("automations.editor.appEvent.destination.chat")}</span>
+                    <Select value={pinnedThread} onChange={(change) => setPinnedThread(change.target.value)} aria-label={t("automations.editor.appEvent.destination.chat")} className="w-full">
+                      <option value="" />
+                      {chats.filter((chat) => chat.threadId).map((chat) => <option key={chat.threadId} value={chat.threadId}>{chat.title}</option>)}
+                    </Select>
+                  </label>
+                  <p className="mt-2 text-[12px] text-ink-secondary">{t("automations.editor.appEvent.destination.pinnedHelp")}</p>
+                </>
+              )}
+            </div>
+          )}
+          {(trigger || appEntry) && (
             <details className="rounded-xl border border-hairline/45 bg-inset/45 px-4 py-3">
               <summary className="cursor-pointer text-[13px] font-medium text-ink">{t("automations.more")}</summary>
               <label className="mt-4 block"><span className={LABEL}>{t("automations.editor.app.name")}</span><input value={name} onChange={(input) => setName(input.target.value)} placeholder={suggestedName(prompt, bots.find((bot) => bot.id === botId))} className={FIELD} /></label>
@@ -167,7 +202,7 @@ export function AppEventEditor({ trigger, bots, initialBotId, onClose, onSaved }
         </div>
         <div className="flex justify-end gap-2 border-t border-hairline/40 px-5 py-4">
           <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink">{t("automations.newBox.cancel")}</button>
-          <button type="button" disabled={saving || !botId || (!trigger && !chosen) || required.some((field) => !config[field.name]?.trim())} onClick={() => void save()} className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-accent-ink hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{trigger ? t("automations.editor.app.save") : t("automations.editor.app.create")}</button>
+          <button type="button" disabled={saving || !botId || (!trigger && !chosen) || required.some((field) => !config[field.name]?.trim()) || (destination === "pinned" && !pinnedThread)} onClick={() => void save()} className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-accent-ink hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{trigger ? t("automations.editor.app.save") : t("automations.editor.app.create")}</button>
         </div>
       </div>
     </div>

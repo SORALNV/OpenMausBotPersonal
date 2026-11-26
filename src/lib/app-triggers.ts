@@ -79,6 +79,8 @@ export interface AppTriggerDraft {
   filter?: AppTriggerFilter;
   config?: Record<string, unknown>;
   sameConversation?: boolean;
+  /** Every run works in this existing chat and none may start a new one. */
+  conversationThreadId?: string;
 }
 
 const put = (trigger: AppTrigger) => applyAppTriggerFrame({ kind: "app-trigger", botId: trigger.botId, trigger });
@@ -90,7 +92,7 @@ export const appTriggerApi = {
     put(trigger);
     return trigger;
   },
-  async update(id: string, patch: Partial<Pick<AppTrigger, "name" | "prompt" | "enabled" | "config" | "sameConversation">> & { filter?: AppTriggerFilter | null }) {
+  async update(id: string, patch: Partial<Pick<AppTrigger, "name" | "prompt" | "enabled" | "config" | "sameConversation">> & { filter?: AppTriggerFilter | null; conversationThreadId?: string | null }) {
     const { trigger } = await api<{ trigger: AppTrigger }>(`/api/app-triggers/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
     put(trigger);
     return trigger;

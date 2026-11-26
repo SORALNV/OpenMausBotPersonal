@@ -25,7 +25,7 @@ type Connected = Record<string, { connected: boolean; accounts: Array<{ id: stri
 
 export interface AppTriggerHostDeps {
   file?: string;
-  store: AppTriggerRequestStore & { bot(id: string): Bot | null | undefined };
+  store: AppTriggerRequestStore & { bot(id: string): Bot | null | undefined; taskByThread(botId: string, threadId: string): { threadId?: string } | null | undefined };
   /** "self-hosted" when the owner saved their own Composio key, which app events do not support. */
   connectionMode: () => "managed" | "self-hosted" | "unavailable";
   access: () => BrokerAccess | null;
@@ -61,6 +61,24 @@ function status(error: unknown): number {
   return error instanceof AppTriggerError ? error.status : typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
 }
 
+/** The chat every run of the automation works in: it must be one the bot already has, so a typo can never silently
+ *  start new chats. */
+function pinnedThreadInput(store: AppTriggerHostDeps["store"], bot: Bot | null | undefined, value: unknown): { conversationThreadId: string } {
+  const threadId = typeof value === "string" ? value.trim() : "";
+  if (!threadId) throw new AppTriggerError("A pinned conversation takes the threadId of a chat the bot already has.");
+  if (!store.taskByThread(bot?.id ?? "", threadId)) throw new AppTriggerError("The pinned conversation must be a chat this bot already has.", 404);
+  return { conversationThreadId: threadId };
+}
+
+function pinnedThreadPatch(store: AppTriggerHostDeps["store"], manager: AppTriggerManager, id: string, value: unknown): { conversationThreadId: string | null } {
+  if (value === null) return { conversationThreadId: null };
+  const threadId = typeof value === "string" ? value.trim() : "";
+  if (!threadId) throw new AppTriggerError("A pinned conversation takes the threadId of a chat the bot already has.");
+  const trigger = manager.list().find((candidate) => candidate.id === id);
+  if (trigger && !store.taskByThread(trigger.botId, threadId)) throw new AppTriggerError("The pinned conversation must be a chat this bot already has.", 404);
+  return { conversationThreadId: threadId };
+}
+
 export function createAppTriggerHost(deps: AppTriggerHostDeps) {
   const broker = deps.broker ?? brokerClient(deps.access);
   const service = () => {
@@ -77,7 +95,7 @@ export function createAppTriggerHost(deps: AppTriggerHostDeps) {
     botState: deps.botState,
     runs: {
       enqueue: (input) => deps.routines().enqueueWebhook(input),
-      merge: (triggerId, eventId, sameConversation, merge) => deps.routines().mergeIntoQueuedRun(triggerId, eventId, sameConversation, merge),
+      merge: (triggerId, eventId, sameConversation, conversationThreadId, merge) => deps.routines().mergeIntoQueuedRun(triggerId, eventId, sameConversation, conversationThreadId, merge),
       receipt: (triggerId, eventId) => deps.routines().webhookRunReceipt(triggerId, eventId),
       pending: (triggerId) => deps.routines().activeWebhookRunCount(triggerId),
       cancelQueued: (triggerId, message) => deps.routines().cancelQueuedWebhook(triggerId, message),
@@ -134,6 +152,7 @@ export function createAppTriggerHost(deps: AppTriggerHostDeps) {
           ...(body.config && typeof body.config === "object" ? { config: body.config as Record<string, unknown> } : {}),
           ...(body.runOn === "cloud" ? { runOn: "cloud" as const } : {}),
           ...(body.sameConversation === true ? { sameConversation: true } : {}),
+          ...pinnedThreadInput(deps.store, bot, body.conversationThreadId),
         });
         return json(res, 201, { trigger });
       }
@@ -154,6 +173,7 @@ export function createAppTriggerHost(deps: AppTriggerHostDeps) {
           ...(body.config && typeof body.config === "object" ? { config: body.config as Record<string, unknown> } : {}),
           ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
           ...(typeof body.sameConversation === "boolean" ? { sameConversation: body.sameConversation } : {}),
+          ...("conversationThreadId" in body ? pinnedThreadPatch(deps.store, manager, id, body.conversationThreadId) : {}),
         };
         const trigger = await manager.update(id, patch);
         return trigger ? json(res, 200, { trigger }) : json(res, 404, { error: "no such automation" });

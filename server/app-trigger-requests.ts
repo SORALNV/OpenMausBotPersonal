@@ -48,8 +48,9 @@ const definitionSchema = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   runOn: z.enum(["maus", "cloud"]).optional(),
   sameConversation: z.boolean().optional(),
+  conversationThreadId: z.string().trim().min(1).max(200).optional(),
 }).strict();
-const changesSchema = definitionSchema.pick({ name: true, instructions: true, filter: true, config: true, runOn: true, sameConversation: true }).partial()
+const changesSchema = definitionSchema.pick({ name: true, instructions: true, filter: true, config: true, runOn: true, sameConversation: true, conversationThreadId: true }).partial()
   .extend({ instructions: definitionSchema.shape.instructions.removeDefault().optional() }).strict()
   .refine((changes) => Object.keys(changes).length > 0, "The update action needs at least one field in changes");
 const idSchema = z.string().trim().min(1).max(200);
@@ -170,7 +171,7 @@ export class AppTriggerRequestService {
         ...(after && operation.action !== "run_now" ? { appliedUpdatedAt: after.updatedAt } : {}),
         ...(before && (operation.action === "update" || operation.action === "delete")
           ? { before: { name: before.name, prompt: before.prompt, runOn: before.runOn, enabled: before.enabled, config: before.config, ...(before.filter ? { filter: before.filter } : {}),
-            ...(before.sameConversation ? { sameConversation: true } : {}) } }
+            ...(before.sameConversation ? { sameConversation: true } : {}), ...(before.conversationThreadId ? { conversationThreadId: before.conversationThreadId } : {}) } }
           : {}),
       },
     };
@@ -222,7 +223,7 @@ export class AppTriggerRequestService {
           if (!mine || mine.updatedAt !== payload.undo?.appliedUpdatedAt) return stale;
           const patch = operation.action === "update"
             ? before ? { name: before.name, prompt: before.prompt, runOn: before.runOn, enabled: before.enabled, filter: before.filter ?? null, restoreConfig: before.config,
-              sameConversation: before.sameConversation === true } : undefined
+              sameConversation: before.sameConversation === true, conversationThreadId: before.conversationThreadId ?? null } : undefined
             : { enabled: operation.action === "pause" };
           if (!patch || !await triggers.update(triggerId, patch)) return stale;
           break;

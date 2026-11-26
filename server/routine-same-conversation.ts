@@ -14,3 +14,10 @@ export function continuedConversation(runs: readonly RoutineRun[], run: RoutineR
   const previous = run.target === "bot" ? previousEventThread(runs, run) : null;
   return previous && exists(previous) ? previous : null;
 }
+
+/** The chat a run pinned to one conversation works in. Gone: `false`, so the caller refuses the run instead of letting a
+ *  new conversation be created for it. */
+export function pinnedConversation(run: RoutineRun, exists: (threadId: string) => boolean): string | false | null {
+  if (run.target !== "bot" || !run.conversationThreadId) return null;
+  return exists(run.conversationThreadId) ? run.conversationThreadId : false;
+}

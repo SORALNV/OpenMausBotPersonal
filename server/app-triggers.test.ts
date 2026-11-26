@@ -55,7 +55,7 @@ function manager(overrides: Partial<AppTriggerManagerOptions> = {}) {
         if (failure === "after-save") throw new Error("crashed after the run was saved");
         return run;
       },
-      merge: (triggerId, eventId, sameConversation, merge) => routines.mergeIntoQueuedRun(triggerId, eventId, sameConversation, merge),
+      merge: (triggerId, eventId, sameConversation, conversationThreadId, merge) => routines.mergeIntoQueuedRun(triggerId, eventId, sameConversation, conversationThreadId, merge),
       receipt: (triggerId, eventId) => routines.webhookRunReceipt(triggerId, eventId),
       pending: (triggerId) => routines.activeWebhookRunCount(triggerId),
       cancelQueued: (triggerId, message) => routines.cancelQueuedWebhook(triggerId, message),
@@ -346,12 +346,13 @@ describe("createAppTriggerHost", () => {
     const messages = new Map<string, Array<{ id: string; card?: any }>>();
     const bots: Record<string, any> = {
       scout: { id: "scout", name: "Scout", color: "#000" },
-      narrow: { id: "narrow", name: "Narrow", color: "#000", connectorTools: { slack: { tools: "*" } } },
+      narrow: { id: "narrow", name: "Narrow", color: "#000", connectorTools: { slack: { tools: "*" } }, tasks: [{ threadId: "narrow-chat" }] },
     };
     const host = createAppTriggerHost({
       file: join(dir, "host-app-triggers.json"),
       store: {
         bot: (id) => bots[id],
+        taskByThread: (botId: string, threadId: string) => bots[botId]?.tasks?.find((task: { threadId: string }) => task.threadId === threadId),
         messagesFor: (threadId) => messages.get(threadId) ?? [],
         appendMessage: (threadId, message) => {
           const line = { id: `m${(messages.get(threadId)?.length ?? 0) + 1}`, ...message };
@@ -402,6 +403,57 @@ describe("createAppTriggerHost", () => {
     expect(await host.undo({ botId: "scout", threadId: "thread-1", requestId: card.requestId })).toMatchObject({ state: "undone", action: "create" });
     expect(host.manager.list()).toEqual([]);
     expect(broker.harness.composio.instances.size).toBe(0);
+  });
+
+  it("pins an automation to an existing chat of the bot and refuses a chat it does not have", async () => {
+    const { createAppTriggerHost } = await import("./app-trigger-host.ts");
+    const bots: Record<string, any> = {
+      narrow: { id: "narrow", name: "Narrow", color: "#000", connectorTools: { slack: { tools: "*" } }, tasks: [{ threadId: "narrow-chat" }] },
+    };
+    connected.slack = { connected: true, accounts: [{ id: broker.account(owner.userId, "slack"), status: "ACTIVE" }] };
+    const host = createAppTriggerHost({
+      file: join(dir, "host-pinned.json"),
+      store: {
+        bot: (id: string) => bots[id],
+        taskByThread: (botId: string, threadId: string) => bots[botId]?.tasks?.find((task: { threadId: string }) => task.threadId === threadId),
+        messagesFor: () => [],
+        appendMessage: (threadId: string, message: Record<string, unknown>) => ({ id: `m${threadId}`, ...message }),
+        patchMessage: (_threadId: string, _messageId: string, patch: Record<string, unknown>) => patch,
+      } as never,
+      connectionMode: () => "managed",
+      access: () => ({ url: broker.url, token: owner.token }),
+      connectedApps: async () => connected,
+      routines: () => routines,
+      webhooks: { list: () => [] } as never,
+      webhookBase: () => "http://127.0.0.1:8800",
+      botState: () => "ready",
+      timeZone: () => "UTC",
+      visibleBot: () => true,
+      emit: () => {},
+      audit: () => {},
+    });
+    const answers: Array<{ status: number; body: any }> = [];
+    const context = (method: string, body: Record<string, unknown>, path = "/api/app-triggers") => ({
+      req: {} as never, res: {} as never, url: new URL(`http://127.0.0.1:8800${path}`), path, method,
+      auth: { kind: "session", scopes: ["admin"] } as never,
+      json: ((_res: unknown, status: number, body_: unknown) => { answers.push({ status, body: body_ }); }) as never,
+      readBody: async () => body,
+    } as never);
+    const createBody = { botId: "narrow", name: "Watch", prompt: "Tell me.", app: "slack", event: "SLACK_CHANNEL_MESSAGE_RECEIVED" };
+    await host.routes(context("POST", { ...createBody, conversationThreadId: "nowhere" }) as Parameters<typeof host.routes>[0]);
+    expect(answers.at(-1)).toMatchObject({ status: 404, body: { error: expect.stringContaining("chat this bot already has") } });
+    expect(host.manager.list()).toEqual([]);
+    await host.routes(context("POST", { ...createBody, conversationThreadId: "narrow-chat" }) as Parameters<typeof host.routes>[0]);
+    expect(answers.at(-1)?.status).toBe(201);
+    const created = host.manager.list()[0]!;
+    expect(created.conversationThreadId).toBe("narrow-chat");
+    expect(created).not.toHaveProperty("sameConversation");
+    await host.routes(context("PATCH", { conversationThreadId: null }, `/api/app-triggers/${created.id}`) as Parameters<typeof host.routes>[0]);
+    expect(answers.at(-1)?.status).toBe(200);
+    expect(host.manager.get(created.id)).not.toHaveProperty("conversationThreadId");
+    await host.routes(context("PATCH", { conversationThreadId: "nowhere" }, `/api/app-triggers/${created.id}`) as Parameters<typeof host.routes>[0]);
+    expect(answers.at(-1)).toMatchObject({ status: 404, body: { error: expect.stringContaining("chat this bot already has") } });
+    expect(host.manager.get(created.id)).not.toHaveProperty("conversationThreadId");
   });
 });
 
@@ -524,5 +576,51 @@ describe("app-event automation that keeps one conversation", () => {
     await drain(triggers);
     expect(runsOf(trigger.id)[0]).toMatchObject({ deliveryId: "msg_same_2", status: "queued" });
     expect(runsOf(trigger.id)[0]).not.toHaveProperty("sameConversation");
+  });
+});
+
+describe("app-event automation pinned to one chat", () => {
+  const create = (triggers: AppTriggerManager, threadId?: string) => triggers.create({
+    botId: "bot-1", name: "Watch the DM", prompt: "Tell me about it.", app: "gmail", event: "GMAIL_NEW_GMAIL_MESSAGE",
+    ...(threadId ? { conversationThreadId: threadId } : {}),
+  });
+
+  it("pins every run to the saved chat and carries it through a test run", async () => {
+    const triggers = manager();
+    const trigger = await create(triggers, "thread-pinned");
+    expect(trigger.conversationThreadId).toBe("thread-pinned");
+    expect(trigger).not.toHaveProperty("sameConversation");
+    await broker.deliver(trigger.remote.triggerId!, { subject: "Order #1" }, "msg_pin_1");
+    await drain(triggers);
+    expect(runsOf(trigger.id)[0]).toMatchObject({ eventSource: "app", conversationThreadId: "thread-pinned" });
+    expect(runsOf(trigger.id)[0]).not.toHaveProperty("sameConversation");
+
+    routines.cancelQueuedWebhook(trigger.id, "test");
+    await triggers.runNow(trigger.id);
+    expect(runsOf(trigger.id).at(-1)).toMatchObject({ conversationThreadId: "thread-pinned" });
+  });
+
+  it("pinning clears the same-conversation option, and unpinning or switching modes clears the pin", async () => {
+    const triggers = manager();
+    const trigger = await create(triggers, "thread-pinned");
+    expect((await triggers.update(trigger.id, { sameConversation: true }))!.conversationThreadId).toBeUndefined();
+    expect((await triggers.update(trigger.id, { sameConversation: false, conversationThreadId: null }))!).not.toHaveProperty("sameConversation");
+    expect((await triggers.update(trigger.id, { conversationThreadId: "thread-again" }))!.conversationThreadId).toBe("thread-again");
+    expect((await triggers.update(trigger.id, { conversationThreadId: null }))!).not.toHaveProperty("conversationThreadId");
+  });
+
+  it("merges a burst only into a run pinned to the same chat", async () => {
+    const triggers = manager();
+    const trigger = await create(triggers, "thread-pinned");
+    await broker.deliver(trigger.remote.triggerId!, { subject: "Order #1" }, "msg_pin_2");
+    await drain(triggers);
+    const runs = runsOf(trigger.id);
+    expect(runs).toHaveLength(1);
+    expect(eventCount(runs[0]!.prompt)).toBe(1);
+    await broker.deliver(trigger.remote.triggerId!, { subject: "Order #2" }, "msg_pin_3");
+    await drain(triggers);
+    expect(runsOf(trigger.id)).toHaveLength(1);
+    expect(eventCount(runsOf(trigger.id)[0]!.prompt)).toBe(2);
+    expect(runsOf(trigger.id)[0]).toMatchObject({ conversationThreadId: "thread-pinned" });
   });
 });

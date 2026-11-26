@@ -213,6 +213,8 @@ export interface RoutineRun {
   executionThreadId?: string;
   sourceThreadId?: string;
   resultsThreadId?: string;
+  /** A run this automation pinned to one existing chat; a gone chat skips the run instead of a new chat. */
+  conversationThreadId?: string;
   threadId?: string;
   startedAt?: number;
   finishedAt?: number;

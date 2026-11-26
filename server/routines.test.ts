@@ -4422,8 +4422,59 @@ describe("event automations that keep one conversation", () => {
     const queued = event(h, "d1", false);
     const add = (prompt: string) => `${prompt}\n+event`;
     // The option was turned on after the first event: the next one must not ride along in the old run.
-    expect(h.manager.mergeIntoQueuedRun("hook", "d2", true, add)).toBeNull();
-    expect(h.manager.mergeIntoQueuedRun("hook", "d3", false, add)).toEqual({ id: queued.id });
+    expect(h.manager.mergeIntoQueuedRun("hook", "d2", true, undefined, add)).toBeNull();
+    expect(h.manager.mergeIntoQueuedRun("hook", "d3", false, undefined, add)).toEqual({ id: queued.id });
+    expect(h.manager.listRuns().find((run) => run.id === queued.id)?.prompt).toBe("Handle it\n+event");
+  });
+});
+
+describe("event automations pinned to one chat", () => {
+  const event = (h: ReturnType<typeof harness>, deliveryId: string, conversationThreadId = "main") => h.manager.enqueueWebhook({
+    webhookId: "hook", webhookName: "Watch", prompt: "Handle it", botId: "maus-1", runOn: "maus", deliveryId, receivedAt: Date.now(),
+    conversationThreadId,
+  });
+  const done = (h: ReturnType<typeof harness>, threadId: string) => h.manager.handleRuntimeEvent({
+    eventId: `done-${threadId}`, provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok: true,
+  });
+
+  it("keeps the pinned chat on the run, and one run of the trigger works at a time", async () => {
+    const h = harness();
+    h.options.joinConversation = (run) => run.conversationThreadId ?? null;
+    const first = event(h, "d1");
+    const second = event(h, "d2");
+    await h.manager.tick();
+    expect(h.started.map((turn) => turn.threadId)).toEqual(["main"]);
+    expect(h.manager.listRuns().find((run) => run.id === first.id)?.conversationThreadId).toBe("main");
+    expect(h.manager.listRuns().find((run) => run.id === second.id)?.status).toBe("queued");
+    expect(h.taskTitles).toHaveLength(0);
+
+    done(h, "main");
+    await h.manager.tick();
+    expect(h.started.map((turn) => turn.threadId)).toEqual(["main", "main"]);
+    expect(h.taskTitles).toHaveLength(0);
+    expect(new RoutineManager(h.options).listRuns().find((run) => run.id === second.id)?.conversationThreadId).toBe("main");
+  });
+
+  it("refuses a run whose pinned chat is gone, without creating any chat", async () => {
+    const h = harness();
+    h.options.joinConversation = () => false;
+    event(h, "d1");
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    expect(h.taskTitles).toHaveLength(0);
+    const run = h.manager.listRuns()[0]!;
+    expect(run.status).toBe("failed");
+    expect(run.error).toContain("pinned");
+    expect(run.errorCode).toBe("routines.server.conversationGone");
+  });
+
+  it("merges a burst only into a run pinned to the same chat", () => {
+    const h = harness();
+    const queued = event(h, "d1");
+    const add = (prompt: string) => `${prompt}\n+event`;
+    expect(h.manager.mergeIntoQueuedRun("hook", "d2", false, undefined, add)).toBeNull();
+    expect(h.manager.mergeIntoQueuedRun("hook", "d3", false, "other", add)).toBeNull();
+    expect(h.manager.mergeIntoQueuedRun("hook", "d4", false, "main", add)).toEqual({ id: queued.id });
     expect(h.manager.listRuns().find((run) => run.id === queued.id)?.prompt).toBe("Handle it\n+event");
   });
 });

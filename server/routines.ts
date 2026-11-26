@@ -138,6 +138,8 @@ export interface RoutineRun extends RoutineLineCodes, RoutineOwnerMark, WakeRetr
   deliveryId?: string;
   sourceThreadId?: string;
   resultsThreadId?: string;
+  /** The chat this automation's run must work in; a gone chat skips the run instead of a new chat (routine-same-conversation.ts). */
+  conversationThreadId?: string;
   threadId?: string;
   startedAt?: number;
   finishedAt?: number;
@@ -243,7 +245,9 @@ export interface RoutineManagerOptions {
   /** Why this bot takes no runs now, in the person's words (a Starter Cloud keeps only so many bots awake); null when it does. */ pausedText?: (botId: string) => string | null; /** The person paused this bot: its runs are let go quietly, not failed into To review. */ held?: (botId: string) => boolean; /** A reached usage cap (host/usage-cap-gate.ts): `capSkip` for a scheduled occurrence, which is counted on one `missed` row per cap and period and never switches the routine off; `capText` for a run already queued. */ capSkip?: (botId: string, routineId: string) => { behind: string; resetsAt: number; words(count: number): RoutineLine } | null; capText?: (botId: string, trigger: RoutineRunTrigger) => string | null;
   goalState?: (groupId: string | undefined, coordinatorBotId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string, run?: RoutineRun) => { threadId: string } | null;
-  joinConversation?: (run: RoutineRun) => string | null;
+  /** Where a queued run joins the conversation it works in. `false` refuses the run entirely: it fails with the
+   *  refusal as its record instead of a chat being created for it. */
+  joinConversation?: (run: RoutineRun) => string | null | false;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
   isResultsThread?: (botId: string, threadId: string) => boolean;
   resolveResultsThread?: (routine: Routine, forceNew: boolean) => { threadId: string; main?: true } | undefined;
@@ -775,6 +779,8 @@ export class RoutineManager {
     eventSource?: "app" | "wait" | "google-chat"; sameConversation?: boolean; byPerson?: boolean;
     /** Where the run reports, instead of the event's own results chat. */
     resultsThreadId?: string;
+    /** The chat this run must work in; a gone chat skips the run instead of creating one. */
+    conversationThreadId?: string;
   }): { id: string } {
     this.assertWritable();
     const existing = this.webhookRunReceipt(input.webhookId, input.deliveryId);
@@ -786,19 +792,21 @@ export class RoutineManager {
       id: randomUUID(), routineId: input.webhookId, routineName: input.webhookName, prompt: input.prompt, target: "bot",
       botId: input.botId, runOn: input.runOn, scheduledFor: input.receivedAt, status: "queued", manual: false,
       triggerSource: "webhook", webhookId: input.webhookId, deliveryId: input.deliveryId, attachments: [], createdAt: this.now(),
-      resultsThreadId: input.resultsThreadId ?? this.options.eventResultsThread?.(input), ...(input.eventSource ? { eventSource: input.eventSource } : {}), ...(input.sameConversation ? { sameConversation: true } : {}), ...(input.byPerson ? { byPerson: true } : {}),
+      resultsThreadId: input.resultsThreadId ?? this.options.eventResultsThread?.(input), ...(input.eventSource ? { eventSource: input.eventSource } : {}), ...(input.sameConversation ? { sameConversation: true } : {}), ...(input.conversationThreadId ? { conversationThreadId: input.conversationThreadId } : {}), ...(input.byPerson ? { byPerson: true } : {}),
     };
     this.commitEvent(run, input.deliveryId, () => { this.runs.push(run); });
     return cloneRun(run);
   }
 
   /** Adds an outside event to its trigger's run that has not started yet, so a burst becomes one run. Null when there
-   *  is no such run with the same conversation setting, or `merge` declines (the run is full). */
-  mergeIntoQueuedRun(webhookId: string, deliveryId: string, sameConversation: boolean, merge: (prompt: string) => string | null): { id: string } | null {
+   *  is no such run with the same conversation setting, or `merge` declines (the run is full). A pinned conversation
+   *  only merges into runs pinned to the same chat. */
+  mergeIntoQueuedRun(webhookId: string, deliveryId: string, sameConversation: boolean, conversationThreadId: string | undefined, merge: (prompt: string) => string | null): { id: string } | null {
     this.assertWritable();
     const existing = this.webhookRunReceipt(webhookId, deliveryId);
     if (existing) return existing;
-    const run = this.runs.findLast((candidate) => candidate.webhookId === webhookId && candidate.status === "queued" && !candidate.threadId && (candidate.sameConversation === true) === sameConversation);
+    const run = this.runs.findLast((candidate) => candidate.webhookId === webhookId && candidate.status === "queued" && !candidate.threadId
+      && (candidate.sameConversation === true) === sameConversation && candidate.conversationThreadId === conversationThreadId);
     const merged = run?.prompt === undefined ? null : merge(run.prompt);
     if (!run || merged === null) return null;
     const before = run.prompt;
@@ -1117,7 +1125,7 @@ export class RoutineManager {
           this.runChecks(checked.id, checkHold(this.runs, checked.id, now, run.id), run.id).catch((error) => console.error(`routines: the checks of ${checked.id} failed`, error));
           continue;
         }
-        const sameRoutineWorking = (triggerSource === "schedule" || run.sameConversation) && this.runs.some(other =>
+        const sameRoutineWorking = (triggerSource === "schedule" || run.sameConversation || run.conversationThreadId) && this.runs.some(other =>
           other.id !== run.id && other.routineId === run.routineId && ["running", "waiting"].includes(other.status));
         const held = sameRoutineWorking || this.runs.some((other) => other.routineId === run.routineId && this.slowStops.holds(other.threadId));
         const state = held ? "busy" : this.targetState(run);
@@ -1145,7 +1153,15 @@ export class RoutineManager {
         const startedAt = this.now();
         const suffix = ` · ${new Date(startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
         const title = `${run.routineName.slice(0, 80 - suffix.length).trimEnd()}${suffix}`;
-        const joined = run.threadId || (run.target === "room-goal" ? null : this.options.joinConversation?.(run)) || null;
+        const askJoin = run.target === "room-goal" ? null : this.options.joinConversation?.(run);
+        // A pinned run whose chat is gone is skipped here, before any conversation could be created.
+        if (askJoin === false) {
+          const line = codedLine("error", "routines.server.conversationGone");
+          Object.assign(run, line.codes);
+          this.failRun(run, line.text);
+          continue;
+        }
+        const joined = run.threadId || askJoin || null;
         const task = joined
           ? { threadId: joined }
           : run.target === "room-goal"
