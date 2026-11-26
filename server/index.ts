@@ -7454,6 +7454,8 @@ async function beginTurn(
     runOn?: RoutineRunOn;
     /** Puts externally supplied payloads behind an explicit untrusted-data boundary in the system prompt. */
     automationSource?: RoutineRunTrigger; automationRunId?: string;
+    /** An automation pinned to this chat: its prompt is run context, not a message the chat shows. */
+    pinnedRun?: boolean;
     unattended?: boolean;
     peerAsk?: Message["peerAsk"];
     /** The prompt is control-plane context, never a message authored by the user. */
@@ -7616,7 +7618,7 @@ async function beginTurn(
     userMessage = edited;
   }
   if (!userMessage) {
-    userMessage = opts?.cardContinuation
+    userMessage = opts?.cardContinuation || (opts?.pinnedRun && opts?.automationSource)
       ? { id: `card-${randomUUID()}`, at: Date.now(), role: "user", kind: "text", text }
       : store.appendMessage(threadId, {
           role: "user",
@@ -8787,8 +8789,8 @@ routines = new RoutineManager({
       handoffs.forget(threadId);
     }
   },
-  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError, runId) => {
-    if (!companyShutdown) await startTurn(botId, await personalPrivacy.prompt(threadId, prompt), { threadId, runOn, automationSource: triggerSource, automationRunId: runId, onDispatchError });
+  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError, runId, pinned) => {
+    if (!companyShutdown) await startTurn(botId, await personalPrivacy.prompt(threadId, prompt), { threadId, runOn, automationSource: triggerSource, automationRunId: runId, onDispatchError, pinnedRun: pinned === true });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     if (!groupId) {

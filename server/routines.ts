@@ -261,6 +261,8 @@ export interface RoutineManagerOptions {
     runOn: RoutineRunOn,
     triggerSource: RoutineRunTrigger,
     onDispatchError: (message: string) => void, runId: string,
+    /** A run pinned to one chat: its prompt never becomes a message there. */
+    pinned?: boolean,
   ) => Promise<void>;
   startGoal?: (
     groupId: string | undefined,
@@ -792,7 +794,8 @@ export class RoutineManager {
       id: randomUUID(), routineId: input.webhookId, routineName: input.webhookName, prompt: input.prompt, target: "bot",
       botId: input.botId, runOn: input.runOn, scheduledFor: input.receivedAt, status: "queued", manual: false,
       triggerSource: "webhook", webhookId: input.webhookId, deliveryId: input.deliveryId, attachments: [], createdAt: this.now(),
-      resultsThreadId: input.resultsThreadId ?? this.options.eventResultsThread?.(input), ...(input.eventSource ? { eventSource: input.eventSource } : {}), ...(input.sameConversation ? { sameConversation: true } : {}), ...(input.conversationThreadId ? { conversationThreadId: input.conversationThreadId } : {}), ...(input.byPerson ? { byPerson: true } : {}),
+      // A pinned run reports in its pinned chat, so no results chat is opened for it.
+      resultsThreadId: input.conversationThreadId ? input.resultsThreadId : (input.resultsThreadId ?? this.options.eventResultsThread?.(input)), ...(input.eventSource ? { eventSource: input.eventSource } : {}), ...(input.sameConversation ? { sameConversation: true } : {}), ...(input.conversationThreadId ? { conversationThreadId: input.conversationThreadId } : {}), ...(input.byPerson ? { byPerson: true } : {}),
     };
     this.commitEvent(run, input.deliveryId, () => { this.runs.push(run); });
     return cloneRun(run);
@@ -1206,6 +1209,7 @@ export class RoutineManager {
               run.runOn ?? "maus",
               triggerSource,
               (message) => this.failThread(task.threadId, message, { cause: "refused" }), run.id,
+              Boolean(run.conversationThreadId),
             );
           }
         } catch (error) {
