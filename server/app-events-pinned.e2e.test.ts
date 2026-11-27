@@ -67,7 +67,6 @@ it("runs every event in the pinned chat and starts no chat in any case", async (
     prompt: "必要な新着だけこのチャットで知らせる。雑談や相づちは知らせず、報告文も出さない。",
     filter: { text: CHANNEL }, conversationThreadId: mainChat,
   }, 201);
-  const id = created.trigger.id as string;
   const remoteId = created.trigger.remote.triggerId as string;
   expect(created.trigger).toMatchObject({ conversationThreadId: mainChat, filter: { text: CHANNEL } });
   expect(await tasks()).toHaveLength(1);
@@ -79,7 +78,7 @@ it("runs every event in the pinned chat and starts no chat in any case", async (
   expect((await deliver(remoteId, { channel_id: "C_OTHER", channel: "C_OTHER", text: "hello" }, "pin_out_1")).status).toBe(200);
   await expect.poll(async () => (await api("GET", "/api/app-triggers")).attempts.filter((attempt: any) => attempt.eventId === "pin_out_1")[0]?.outcome, { timeout: 30_000 }).toBe("filtered");
   expect((await api("GET", "/api/app-triggers")).attempts.find((attempt: any) => attempt.eventId === "pin_out_1")).toMatchObject({ outcome: "filtered", reason: "did not match the filter" });
-  expect(await runOf(id as string)).toBeUndefined();
+  expect((await api("GET", "/api/routines")).runs, "no run exists for the filtered delivery").toEqual([]);
   expect(await tasks()).toHaveLength(1);
   expect(savedTasks()).toHaveLength(1);
   expect(turns().length).toBe(before);
