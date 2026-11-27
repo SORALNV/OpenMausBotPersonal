@@ -22,9 +22,12 @@ const run = (command, args) => {
   return result.stdout;
 };
 const destination = "/Applications/OpenMausBot Personal.app";
-// Never replace a running app or change its runtime underneath an active turn.
+// Never replace a running app or change its runtime underneath an active turn. The MCP bridge child
+// (argv ends in server/mcp-server.js) is exempt: it is a stateless HTTP client of this app's API, kept
+// alive by the harness that uses it, so the swap cannot land underneath it and its turns live in the
+// app server, which this check still requires to be quit.
 const processes = spawnSync("/usr/bin/pgrep", ["-fl", "OpenMausBot"], { encoding: "utf8" }).stdout ?? "";
-if (processes.split("\n").some(line => line.includes(`${destination}/Contents/MacOS/`))) throw new Error("Quit Personal before installing its runtime");
+if (processes.split("\n").some(line => line.includes(`${destination}/Contents/MacOS/`) && !line.includes("mcp-server.js"))) throw new Error("Quit Personal before installing its runtime");
 const data = join(homedir(), ".openmausbot-personal"), root = join(data, "runtime");
 if (realpathSync(data) !== resolve(data) || lstatSync(data).uid !== process.getuid()) throw new Error("Invalid Personal data directory");
 mkdirSync(root, { recursive: true, mode: 0o700 });
