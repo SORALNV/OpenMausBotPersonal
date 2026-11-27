@@ -298,6 +298,9 @@ export async function launchVerificationServer(
   boatFixtureApi?: string,
   /** Programmatic web UI qualification against the fixture's static server. */
   staticDir?: string,
+  /** Restart verification: run against a home an earlier fixture of this test created, keeping its bots, automations
+   *  and chats. No starter bot is seeded or asserted in such a home. */
+  existing?: { dataDir: string },
 ): Promise<VerificationServer> {
   if (boatFixtureApi) {
     if (!/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(boatFixtureApi)) {
@@ -319,7 +322,7 @@ export async function launchVerificationServer(
   const url = `http://127.0.0.1:${port}`;
   // Native browser daemons use UNIX sockets, and a macOS temp home can exceed
   // their path limit.
-  const dataDir = mkdtempSync(join(browser && process.platform !== "win32" ? "/tmp" : tmpdir(), "openmausbot-verify-data-"));
+  const dataDir = existing?.dataDir ?? mkdtempSync(join(browser && process.platform !== "win32" ? "/tmp" : tmpdir(), "openmausbot-verify-data-"));
   const fixtureTemp = join(dataDir, "tmp");
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   mkdirSync(fixtureTemp, { recursive: true });
@@ -430,8 +433,8 @@ export async function launchVerificationServer(
     throw error;
   }
 
-  // Pinned: the random starter name shares a pool with names e2e suites plan.
-  try {
+  // Pinned: the random starter name shares a pool with names e2e suites plan. A restarted home keeps its own bots.
+  if (!existing) try {
     // First-run filesystem work can exceed a second on Windows.
     const timeout = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
     const list = await fetch(`${url}/api/bots`, {

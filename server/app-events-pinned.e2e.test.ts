@@ -1,8 +1,8 @@
 // App-event automations pinned to one chat, end to end on a real server (temporary home, scripted engine) with a fake
 // Composio: an out-of-scope delivery is turned away by the filter before any run, a notification-free event runs in the
-// pinned chat and posts nothing, a report-worthy event reaches the person there, a burst becomes one run, and a run
-// whose pinned chat was deleted is refused without a chat being created for it. The pinned automation starts no chat in
-// any of these cases.
+// pinned chat and posts nothing, a report-worthy event reaches the person there, a burst becomes one run, an app
+// restart keeps the pin so the next event still joins that chat, and a run whose pinned chat was deleted is refused
+// without a chat being created for it. The pinned automation starts no chat in any of these cases.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -136,6 +136,26 @@ it("runs every event in the pinned chat and starts no chat in any case", async (
   expect(savedTasks()).toHaveLength(1);
   const chatCountBeforeDelete = (await messages()).length;
   expect(chatCountBeforeDelete).toBeGreaterThanOrEqual(messageCountBeforeBurst);
+
+  // The app restarts: the reloaded automation still knows its pinned chat, and the next event joins it, creating nothing.
+  fixture.child.kill("SIGTERM");
+  await new Promise<void>((resolve) => fixture.child.once("exit", resolve));
+  const sameHome = fixture.info.dataDir;
+  fixture = await launchVerificationServer({ ...process.env, OMB_COMPOSIO_BROKER_URL: broker.url, OMB_COMPOSIO_BROKER_TOKEN: owner.token },
+    undefined, undefined, undefined, undefined, { scripted: true }, undefined, undefined, undefined, { dataDir: sameHome });
+  plan("再起動後の新着を知らせます。");
+  expect((await deliver(remoteId, { channel_id: CHANNEL, channel: CHANNEL, text: "再起動後に新しい報告です", ts: "1795426461.7" }, "pin_restart_1")).status).toBe(200);
+  let restartRunId = "";
+  await expect.poll(async () => {
+    const attempt = (await api("GET", "/api/app-triggers")).attempts.find((candidate: any) => candidate.eventId === "pin_restart_1");
+    restartRunId = attempt?.runId ?? "";
+    return attempt?.outcome;
+  }, { timeout: 30_000 }).toBe("started");
+  await expect.poll(async () => (await runOf(restartRunId))?.status, { timeout: 40_000 }).toBe("completed");
+  expect(await runOf(restartRunId)).toMatchObject({ threadId: mainChat, conversationThreadId: mainChat });
+  evidence.push({ restartRun: await runOf(restartRunId) });
+  expect(await tasks()).toHaveLength(1);
+  expect(savedTasks()).toHaveLength(1);
 
   // The pinned chat was deleted: the next in-scope event is refused with the reason on its record, and nothing is created.
   await api("POST", `/api/bots/${bot.id}/tasks/delete`, { threadIds: [mainChat] });
