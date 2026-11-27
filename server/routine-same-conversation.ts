@@ -21,3 +21,32 @@ export function pinnedConversation(run: RoutineRun, exists: (threadId: string) =
   if (run.target !== "bot" || !run.conversationThreadId) return null;
   return exists(run.conversationThreadId) ? run.conversationThreadId : false;
 }
+
+/** The thread decision a starting run's own record and join-answer give: the chat it already has, the one it is pinned
+ *  to, one it keeps or inherits (`null` creates a chat), or `false` to refuse it rather than create anything. */
+export type RunThreadDecision = { kind: "join"; threadId: string } | { kind: "refuse" } | { kind: "create" };
+
+export function runThreadDecision(run: RoutineRun, joined: string | null | false | undefined): RunThreadDecision {
+  const threadId = run.threadId || joined || null;
+  if (threadId) return { kind: "join", threadId };
+  return joined === false ? { kind: "refuse" } : { kind: "create" };
+}
+
+/** Every way an outside event's run picks the conversation it works in: the chat the automation pinned it to (gone:
+ *  `false`, refused before anything is created), the wait's own chat, the conversation its trigger kept, or, for a
+ *  limit-reset routine, its source chat. Null lets the caller create one. */
+export function joinedEventConversation(run: RoutineRun, deps: {
+  exists: (botId: string, threadId: string) => boolean;
+  waitChat: (run: RoutineRun) => string | null | false;
+  previousThread: (run: RoutineRun) => string | null;
+  limitReset: (run: RoutineRun) => boolean;
+  sourceOwner: (run: RoutineRun) => { group?: unknown; bot: { id: string }; threadId: string } | null;
+}): string | null | false {
+  const pinned = pinnedConversation(run, (threadId) => deps.exists(run.botId, threadId));
+  if (pinned !== null) return pinned;
+  if (run.eventSource === "wait") return deps.waitChat(run);
+  if (run.sameConversation) return deps.previousThread(run);
+  if (!deps.limitReset(run) || run.target !== "bot") return null;
+  const source = deps.sourceOwner(run);
+  return source && !source.group && source.bot.id === run.botId ? source.threadId : null;
+}

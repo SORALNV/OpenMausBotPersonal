@@ -12,7 +12,7 @@ import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import type { ModelSelection } from "../shared/wire.ts";
 import { intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence } from "./routine-intervals.ts";
-import { cloneSchedule, limitResetOccurrence, mergeScheduleUpdate, nextOccurrence, RoutineScheduleError, type RoutineSchedule, type RoutineScheduleInput } from "./routine-schedules.ts";
+import { limitResetOccurrence, mergeScheduleUpdate, nextOccurrence, RoutineScheduleError, type RoutineSchedule, type RoutineScheduleInput } from "./routine-schedules.ts";
 import { runsOnce } from "../shared/limit-reset.ts"; import { limitResetRunOwed } from "./limit-reset-owed.ts";
 import {
   ROUTINE_HANDOFF_WAIT, isRoutineProblemRun, type RoutineAccess, type RoutineCheck, type RoutineContextAttachment, type RoutineDelivery, type RoutineIntervalWindow, type RoutineRetryCause,
@@ -33,12 +33,14 @@ import { noStartAlert, noStartSpacing, turnBackOn } from "./routine-no-start.ts"
 import { restartRetryAt, startupDecision } from "./routine-restarts.ts"; import { routineHealthOf, type RoutineHealth } from "./routine-health.ts"; import { Occurrences, ROUTINE_TURN_GONE } from "./routine-occurrences.ts"; import type { Occurrence } from "./routine-ledger.ts";
 import { CATCH_UP_MS, planOccurrence, settleRestored, staggered } from "./routine-catch-up.ts"; import { evictRuns } from "./routine-run-history.ts"; import { RunWatch } from "./routine-run-watch.ts"; import { scheduleSection, type ScheduleSection } from "./routine-schedule-report.ts";
 import { EVENT_RETRY_WINDOW_MS, MAX_EVENT_RECEIPTS, type EventRunReceipt } from "./routine-event-receipts.ts"; import { waitsToWakeAgain, wakeGiveUp, wakeRetry, wakeRetryEnded, type WakeRetryMark } from "./routine-wake-retry.ts";
-import { attachmentPathsOf, cloneAttachments } from "./routine-attachments.ts";
+import { attachmentPathsOf } from "./routine-attachments.ts";
+import { cloneRoutine, cloneRun, routineRequestOwnerKey, type RoutineRequestOwner } from "./routine-rows.ts";
+import { runThreadDecision } from "./routine-same-conversation.ts";
 import { loadInstalledPackage, matchingRequestReceipt, rememberRequest } from "./routine-load.ts";
 import { applyHolds, holdCauses, type AppliedHolds } from "./routine-holds.ts";
 import { cancelUnfinishedRuns, interruptRunTurns } from "./routine-stops.ts";
 import { sanitizeInput } from "./routine-input.ts";
-import { applyCheckResult, clipRunOutput, codedLine, routineLine, runLineFields, type RoutineLine, type RoutineLineCodes, type RoutineTroubleCode } from "./routine-lines.ts";
+import { applyCheckResult, clipRunOutput, codedLine, conversationGoneCodes, routineLine, runLineFields, type RoutineLine, type RoutineLineCodes, type RoutineTroubleCode } from "./routine-lines.ts";
 import { checkHold, CHECK_BOOT_HOLD_MS, type CheckHold } from "./routine-check-pacing.ts";
 import { resolveRoutineResultsThread, routineRunDefinition, type ResultsThreadAllocation } from "./routine-run-definition.ts";
 
@@ -217,12 +219,6 @@ interface RoutineFile {
 }
 
 
-export type RoutineRequestOwner = Pick<RoutineRequestReceipt, "requestId" | "messageId" | "botId" | "threadId">;
-
-function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
-  return JSON.stringify([owner.requestId, owner.messageId, owner.botId, owner.threadId]);
-}
-
 /** What a routine's checks found: items for one AI run, a sentence while an app cannot be read, and the next time they
  * have something to do on time. */
 export interface RoutineCheckResult { run?: { prompt: string; key: string }; trouble?: string; troubleCode?: string; wakeAt?: number }
@@ -315,22 +311,6 @@ const WAKE_HORIZON_MS = 60 * 60_000;
 export const ROUTINE_RESTARTED = "OpenMausBot restarted while this routine was running";
 const MAX_RUNS = 2_000;
 const earliest = (...times: Array<number | null>): number | null => times.reduce<number | null>((first, at) => at === null ? first : first === null ? at : Math.min(first, at), null);
-function cloneRoutine(routine: Routine): Routine {
-  return {
-    ...routine,
-    schedule: cloneSchedule(routine.schedule),
-    attachments: cloneAttachments(routine.attachments),
-  };
-}
-
-function cloneRun(run: RoutineRun): RoutineRun {
-  return {
-    ...run,
-    attachments: cloneAttachments(run.attachments),
-    denials: run.denials ? [...run.denials] : undefined,
-  };
-}
-
 export class RoutineManager {
   private readonly file: string; private readonly disk: OwnedFile;
   private readonly now: () => number;
@@ -1156,15 +1136,14 @@ export class RoutineManager {
         const startedAt = this.now();
         const suffix = ` · ${new Date(startedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
         const title = `${run.routineName.slice(0, 80 - suffix.length).trimEnd()}${suffix}`;
-        const askJoin = run.target === "room-goal" ? null : this.options.joinConversation?.(run);
-        // A pinned run whose chat is gone is skipped here, before any conversation could be created.
-        if (askJoin === false) {
-          const line = codedLine("error", "routines.server.conversationGone");
-          Object.assign(run, line.codes);
+        const thread = runThreadDecision(run, run.target === "room-goal" ? null : this.options.joinConversation?.(run));
+        if (thread.kind === "refuse") {
+          const line = conversationGoneCodes();
+          Object.assign(run, line);
           this.failRun(run, line.text);
           continue;
         }
-        const joined = run.threadId || askJoin || null;
+        const joined = thread.kind === "join" ? thread.threadId : null;
         const task = joined
           ? { threadId: joined }
           : run.target === "room-goal"

@@ -488,7 +488,7 @@ import { listenWebhookIngress, type WebhookIngress } from "./webhook-ingress.ts"
 import { addressFor } from "./webhook-address.ts";
 import { assertModelVariantSupported, memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
-import { tieAutomationsToBots } from "./bot-automations.ts"; import { WaitManager } from "./waits.ts"; import { cancelWaitFromCard, createWaitHost, waitContinuationCheck, waitRunChat, waitTurnRunId } from "./wait-host.ts"; import { continuedConversation, pinnedConversation } from "./routine-same-conversation.ts"; import { createWaitRoutes, findWaitPeer, handedAssignment, hostWaitRefusal, waitSourceRefusal, type WaitRouteContext } from "./routes/waits.ts";
+import { tieAutomationsToBots } from "./bot-automations.ts"; import { WaitManager } from "./waits.ts"; import { cancelWaitFromCard, createWaitHost, waitContinuationCheck, waitRunChat, waitTurnRunId } from "./wait-host.ts"; import { continuedConversation, joinedEventConversation } from "./routine-same-conversation.ts"; import { createWaitRoutes, findWaitPeer, handedAssignment, hostWaitRefusal, waitSourceRefusal, type WaitRouteContext } from "./routes/waits.ts";
 import type { WebhookTrigger } from "../shared/webhooks.ts";
 import { AGENTS_NODE_FLAG, SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { agentsProxyLaunch, agentsToolBridgeEnv, applyAgentsBridge, bridgedToolTitle, turnEngine } from "./agents-bridge-switch.ts"; import { serverTurnedOff } from "./drivers/agents-tool-groups.ts"; import { availableToolGroups, toolsOffPart } from "./tool-groups.ts"; import { agentsServerEnv, botDrivenConversation, COMPUTER_OFF_REFUSAL, computerPickRefusal, directTurnKind, roomSkillsRefusal, type TurnKind } from "./agents-turn.ts";
@@ -7454,8 +7454,6 @@ async function beginTurn(
     runOn?: RoutineRunOn;
     /** Puts externally supplied payloads behind an explicit untrusted-data boundary in the system prompt. */
     automationSource?: RoutineRunTrigger; automationRunId?: string;
-    /** An automation pinned to this chat: its prompt is run context, not a message the chat shows. */
-    pinnedRun?: boolean;
     unattended?: boolean;
     peerAsk?: Message["peerAsk"];
     /** The prompt is control-plane context, never a message authored by the user. */
@@ -7618,7 +7616,7 @@ async function beginTurn(
     userMessage = edited;
   }
   if (!userMessage) {
-    userMessage = opts?.cardContinuation || (opts?.pinnedRun && opts?.automationSource)
+    userMessage = opts?.cardContinuation
       ? { id: `card-${randomUUID()}`, at: Date.now(), role: "user", kind: "text", text }
       : store.appendMessage(threadId, {
           role: "user",
@@ -8762,17 +8760,13 @@ routines = new RoutineManager({
     if (task && run?.triggerSource === "webhook") outsideLineage.mark(task.threadId);
     return task;
   },
-  joinConversation: (run) => {
-    const pinned = pinnedConversation(run, (threadId) => Boolean(store.taskByThread(run.botId, threadId)));
-    if (pinned !== null) return pinned;
-    if (run.eventSource === "wait") return waitRunChat(run, directChatOf, Boolean(CLOUD_HOME));
-    if (run.sameConversation) return continuedConversation(routines?.listRuns() ?? [], run, (threadId) => Boolean(store.taskByThread(run.botId, threadId)));
-    const continues = routines?.listRoutines().some((routine) => routine.id === run.routineId && routine.schedule.type === "limit_reset");
-    if (!continues || run.target !== "bot") return null;
-    const source = routineSourceOwner(run);
-    if (!source || source.group || source.bot.id !== run.botId) return null;
-    return source.threadId;
-  },
+  joinConversation: (run) => joinedEventConversation(run, {
+    exists: (botId, threadId) => Boolean(store.taskByThread(botId, threadId)),
+    waitChat: () => waitRunChat(run, directChatOf, Boolean(CLOUD_HOME)),
+    previousThread: () => continuedConversation(routines?.listRuns() ?? [], run, (threadId) => Boolean(store.taskByThread(run.botId, threadId))),
+    limitReset: (candidate) => routines?.listRoutines().some((routine) => routine.id === candidate.routineId && routine.schedule.type === "limit_reset") ?? false,
+    sourceOwner: (candidate) => routineSourceOwner(candidate),
+  }),
   createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
   isResultsThread: (botId, threadId) => {
     const bot = store.bot(botId);
@@ -8790,7 +8784,7 @@ routines = new RoutineManager({
     }
   },
   startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError, runId, pinned) => {
-    if (!companyShutdown) await startTurn(botId, await personalPrivacy.prompt(threadId, prompt), { threadId, runOn, automationSource: triggerSource, automationRunId: runId, onDispatchError, pinnedRun: pinned === true });
+    if (!companyShutdown) await startTurn(botId, await personalPrivacy.prompt(threadId, prompt), { threadId, runOn, automationSource: triggerSource, automationRunId: runId, onDispatchError, ...(pinned ? { cardContinuation: true } : {}) });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     if (!groupId) {

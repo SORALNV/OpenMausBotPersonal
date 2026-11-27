@@ -104,6 +104,13 @@ export function fittedLine(field: "error" | "attention", english: string, text: 
   return { text: stored, codes: { [`${field}Code`]: text.key, [`${field}Params`]: params } };
 }
 
+/** A run refused because the chat its automation pinned it to is gone: its record keeps the coded line, so the
+ *  history shows why nothing ran and no chat was created. */
+export function conversationGoneCodes(): RoutineLineCodes & { text: string } {
+  const line = codedLine("error", "routines.server.conversationGone");
+  return { ...line.codes, text: line.text };
+}
+
 export function codedLine(field: "error" | "attention", key: RoutineLineKey, params?: ServerTextParams): RoutineLine {
   const safe = params && redactParams(params);
   return fittedLine(field, routineLine(key, safe), { key, ...(safe ? { params: safe } : {}) });
