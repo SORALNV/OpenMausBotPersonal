@@ -132,6 +132,8 @@ describe("triggerTarget", () => {
     a: { id: "bot-a", name: "A", section: "Ops" },
     b: { id: "bot-b", name: "B", section: "Ops" },
     c: { id: "bot-c", name: "C", section: "Sales" },
+    chief: { id: "bot-chief", name: "Chief", section: "Ops", chiefOfStaff: true },
+    salesChief: { id: "bot-sales-chief", name: "Sales chief", section: "Ops", chiefOfStaff: true, managedSections: ["Sales"] },
   };
   const lookup = (id: string) => Object.values(bots).find((bot) => bot.id === id);
   it("needs no target for the sender, names a teammate, and refuses one outside the section", () => {
@@ -141,5 +143,13 @@ describe("triggerTarget", () => {
     expect(triggerTarget(bots.a, "bot-c", lookup)).toMatchObject({ status: 403 });
     expect(triggerTarget(bots.a, "bot-zzz", lookup)).toMatchObject({ status: 404 });
     expect(triggerTarget(bots.a, "  ", lookup)).toMatchObject({ status: 400 });
+  });
+  it("lets a department teammate look, but only a Chief of Staff change another bot's automations", () => {
+    expect(triggerTarget(bots.a, "bot-b", lookup)).toEqual({ forBot: { botId: "bot-b", name: "B" } });
+    expect(triggerTarget(bots.a, "bot-b", lookup, true)).toMatchObject({ status: 403, error: expect.stringContaining("never by a department teammate") });
+    expect(triggerTarget(bots.chief, "bot-b", lookup, true)).toEqual({ forBot: { botId: "bot-b", name: "B" } });
+    expect(triggerTarget(bots.chief, "bot-c", lookup, true)).toMatchObject({ status: 403 });
+    expect(triggerTarget(bots.salesChief, "bot-c", lookup, true)).toEqual({ forBot: { botId: "bot-c", name: "C" } });
+    expect(triggerTarget(bots.chief, "bot-chief", lookup, true)).toEqual({});
   });
 });

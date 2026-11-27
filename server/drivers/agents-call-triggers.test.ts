@@ -130,7 +130,7 @@ describe("the trigger tool's actions", () => {
 });
 
 describe("delete_trigger", () => {
-  it("deletes one trigger, its own or another bot's in the section, and nothing else", async () => {
+  it("deletes one trigger, its own or another bot's as a Chief of Staff, and nothing else", async () => {
     const { calls, context: ctx } = context();
     const result = await callTool("delete_trigger", { trigger_id: " t-1 ", for_bot_id: "helper" }, ctx);
     expect(result.text).toContain("Applied delete to trigger t-1 (trigger id t-1). It applied at once");

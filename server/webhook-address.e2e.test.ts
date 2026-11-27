@@ -88,6 +88,21 @@ it("gives the address to the owning bot and its Chief, never to a teammate, anot
     const chief = said(await turn(clive, "Get Courier's watcher address.", [ask(webhookId, courier.id)]), "list_triggers");
     expect(urlIn(chief), chief).toBe(address);
 
+    // 5b. A department teammate cannot stop it; the section's Chief can, and puts it back.
+    const teammate = said(await turn(ledger, "Stop Courier's watcher.", [
+      { tool: "manage_trigger", arguments: { trigger_id: webhookId, action: "pause", for_bot_id: courier.id }, expectError: true },
+    ]), "manage_trigger");
+    expect(teammate).toContain("never by a department teammate");
+    await turn(clive, "Stop Courier's watcher for now.", [
+      { tool: "manage_trigger", arguments: { trigger_id: webhookId, action: "pause", for_bot_id: courier.id } },
+    ], "Paused.");
+    const webhooks = () => api("GET", "/api/webhooks").then((state: any) => state.webhooks.find((hook: any) => hook.id === webhookId));
+    expect((await webhooks()).enabled).toBe(false);
+    await turn(clive, "Start Courier's watcher again.", [
+      { tool: "manage_trigger", arguments: { trigger_id: webhookId, action: "resume", for_bot_id: courier.id } },
+    ], "Resumed.");
+    expect((await webhooks()).enabled).toBe(true);
+
     // 6. A Chief whose audience differs cannot reach that bot at all.
     const hidden = await turn(vera, "Get Courier's watcher address.", [{ ...ask(webhookId, courier.id), expectError: true }]);
     expect(said(hidden, "list_triggers")).toContain("set up by bots in its own department or by its Chief, or it is unavailable");

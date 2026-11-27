@@ -125,7 +125,7 @@ describe("a Team Cloud", () => {
   }, hostTimeout(120_000));
 
   it("keeps a routine outside work wrote outside, with what its runs write, a bot's change and a person's Undo, until a person saves it", async () => {
-    const scout = await newBot("Lineage scout");
+    const scout = await newChief("Lineage scout");
     const mate = await newBot("Lineage mate");
     const soon = (ms: number) => new Date(Date.now() + ms).toISOString();
     const runs = async () => (await team.as(ada, "GET", "/api/routines")).body.runs as any[];
@@ -508,6 +508,8 @@ describe("a personal Cloud only its owner has used", () => {
     const scout = (await cloud("POST", "/api/bots", { name: "Solo scout" })).body.bot;
     const mate = (await cloud("POST", "/api/bots", { name: "Solo mate" })).body.bot;
     for (const bot of [scout, mate]) expect((await cloud("PATCH", `/api/bots/${bot.id}`, { approvalMode: "full", applyToAllThreads: true })).status).toBe(200);
+    // Its webhook run sets up the other bot's routine, so it takes the Chief's authority to do that.
+    expect((await cloud("PATCH", `/api/bots/${scout.id}`, { chiefOfStaff: true })).status).toBe(200);
     const hook = (await cloud("POST", "/api/webhooks", { name: "Solo hook", prompt: "Handle the event.", botId: scout.id })).body;
     const receiver = fx.cloudBase.replace(/:(\d+)$/, (_: string, port: string) => `:${Number(port) + 1}`);
     expect((await fetch(`${receiver}/hooks/${hook.webhook.endpointId}/${encodeURIComponent(hook.credential.secret)}`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": randomBytes(6).toString("hex") }, body: JSON.stringify({ text: "marker-solo" }) })).status).toBe(202);

@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import type { AppTrigger } from "../shared/app-triggers.ts";
 import { appWhenText } from "./app-trigger-requests.ts";
-import { canManage, type RosterMember } from "./peer-roster.ts";
+import { canAutomate, canManage, type RosterMember } from "./peer-roster.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { Routine, RoutineRun } from "./routines.ts";
 import type { WebhookTrigger } from "./webhooks.ts";
@@ -231,8 +231,10 @@ export function parseTriggerRequest(body: unknown, kindOf: (id: string) => "sche
   return { ok: true, kind: "webhook", forBotId: request.forBotId, operation: { action: request.action, webhookId: request.triggerId, ...(changes ? { changes } : {}) } };
 }
 
-/** An automation is part of a bot's setup: another bot named by for_bot_id needs the sender's authority, not just reach. */
-export function triggerTarget<T extends RosterMember>(from: T, forBotId: unknown, bot: (id: string) => T | null | undefined):
+/** An automation is part of a bot's setup: another bot named by for_bot_id needs the sender's authority, not just
+ *  reach. `manage: true` is a change, which only that bot or a Chief of Staff in charge of its department may make;
+ *  a department teammate may only look (`manage` omitted). */
+export function triggerTarget<T extends RosterMember>(from: T, forBotId: unknown, bot: (id: string) => T | null | undefined, manage = false):
   { forBot?: { botId: string; name: string } } | { status: number; error: string } {
   if (forBotId === undefined) return {};
   const id = typeof forBotId === "string" ? forBotId.trim().slice(0, 128) : "";
@@ -240,6 +242,8 @@ export function triggerTarget<T extends RosterMember>(from: T, forBotId: unknown
   if (id === from.id) return {};
   const target = bot(id);
   if (!target) return { status: 404, error: "no bot with that id — call list_bots and copy the exact id from the result" };
-  if (!canManage(from, target)) return { status: 403, error: "that bot's automations are set up by bots in its own department or by its Chief, or it is unavailable. You can still hand it the work itself with coordinate_bots, or tell the person what to set up there." };
+  if (manage ? !canAutomate(from, target) : !canManage(from, target)) return { status: 403, error: manage
+    ? "that bot's automations are changed by itself or by a Chief of Staff in charge of its department, never by a department teammate. You can still hand it the work itself with coordinate_bots, or tell the person what to change there."
+    : "that bot's automations are set up by bots in its own department or by its Chief, or it is unavailable. You can still hand it the work itself with coordinate_bots, or tell the person what to set up there." };
   return { forBot: { botId: target.id, name: target.name } };
 }

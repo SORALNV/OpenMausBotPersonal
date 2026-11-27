@@ -625,7 +625,7 @@ const TOOL_DEFINITIONS = [
         account: { type: "string", description: "app_event: only when the app has several accounts." },
         engine: { type: "string", description: "limit_reset: e.g. claude or codex; omit for your own." },
         repeat: { type: "string", enum: ["once", "every_reset"] },
-        for_bot_id: { type: "string", description: "Only for ANOTHER bot's trigger in your section, from list_bots; it keeps that bot's permissions." },
+        for_bot_id: { type: "string", description: "Only for ANOTHER bot's trigger, as a Chief of Staff in charge of its department, from list_bots; it keeps that bot's permissions." },
       },
       required: ["action"],
     },
@@ -633,7 +633,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "delete_trigger",
     description:
-      "Delete a trigger for good, only when the person asks (was manage_trigger delete); to stop it for now, pause it with trigger. It applies at once, with an Undo. for_bot_id: ANOTHER bot's trigger in your section.",
+      "Delete a trigger for good, only when the person asks (was manage_trigger delete); to stop it for now, pause it with trigger. It applies at once, with an Undo. for_bot_id: ANOTHER bot's trigger, as a Chief of Staff in charge of its department.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

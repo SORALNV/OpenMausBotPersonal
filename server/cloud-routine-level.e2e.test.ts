@@ -242,6 +242,8 @@ it("keeps a routine a webhook's run made confined even there, and says why", asy
 
 it("a Full access bot's routine from the owner's chat runs at Full access after the bot authored a skill there, on Claude and Codex", async () => {
   const bot = await newBot("Brief", "claude");
+  // It sets up the other bot's routine too, which takes the Chief's authority.
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { token: owner, body: { chiefOfStaff: true } })).status).toBe(200);
   const codex = await newBot("Codex brief", "codex");
   const call = await ownerAsks(bot, "Make yourself an inbox skill, then summarise my inbox every hour, and have Codex brief do it too.");
   await call("skill_manage", { action: "create", source: "conversation", skill_md: SKILL });

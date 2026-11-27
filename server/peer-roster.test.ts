@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canAutomate,
   canManage,
   canReach,
   departmentRefusal,
@@ -116,6 +117,19 @@ describe("Chief authority over additional departments", () => {
     expect(inChargeOfEvery({ chiefOfStaff: true, section: "Work" }, ["Work"])).toBe(false);
     // A member's own Chief on a Team Cloud answers for its person's bots, never for departments.
     expect(inChargeOfEvery({ ...everywhere, createdBy: "ada@example.test" }, ["Work", "Personal", "Finance"])).toBe(false);
+  });
+});
+
+describe("automation changes belong to the bot itself or its Chief", () => {
+  const chief = { ...self, chiefOfStaff: true, managedSections: ["Personal"] };
+  it("gives them to a Chief in charge of the department, never to a same-department teammate", () => {
+    expect(canAutomate(self, fleet[1]!)).toBe(false);
+    expect(canAutomate(chief, fleet[1]!)).toBe(true);
+    expect(canAutomate(chief, fleet[4]!)).toBe(true);
+    expect(canAutomate({ ...chief, managedSections: [] }, fleet[4]!)).toBe(false);
+    expect(canAutomate({ ...chief, chiefOfStaff: false }, fleet[1]!)).toBe(false);
+    expect(canAutomate(fleet[1]!, chief)).toBe(false);
+    expect(canAutomate(self, fleet[3]!)).toBe(false);
   });
 });
 

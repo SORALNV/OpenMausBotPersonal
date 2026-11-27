@@ -11793,16 +11793,20 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("acts on a teammate's trigger at once, and only while that teammate is in its department", async () => {
+  it("lets a Chief of Staff act on a teammate's trigger at once, and refuses a department teammate", async () => {
     const chief = (await api("POST", "/api/bots", { name: "Acting chief" })).body.bot;
     let teammateId = "";
     let outsiderId = "";
+    let plainId = "";
     try {
-      expect((await api("PATCH", `/api/bots/${chief.id}`, { approvalMode: "ask" })).status).toBe(200);
       const teammate = (await api("POST", "/api/bots", { name: "Ops helper" })).body.bot;
+      // Its department exists before the Chief is crowned, so the everywhere-grant never covers it.
       const outsider = (await api("POST", "/api/bots", { name: "Other section", section: "Routine elsewhere" })).body.bot;
+      const plain = (await api("POST", "/api/bots", { name: "Ops plain" })).body.bot;
+      expect((await api("PATCH", `/api/bots/${chief.id}`, { approvalMode: "ask", chiefOfStaff: true })).status).toBe(200);
       teammateId = teammate.id;
       outsiderId = outsider.id;
+      plainId = plain.id;
       const teammateRoutine = (await api("POST", "/api/routines", {
         name: "Teammate digest",
         prompt: "Summarize the teammate's queue.",
@@ -11838,7 +11842,24 @@ describe("harness HTTP API", () => {
         forBotId: outsider.id,
       });
       expect(outOfSection.status).toBe(403);
-      expect(z.object({ error: z.string() }).parse(await outOfSection.json()).error).toMatch(/set up by bots in its own department or by its Chief/);
+      expect(z.object({ error: z.string() }).parse(await outOfSection.json()).error).toMatch(/changed by itself or by a Chief of Staff in charge of its department, never by a department teammate/);
+
+      // A same-department teammate is refused the change the Chief is allowed.
+      const plainToken = await mintTestCapability(BASE, plain.id, plain.threadId);
+      const plainPost = (body: Record<string, unknown>) => fetch(`${BASE}/api/internal/trigger-requests`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${plainToken}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const teammateRefused = await plainPost({
+        fromBotId: plain.id,
+        fromThreadId: plain.threadId,
+        action: "pause",
+        triggerId: teammateRoutine.id,
+        forBotId: teammate.id,
+      });
+      expect(teammateRefused.status).toBe(403);
+      expect(z.object({ error: z.string() }).parse(await teammateRefused.json()).error).toMatch(/never by a department teammate/);
 
       const unknown = await post({
         fromBotId: chief.id,
@@ -11893,6 +11914,7 @@ describe("harness HTTP API", () => {
       await api("DELETE", `/api/bots/${chief.id}`);
       if (teammateId) await api("DELETE", `/api/bots/${teammateId}`);
       if (outsiderId) await api("DELETE", `/api/bots/${outsiderId}`);
+      if (plainId) await api("DELETE", `/api/bots/${plainId}`);
     }
   });
 
@@ -11900,7 +11922,7 @@ describe("harness HTTP API", () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     const teammate = (await api("POST", "/api/bots", {})).body.bot;
     try {
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "ask" })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "ask", chiefOfStaff: true })).status).toBe(200);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId);
       const post = (body: Record<string, unknown>) => fetch(`${BASE}/api/internal/trigger-requests`, {
         method: "POST",

@@ -13319,7 +13319,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const request = parseTriggerRequest(await readInternalBody(), (id) => routines!.listRoutines().some((routine) => routine.id === id) ? "schedule" : appTriggers.isApp(id) ? "app" : "webhook");
         if (!request.ok) return json(res, 400, { error: request.error });
         const hiddenTrigger = teamRoutines.hiddenTrigger(request, fromThreadId); if (hiddenTrigger) return json(res, 404, { error: hiddenTrigger });
-        const target = triggerTarget(from, request.forBotId, (id) => store.bot(id));
+        const target = triggerTarget(from, request.forBotId, (id) => store.bot(id), true);
         if ("error" in target) return json(res, target.status, { error: target.error });
         const forBot = target.forBot;
         const persistence = proposalPersistence(from.id, fromThreadId, false);

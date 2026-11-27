@@ -1848,7 +1848,7 @@
           },
           "for_bot_id": {
             "type": "string",
-            "description": "Only for ANOTHER bot's trigger in your section, from list_bots; it keeps that bot's permissions."
+            "description": "Only for ANOTHER bot's trigger, as a Chief of Staff in charge of its department, from list_bots; it keeps that bot's permissions."
           }
         },
         "required": [
@@ -1858,7 +1858,7 @@
     },
     {
       "name": "delete_trigger",
-      "description": "Delete a trigger for good, only when the person asks (was manage_trigger delete); to stop it for now, pause it with trigger. It applies at once, with an Undo. for_bot_id: ANOTHER bot's trigger in your section.",
+      "description": "Delete a trigger for good, only when the person asks (was manage_trigger delete); to stop it for now, pause it with trigger. It applies at once, with an Undo. for_bot_id: ANOTHER bot's trigger, as a Chief of Staff in charge of its department.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
